@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(export PATH=\"/usr/local/bin:/opt/homebrew/bin:$HOME/.nvm/versions/node/*/bin:$PATH\")",
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npx tsc:*)",
+      "Bash(PATH=\"/opt/homebrew/bin:$PATH\" npx tsc --noEmit)",
+      "Bash(lsof -ti:5173)",
+      "Bash(xargs kill:*)",
+      "Bash(claude mcp:*)",
+      "Read(//Users/macchicken/.claude/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//Users/macchicken/.npm-global/bin/**)",
+      "Bash(command -v claude)",
+      "mcp__paper__get_basic_info",
+      "mcp__paper__get_screenshot",
+      "mcp__paper__get_jsx",
+      "Bash(npx vite:*)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

@@ -25,6 +25,7 @@ export interface PlacedMedia {
   cropY: number
   cropW: number        // 0 = no crop (use full image)
   cropH: number
+  coverTime: number    // video cover frame time in seconds (0 = first frame)
 }
 
 export interface Slide {
@@ -127,8 +128,8 @@ function debouncedThumbRefresh(slideId: string, delay = 300) {
 export const useCarouselStore = create<CarouselState>((set, get) => ({
   slides: [{ id: initialSlideId, bgColor: '#ffffff' }],
   activeSlideId: initialSlideId,
-  dimensions: { ...PRESETS['4:5'] },
-  presetId: '4:5',
+  dimensions: { ...PRESETS['3:4'] },
+  presetId: '3:4',
   customWidth: 1080,
   customHeight: 1350,
 
@@ -139,7 +140,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   gridSize: 40,
   marginPct: 4,
   showCenterGuides: false,
-  snapGrid: true,
+  snapGrid: false,
   snapCenter: true,
   snapItems: true,
   snapMargins: true,
@@ -272,6 +273,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       cropY: 0,
       cropW: 0,
       cropH: 0,
+      coverTime: 0,
     }
     set({ items: [...items, item], selectedId: item.id })
     debouncedThumbRefresh(activeSlideId)

@@ -1,14 +1,80 @@
 :root {
-  --bg: #121218;
-  --surface: #1c1c24;
-  --border: #2e2e38;
-  --text: #c4c2ce;
-  --text-bright: #f2f0f7;
-  --accent: #7c6cf0;
-  --accent-dim: rgba(124, 108, 240, 0.2);
-  --danger: #e8556a;
-  --font: 'Inter', system-ui, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  /* ── Backgrounds (true black → warm elevated surfaces) ── */
+  --bg:         #000000;
+  --bg-soft:    #05050a;
+  --surface:    #0a0a10;
+  --surface-2:  #101017;
+  --surface-3:  #181822;
+  --surface-hi: #24242f;
+
+  /* ── Borders ── */
+  --border:        rgba(255, 255, 255, 0.055);
+  --border-strong: rgba(255, 255, 255, 0.105);
+  --border-bright: rgba(255, 255, 255, 0.18);
+
+  /* ── Text ── */
+  --text-dim:    rgba(255, 255, 255, 0.34);
+  --text:        rgba(255, 255, 255, 0.62);
+  --text-bright: rgba(255, 255, 255, 0.96);
+
+  /* ── Primary accent: white ── */
+  --accent:        #ffffff;
+  --accent-hi:     #ffffff;
+  --accent-deep:   #cccccc;
+  --accent-dim:    rgba(255, 255, 255, 0.14);
+  --accent-glow:   rgba(255, 255, 255, 0.55);
+  --accent-strong: rgba(255, 255, 255, 0.85);
+
+  /* ── Secondary accent: electric cyan ── */
+  --warm:        #06b6d4;
+  --warm-hi:     #67e8f9;
+  --warm-dim:    rgba(6, 182, 212, 0.14);
+  --warm-glow:   rgba(6, 182, 212, 0.50);
+
+  /* ── Tertiary pop: neon lime ── */
+  --cool:        #a3e635;
+  --cool-hi:     #d9f99d;
+  --cool-dim:    rgba(163, 230, 53, 0.14);
+  --cool-glow:   rgba(163, 230, 53, 0.45);
+
+  /* ── Soft solid ── */
+  --accent-soft: #333333;
+
+  /* ── Bold cool-spectrum gradient ── */
+  --grad:        linear-gradient(120deg, #ffffff 0%, #22d3ee 55%, #a3e635 110%);
+  --grad-soft:   linear-gradient(120deg, rgba(139,92,246,0.28) 0%, rgba(34,211,238,0.20) 55%, rgba(163,230,53,0.14) 110%);
+
+  /* ── Success / Danger ── */
+  --success:     #4ade80;
+  --danger:      #fb7185;
+  --danger-hi:   #fda4af;
+  --danger-dim:  rgba(251, 113, 133, 0.14);
+
+  /* ── Radius ── */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r:    9px;
+  --r-lg: 13px;
+  --r-xl: 18px;
+  --r-pill: 999px;
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow:    0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-accent: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 8px 28px rgba(255, 255, 255, 0.45);
+  --shadow-cool:   0 0 0 1px rgba(34, 211, 238, 0.45), 0 8px 28px rgba(34, 211, 238, 0.40);
+
+  /* ── Motion ── */
+  --ease:        cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast:    120ms;
+  --dur:         180ms;
+  --dur-slow:    280ms;
+
+  /* ── Typography ── */
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
 }
 
 * {
@@ -25,24 +91,68 @@ body,
 
 body {
   font-family: var(--font);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+/* Ambient radial glow — gives the black background a subtle sense of depth */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 75% 50% at 12% -5%, rgba(255, 255, 255, 0.18), transparent 60%),
+    radial-gradient(ellipse 55% 45% at 92% 105%, rgba(34, 211, 238, 0.13), transparent 60%),
+    radial-gradient(ellipse 40% 30% at 95% 0%, rgba(163, 230, 53, 0.06), transparent 60%);
 }
 
 #root {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
 }
 
 input,
 select,
-button {
+button,
+textarea {
   font: inherit;
 }
 
 input[type='number'] {
   font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Text selection */
+::selection {
+  background: var(--accent-glow);
+  color: #fff;
+}
+
+/* Scrollbar default (thin, accent on hover) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  transition: background var(--dur) var(--ease);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.55);
 }

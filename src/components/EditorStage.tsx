@@ -12,6 +12,7 @@ import Konva from 'konva'
 import { Image as KonvaImage } from 'react-konva'
 import { useCarouselStore, type PlacedMedia } from '../store/useCarouselStore'
 import { snapPosition, type GuideLine } from '../lib/snapping'
+import { videoElements } from '../lib/videoRegistry'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -21,7 +22,7 @@ const PASTEBOARD_PAD = 400
 const ARTBOARD_GAP = 120
 const PASTEBOARD_COLOR = '#0a0a0e'
 const ARTBOARD_COLOR = '#1a1a1f'
-const GUIDE_COLOR = '#ff3366'
+const GUIDE_COLOR = '#3366ff'
 const GUIDE_COLOR_CENTER = '#3399ff'
 const MIN_ZOOM = 0.02
 const MAX_ZOOM = 8
@@ -33,23 +34,30 @@ const MAX_ZOOM = 8
 function useHtmlMedia(
   src: string,
   type: PlacedMedia['type'],
+  itemId?: string,
 ): HTMLImageElement | HTMLVideoElement | null {
   const [node, setNode] = useState<HTMLImageElement | HTMLVideoElement | null>(null)
   useEffect(() => {
     if (type === 'video') {
       const v = document.createElement('video')
       v.src = src; v.muted = true; v.playsInline = true; v.loop = true; v.preload = 'auto'
-      const onReady = () => setNode(v)
+      const onReady = () => {
+        setNode(v)
+        if (itemId) videoElements.set(itemId, v)
+      }
       v.addEventListener('loadeddata', onReady)
       v.play().catch(() => {})
-      return () => { v.removeEventListener('loadeddata', onReady); v.pause(); setNode(null) }
+      return () => {
+        v.removeEventListener('loadeddata', onReady); v.pause(); setNode(null)
+        if (itemId) videoElements.delete(itemId)
+      }
     }
     const img = new window.Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => setNode(img)
     img.src = src
     return () => { setNode(null) }
-  }, [src, type])
+  }, [src, type, itemId])
   return node
 }
 
@@ -90,7 +98,7 @@ function MediaItemView({
   onDragMove: (node: Konva.Image) => void
   onDragEnd: (node: Konva.Image) => void
 }) {
-  const img = useHtmlMedia(item.src, item.type)
+  const img = useHtmlMedia(item.src, item.type, item.id)
   const shapeRef = useRef<Konva.Image>(null)
 
   // Apply Konva filters when image loads or filter values change
@@ -359,11 +367,11 @@ function CropOverlay({
         ]}
         boundBoxFunc={(old, nw) => (nw.width < 20 || nw.height < 20 ? old : nw)}
         anchorSize={Math.max(10, 14 / stageZoom)}
-        anchorFill="#ff3366"
-        anchorStroke="#cc1144"
+        anchorFill={GUIDE_COLOR}
+        anchorStroke="#1144cc"
         anchorStrokeWidth={Math.max(1, 1.5 / stageZoom)}
         anchorCornerRadius={Math.max(1, 2 / stageZoom)}
-        borderStroke="#ff3366"
+        borderStroke={GUIDE_COLOR}
         borderStrokeWidth={Math.max(1, 1.5 / stageZoom)}
       />
     </>
@@ -376,6 +384,7 @@ function CropOverlay({
 
 export interface EditorStageHandle {
   exportSlidePng: (slideId: string) => Promise<Blob | null>
+  exportSlideVideo: (slideId: string, outputPath: string, fps?: number, onProgress?: (pct: number) => void) => Promise<string | null>
   fitToScreen: () => void
   applyCrop: () => void
 }
@@ -753,11 +762,125 @@ const EditorStage = forwardRef<
     [slides, artboardPositions, W, H],
   )
 
+  /* ---- export slide as video (frame-by-frame seek → ffmpeg) ---- */
+  const exportSlideVideo = useCallback(
+    async (slideId: string, outputPath: string, fps = 30, onProgress?: (pct: number) => void): Promise<string | null> => {
+      if (!window.electronAPI) return null
+      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current
+      if (!stage) return null
+      const st = useCarouselStore.getState()
+      const idx = st.slides.findIndex((s) => s.id === slideId)
+      if (idx < 0) return null
+      const ap = artboardPositions[idx]!
+
+      // Find all video items in this slide
+      const slideVideoItems = st.items.filter((i) => i.slideId === slideId && i.type === 'video')
+      if (!slideVideoItems.length) return null
+
+      // Get the video elements and determine max duration
+      const videoEls: { item: PlacedMedia; el: HTMLVideoElement }[] = []
+      let maxDuration = 0
+      for (const vi of slideVideoItems) {
+        const el = videoElements.get(vi.id)
+        if (!el) continue
+        videoEls.push({ item: vi, el })
+        if (el.duration > maxDuration) maxDuration = el.duration
+      }
+      if (maxDuration <= 0 || !isFinite(maxDuration)) return null
+
+      // Pause all videos and remember their state
+      for (const { el } of videoEls) {
+        el.pause()
+        el.loop = false
+      }
+
+      const sessionId = crypto.randomUUID()
+      const totalFrames = Math.ceil(maxDuration * fps)
+
+      try {
+        // Start ffmpeg session
+        await window.electronAPI.startVideoEncode({
+          sessionId,
+          width: W,
+          height: H,
+          fps,
+          duration: maxDuration,
+          outputPath,
+        })
+
+        // Save & reset stage transform
+        const ps = stage.scaleX(), pp = stage.position()
+        stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
+        if (gl) gl.hide(); if (sgl) sgl.hide()
+
+        // Frame-by-frame capture
+        for (let frame = 0; frame < totalFrames; frame++) {
+          const time = frame / fps
+
+          // Seek all videos to this time
+          const seekPromises = videoEls.map(({ el }) => {
+            return new Promise<void>((resolve) => {
+              if (time >= el.duration) {
+                // Video ended — seek to last frame
+                el.currentTime = el.duration - 0.001
+              } else {
+                el.currentTime = time
+              }
+              const onSeeked = () => { el.removeEventListener('seeked', onSeeked); resolve() }
+              el.addEventListener('seeked', onSeeked)
+            })
+          })
+          await Promise.all(seekPromises)
+
+          // Wait a frame for Konva to redraw with new video frame
+          await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+          stage.draw()
+
+          // Capture the artboard region as raw pixels
+          const canvas = stage.toCanvas({
+            x: ap.x, y: ap.y,
+            width: W, height: H,
+            pixelRatio: 1,
+          })
+          const ctx = canvas.getContext('2d')!
+          const imageData = ctx.getImageData(0, 0, W, H)
+
+          // Send RGBA data to ffmpeg
+          await window.electronAPI.videoFrame({
+            sessionId,
+            frameData: new Uint8Array(imageData.data.buffer),
+          })
+
+          onProgress?.(((frame + 1) / totalFrames) * 100)
+        }
+
+        // Restore stage
+        if (gl) gl.show(); if (sgl) sgl.show()
+        stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
+
+        // Finish encoding
+        const result = await window.electronAPI.endVideoEncode({ sessionId })
+        return result
+      } catch (err) {
+        console.error('Video export failed:', err)
+        return null
+      } finally {
+        // Restore video playback
+        for (const { el } of videoEls) {
+          el.loop = true
+          el.play().catch(() => {})
+        }
+      }
+    },
+    [artboardPositions, W, H],
+  )
+
   useImperativeHandle(ref, () => ({
     exportSlidePng,
+    exportSlideVideo,
     fitToScreen,
     applyCrop: () => { cropApplyRef.current?.() },
-  }), [exportSlidePng, fitToScreen])
+  }), [exportSlidePng, exportSlideVideo, fitToScreen])
 
   /* ---- render ---- */
   return (
@@ -1012,9 +1135,9 @@ const EditorStage = forwardRef<
                 }}
                 onMouseEnter={(e) => {
                   const b = e.currentTarget
-                  b.style.borderColor = 'var(--accent)'
+                  b.style.borderColor = '#3b82f6'
                   b.style.color = '#fff'
-                  b.style.background = 'var(--accent)'
+                  b.style.background = '#3b82f6'
                 }}
                 onMouseLeave={(e) => {
                   const b = e.currentTarget

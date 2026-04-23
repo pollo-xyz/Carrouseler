@@ -16,6 +16,15 @@ export default defineConfig({
         onstart(args) {
           args.reload()
         },
+        vite: {
+          build: {
+            rollupOptions: {
+              output: {
+                entryFileNames: 'preload.mjs',
+              },
+            },
+          },
+        },
       },
     ]),
     renderer(),

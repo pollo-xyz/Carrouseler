@@ -117,6 +117,8 @@ function MediaItemView({
   useEffect(() => {
     const node = shapeRef.current
     if (!node || !img) return
+    // For videos, cache is managed per-frame in the animation tick below.
+    if (item.type === 'video') return
     if (hasFilters) {
       node.cache()
       node.getLayer()?.batchDraw()
@@ -124,17 +126,25 @@ function MediaItemView({
       node.clearCache()
       node.getLayer()?.batchDraw()
     }
-  }, [img, hasFilters, item.brightness, item.contrast, item.saturation, item.width, item.height])
+  }, [img, hasFilters, item.brightness, item.contrast, item.saturation, item.width, item.height, item.type])
 
   useEffect(() => {
     if (item.type !== 'video' || !img) return
-    const layer = shapeRef.current?.getLayer()
-    if (!layer) return
+    const node = shapeRef.current
+    const layer = node?.getLayer()
+    if (!node || !layer) return
     let id: number
-    const tick = () => { layer.batchDraw(); id = requestAnimationFrame(tick) }
+    const tick = () => {
+      // Re-cache each frame so filters apply to the current video frame
+      // rather than a frozen snapshot taken when filters were first enabled.
+      if (hasFilters) node.cache()
+      else node.clearCache()
+      layer.batchDraw()
+      id = requestAnimationFrame(tick)
+    }
     id = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(id)
-  }, [item.type, img])
+  }, [item.type, img, hasFilters])
 
   if (!img) return null
 
@@ -379,6 +389,316 @@ function CropOverlay({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Floating item controls (corrections popover + playback bar)       */
+/* ------------------------------------------------------------------ */
+
+function sliderFill(value: number, min: number, max: number) {
+  const pct = ((value - min) / (max - min)) * 100
+  return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
+}
+
+function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
+  const updateItem = useCarouselStore((s) => s.updateItem)
+  const b = item.brightness ?? 0
+  const c = item.contrast ?? 0
+  const sat = item.saturation ?? 1
+  return (
+    <div
+      onMouseDown={(e) => e.stopPropagation()}
+      onWheel={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute',
+        left, top,
+        // Popover anchors its BOTTOM to the given top coordinate,
+        // so it always sits above the corrections button regardless of height.
+        transform: 'translate(-50%, -100%)',
+        pointerEvents: 'auto',
+        zIndex: 3,
+        width: 240,
+        padding: 12,
+        background: 'rgba(30,30,40,0.97)',
+        borderRadius: 8,
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(12px)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+      }}
+    >
+      <label className="slider-field">
+        <span className="slider-field__label">
+          Exposure<span className="slider-field__value">{b.toFixed(2)}</span>
+        </span>
+        <input type="range" min={-1} max={1} step={0.01} value={b}
+          style={sliderFill(b, -1, 1)}
+          onChange={(e) => updateItem(item.id, { brightness: Number(e.target.value) })} />
+      </label>
+      <label className="slider-field">
+        <span className="slider-field__label">
+          Contrast<span className="slider-field__value">{Math.round(c)}</span>
+        </span>
+        <input type="range" min={-100} max={100} step={1} value={c}
+          style={sliderFill(c, -100, 100)}
+          onChange={(e) => updateItem(item.id, { contrast: Number(e.target.value) })} />
+      </label>
+      <label className="slider-field">
+        <span className="slider-field__label">
+          Saturation<span className="slider-field__value">{sat.toFixed(2)}</span>
+        </span>
+        <input type="range" min={0} max={2} step={0.01} value={sat}
+          style={sliderFill(sat, 0, 2)}
+          onChange={(e) => updateItem(item.id, { saturation: Number(e.target.value) })} />
+      </label>
+      <button
+        type="button"
+        className="btn btn--outline btn--sm"
+        style={{ alignSelf: 'flex-start', gap: 6, flexDirection: 'row' }}
+        onClick={() => updateItem(item.id, { brightness: 0, contrast: 0, saturation: 1 })}
+      >
+        Reset
+      </button>
+    </div>
+  )
+}
+
+function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: number; top: number; width: number }) {
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [muted, setMuted] = useState(true)
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    let raf: number
+    let detach: (() => void) | null = null
+    const attach = () => {
+      const v = videoElements.get(itemId)
+      if (!v) { raf = requestAnimationFrame(attach); return }
+      setReady(true)
+      setDuration(isFinite(v.duration) ? v.duration : 0)
+      setCurrentTime(v.currentTime)
+      setIsPlaying(!v.paused)
+      setMuted(v.muted)
+      const onPlay = () => setIsPlaying(true)
+      const onPause = () => setIsPlaying(false)
+      const onMeta = () => setDuration(isFinite(v.duration) ? v.duration : 0)
+      v.addEventListener('play', onPlay)
+      v.addEventListener('pause', onPause)
+      v.addEventListener('loadedmetadata', onMeta)
+      v.addEventListener('durationchange', onMeta)
+      const tick = () => { setCurrentTime(v.currentTime); raf = requestAnimationFrame(tick) }
+      raf = requestAnimationFrame(tick)
+      detach = () => {
+        v.removeEventListener('play', onPlay)
+        v.removeEventListener('pause', onPause)
+        v.removeEventListener('loadedmetadata', onMeta)
+        v.removeEventListener('durationchange', onMeta)
+      }
+    }
+    attach()
+    return () => { cancelAnimationFrame(raf); detach?.() }
+  }, [itemId])
+
+  const togglePlay = () => {
+    const v = videoElements.get(itemId); if (!v) return
+    if (v.paused) v.play().catch(() => {}); else v.pause()
+  }
+  const toggleMute = () => {
+    const v = videoElements.get(itemId); if (!v) return
+    v.muted = !v.muted; setMuted(v.muted)
+  }
+  const onScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const t = Number(e.target.value)
+    const v = videoElements.get(itemId); if (v) v.currentTime = t
+    setCurrentTime(t)
+  }
+  const fmt = (t: number) => {
+    if (!isFinite(t)) return '0:00'
+    const m = Math.floor(t / 60)
+    const s = Math.floor(t % 60)
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+
+  const btn: React.CSSProperties = {
+    width: 26, height: 26, padding: 0, border: 'none', borderRadius: 5,
+    background: 'transparent', color: 'rgba(255,255,255,0.85)', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
+
+  return (
+    <div
+      onMouseDown={(e) => e.stopPropagation()}
+      onWheel={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute',
+        left, top,
+        width: Math.max(240, width),
+        transform: 'translateX(-50%)',
+        pointerEvents: 'auto',
+        zIndex: 2,
+        padding: '4px 8px',
+        background: 'rgba(30,30,40,0.95)',
+        borderRadius: 8,
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+        backdropFilter: 'blur(12px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      <button type="button" onClick={togglePlay} disabled={!ready} title={isPlaying ? 'Pause' : 'Play'} style={btn}>
+        {isPlaying ? (
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
+            <rect x="2" y="1.5" width="2.8" height="9" rx="0.5" />
+            <rect x="7.2" y="1.5" width="2.8" height="9" rx="0.5" />
+          </svg>
+        ) : (
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M2.5 1.5v9l8-4.5z" />
+          </svg>
+        )}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={duration || 1}
+        step={0.033}
+        value={currentTime}
+        onChange={onScrub}
+        disabled={!ready || !duration}
+        style={{ flex: 1, minWidth: 60 }}
+      />
+      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', fontFamily: 'var(--mono)', minWidth: 68, textAlign: 'right' }}>
+        {fmt(currentTime)} / {fmt(duration)}
+      </span>
+      <button type="button" onClick={toggleMute} disabled={!ready} title={muted ? 'Unmute' : 'Mute'} style={btn}>
+        {muted ? (
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3L4.5 6H2v4h2.5L8 13V3z" />
+            <line x1="11" y1="6" x2="14" y2="9" />
+            <line x1="14" y1="6" x2="11" y2="9" />
+          </svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3L4.5 6H2v4h2.5L8 13V3z" />
+            <path d="M11 5.5a3 3 0 0 1 0 5" />
+          </svg>
+        )}
+      </button>
+    </div>
+  )
+}
+
+function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
+  const updateItem = useCarouselStore((s) => s.updateItem)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [duration, setDuration] = useState(0)
+  const [currentTime, setCurrentTime] = useState(item.coverTime || 0)
+
+  useEffect(() => {
+    const v = document.createElement('video')
+    v.src = item.src
+    v.muted = true
+    v.preload = 'auto'
+    videoRef.current = v
+
+    const onMeta = () => {
+      setDuration(v.duration)
+      v.currentTime = item.coverTime || 0
+    }
+    v.addEventListener('loadedmetadata', onMeta)
+
+    const onSeeked = () => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      const aspect = v.videoWidth / v.videoHeight
+      canvas.width = 200
+      canvas.height = Math.round(200 / aspect)
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height)
+    }
+    v.addEventListener('seeked', onSeeked)
+    v.addEventListener('loadeddata', onSeeked)
+
+    return () => {
+      v.removeEventListener('loadedmetadata', onMeta)
+      v.removeEventListener('seeked', onSeeked)
+      v.removeEventListener('loadeddata', onSeeked)
+      v.pause()
+      v.src = ''
+      videoRef.current = null
+    }
+  }, [item.src, item.coverTime])
+
+  const handleScrub = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const t = Number(e.target.value)
+    setCurrentTime(t)
+    if (videoRef.current) videoRef.current.currentTime = t
+  }, [])
+
+  const handleScrubEnd = useCallback(() => {
+    updateItem(item.id, { coverTime: currentTime })
+  }, [item.id, currentTime, updateItem])
+
+  const fmt = (t: number) => {
+    const m = Math.floor(t / 60)
+    const s = Math.floor(t % 60)
+    const ms = Math.floor((t % 1) * 10)
+    return `${m}:${String(s).padStart(2, '0')}.${ms}`
+  }
+
+  return (
+    <div
+      onMouseDown={(e) => e.stopPropagation()}
+      onWheel={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute',
+        left, top,
+        transform: 'translate(-50%, -100%)',
+        pointerEvents: 'auto',
+        zIndex: 3,
+        width: 220,
+        padding: 12,
+        background: 'rgba(30,30,40,0.97)',
+        borderRadius: 8,
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        backdropFilter: 'blur(12px)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+      }}
+    >
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover frame</span>
+      <canvas
+        ref={canvasRef}
+        style={{ width: '100%', borderRadius: 4, background: '#000', aspectRatio: '16/9', objectFit: 'contain' }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          type="range"
+          min={0}
+          max={duration || 1}
+          step={0.033}
+          value={currentTime}
+          onChange={handleScrub}
+          onMouseUp={handleScrubEnd}
+          onTouchEnd={handleScrubEnd}
+          style={{ flex: 1 }}
+        />
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
+          {fmt(currentTime)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  EditorStage                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -394,6 +714,7 @@ const EditorStage = forwardRef<
   { maxViewWidth: number; maxViewHeight: number }
 >(function EditorStage({ maxViewWidth, maxViewHeight }, ref) {
   const stageRef = useRef<Konva.Stage>(null)
+  const bgLayerRef = useRef<Konva.Layer>(null)
   const guidesLayerRef = useRef<Konva.Layer>(null)
   const snapGuidesLayerRef = useRef<Konva.Layer>(null)
   const trRef = useRef<Konva.Transformer>(null)
@@ -464,6 +785,16 @@ const EditorStage = forwardRef<
   const reorderDragRef = useRef<string | null>(null)
   const [isReordering, setIsReordering] = useState(false)
   const [reorderDropTarget, setReorderDropTarget] = useState<string | null>(null)
+
+  /* ---- floating corrections / cover frame popover toggle ---- */
+  const [showCorrections, setShowCorrections] = useState(false)
+  const [showCoverFrame, setShowCoverFrame] = useState(false)
+  useEffect(() => { setShowCorrections(false); setShowCoverFrame(false) }, [selectedId, cropItemId])
+
+  /* ---- live drag position (so floating controls track the dragged item) ---- */
+  const [dragLive, setDragLive] = useState<{
+    itemId: string; slideIdx: number; x: number; y: number; width: number; height: number
+  } | null>(null)
 
   /* ---- fit to screen ---- */
   const fitToScreen = useCallback(() => {
@@ -608,6 +939,13 @@ const EditorStage = forwardRef<
       node.x(ap.x + result.x - groupX)
       node.y(ap.y + result.y - groupY)
 
+      setDragLive({
+        itemId: item.id,
+        slideIdx: target.slideIdx,
+        x: result.x, y: result.y,
+        width: bw, height: bh,
+      })
+
       if (result.guides.length > 0) setActiveGuides({ slideIdx: target.slideIdx, guides: result.guides })
       else setActiveGuides(null)
     },
@@ -617,6 +955,7 @@ const EditorStage = forwardRef<
   const handleDragEnd = useCallback(
     (node: Konva.Image, item: PlacedMedia) => {
       setActiveGuides(null)
+      setDragLive(null)
       const group = node.getParent()
       if (!group) return
       const groupX = group.x(), groupY = group.y()
@@ -778,12 +1117,12 @@ const EditorStage = forwardRef<
       if (!slideVideoItems.length) return null
 
       // Get the video elements and determine max duration
-      const videoEls: { item: PlacedMedia; el: HTMLVideoElement }[] = []
+      const videoEls: { item: PlacedMedia; el: HTMLVideoElement; coverTime: number }[] = []
       let maxDuration = 0
       for (const vi of slideVideoItems) {
         const el = videoElements.get(vi.id)
         if (!el) continue
-        videoEls.push({ item: vi, el })
+        videoEls.push({ item: vi, el, coverTime: vi.coverTime || 0 })
         if (el.duration > maxDuration) maxDuration = el.duration
       }
       if (maxDuration <= 0 || !isFinite(maxDuration)) return null
@@ -795,7 +1134,9 @@ const EditorStage = forwardRef<
       }
 
       const sessionId = crypto.randomUUID()
-      const totalFrames = Math.ceil(maxDuration * fps)
+      // frame 0 = cover frame; frames 1..N = full video from start
+      const videoFrames = Math.ceil(maxDuration * fps)
+      const totalFrames = 1 + videoFrames
 
       try {
         // Start ffmpeg session
@@ -813,27 +1154,28 @@ const EditorStage = forwardRef<
         stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
         if (gl) gl.hide(); if (sgl) sgl.hide()
 
-        // Frame-by-frame capture
-        for (let frame = 0; frame < totalFrames; frame++) {
-          const time = frame / fps
+        // Frame-by-frame capture — pipeline IPC writes so ffmpeg ingestion
+        // overlaps with seeking/drawing the next frame.
+        let pendingWrite: Promise<void> = Promise.resolve()
 
-          // Seek all videos to this time
-          const seekPromises = videoEls.map(({ el }) => {
+        for (let frame = 0; frame < totalFrames; frame++) {
+          // frame 0: seek to each video's coverTime; subsequent frames: play from 0
+          const time = frame === 0 ? null : (frame - 1) / fps
+
+          const seekPromises = videoEls.map(({ el, coverTime }) => {
             return new Promise<void>((resolve) => {
-              if (time >= el.duration) {
-                // Video ended — seek to last frame
-                el.currentTime = el.duration - 0.001
-              } else {
-                el.currentTime = time
-              }
+              const target = time === null ? coverTime : time
+              const clamped = target >= el.duration ? el.duration - 0.001 : target
+              if (Math.abs(el.currentTime - clamped) < 1e-4) { resolve(); return }
               const onSeeked = () => { el.removeEventListener('seeked', onSeeked); resolve() }
               el.addEventListener('seeked', onSeeked)
+              el.currentTime = clamped
             })
           })
           await Promise.all(seekPromises)
 
-          // Wait a frame for Konva to redraw with new video frame
-          await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+          // Single rAF is enough for Konva to pick up the new video frame
+          await new Promise<void>((r) => requestAnimationFrame(() => r()))
           stage.draw()
 
           // Capture the artboard region as raw pixels
@@ -844,15 +1186,18 @@ const EditorStage = forwardRef<
           })
           const ctx = canvas.getContext('2d')!
           const imageData = ctx.getImageData(0, 0, W, H)
+          const frameData = new Uint8Array(imageData.data.buffer)
 
-          // Send RGBA data to ffmpeg
-          await window.electronAPI.videoFrame({
-            sessionId,
-            frameData: new Uint8Array(imageData.data.buffer),
-          })
+          // Make sure the previous write finished (bounded queue of 1)
+          // before dispatching the next one — keeps IPC pipelined with
+          // the next frame's seek/draw without unbounded memory growth.
+          await pendingWrite
+          pendingWrite = window.electronAPI.videoFrame({ sessionId, frameData })
 
           onProgress?.(((frame + 1) / totalFrames) * 100)
         }
+
+        await pendingWrite
 
         // Restore stage
         if (gl) gl.show(); if (sgl) sgl.show()
@@ -1159,10 +1504,16 @@ const EditorStage = forwardRef<
         {selectedId && (() => {
           const sel = items.find((i) => i.id === selectedId)
           if (!sel) return null
-          const sIdx = slides.findIndex((sv) => sv.id === sel.slideId)
-          if (sIdx < 0) return null
-          const sap = artboardPositions[sIdx]!
-          let topY = sel.y, cx = sel.x + sel.width / 2
+          // While dragging, use the live position so floating controls follow the item.
+          const live = dragLive?.itemId === sel.id ? dragLive : null
+          const effSlideIdx = live ? live.slideIdx : slides.findIndex((sv) => sv.id === sel.slideId)
+          if (effSlideIdx < 0) return null
+          const sap = artboardPositions[effSlideIdx]!
+          const effX = live ? live.x : sel.x
+          const effY = live ? live.y : sel.y
+          const effW = live ? live.width : sel.width
+          const effH = live ? live.height : sel.height
+          let topY = effY, cx = effX + effW / 2
           if (sel.id === cropItemId && sel.cropW > 0) {
             const sc = sel.width / sel.cropW
             topY = Math.min(sel.y, sel.y - sel.cropY * sc)
@@ -1178,7 +1529,16 @@ const EditorStage = forwardRef<
             cursor: 'pointer', transition: 'background 0.12s, color 0.12s',
           }
 
+          const itemCenterX = (sap.x + effX + effW / 2) * zoom + panOffset.x
+          const itemScreenW = effW * zoom
+          const itemBottomY = (sap.y + effY + effH) * zoom + panOffset.y
+          const playbackBarTop = itemBottomY + 8
+          // Corrections/cover frame popover sits just above the toolbar (which is at sty - 42).
+          // Component uses translateY(-100%), so this is its bottom edge.
+          const correctionsTop = sty - 42 - 6
+
           return (
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             <div
               style={{
                 position: 'absolute',
@@ -1229,6 +1589,57 @@ const EditorStage = forwardRef<
                       </svg>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowCorrections((v) => !v); setShowCoverFrame(false) }}
+                    title="Color corrections"
+                    style={{
+                      ...btnBase,
+                      background: showCorrections ? 'rgba(255,255,255,0.1)' : 'transparent',
+                      color: showCorrections ? '#fff' : 'rgba(255,255,255,0.7)',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = showCorrections ? 'rgba(255,255,255,0.1)' : 'transparent'
+                      e.currentTarget.style.color = showCorrections ? '#fff' : 'rgba(255,255,255,0.7)'
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                      <line x1="4" y1="7" x2="20" y2="7" />
+                      <line x1="4" y1="12" x2="20" y2="12" />
+                      <line x1="4" y1="17" x2="20" y2="17" />
+                      <circle cx="9" cy="7" r="2" fill="currentColor" />
+                      <circle cx="15" cy="12" r="2" fill="currentColor" />
+                      <circle cx="7" cy="17" r="2" fill="currentColor" />
+                    </svg>
+                  </button>
+                  {sel.type === 'video' && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setShowCoverFrame((v) => !v); setShowCorrections(false) }}
+                      title="Cover frame"
+                      style={{
+                        ...btnBase,
+                        background: showCoverFrame ? 'rgba(255,255,255,0.1)' : 'transparent',
+                        color: showCoverFrame ? '#fff' : 'rgba(255,255,255,0.7)',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = showCoverFrame ? 'rgba(255,255,255,0.1)' : 'transparent'
+                        e.currentTarget.style.color = showCoverFrame ? '#fff' : 'rgba(255,255,255,0.7)'
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                        <rect x="1" y="3" width="14" height="10" rx="1.5" />
+                        <line x1="4" y1="3" x2="4" y2="13" />
+                        <line x1="12" y1="3" x2="12" y2="13" />
+                        <line x1="1" y1="6" x2="4" y2="6" />
+                        <line x1="1" y1="10" x2="4" y2="10" />
+                        <line x1="12" y1="6" x2="15" y2="6" />
+                        <line x1="12" y1="10" x2="15" y2="10" />
+                      </svg>
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
@@ -1270,6 +1681,32 @@ const EditorStage = forwardRef<
                 </>
               )}
             </div>
+            {/* Floating playback bar for selected video */}
+            {sel.type === 'video' && !cropItemId && (
+              <PlaybackBar
+                itemId={sel.id}
+                left={itemCenterX}
+                top={playbackBarTop}
+                width={itemScreenW}
+              />
+            )}
+            {/* Floating corrections popover */}
+            {showCorrections && !cropItemId && (
+              <CorrectionsPopover
+                item={sel}
+                left={itemCenterX}
+                top={correctionsTop}
+              />
+            )}
+            {/* Floating cover frame popover */}
+            {showCoverFrame && sel.type === 'video' && !cropItemId && (
+              <CoverFramePopover
+                item={sel}
+                left={itemCenterX}
+                top={correctionsTop}
+              />
+            )}
+            </div>
           )
         })()}
 
@@ -1310,14 +1747,28 @@ const EditorStage = forwardRef<
           onMouseDown={(e) => { if (spaceDownRef.current || cropItemId) return; if (e.target === e.target.getStage()) setSelected(null) }}
           onTouchStart={(e) => { if (e.target === e.target.getStage()) setSelected(null) }}
         >
-          {/* Guides layer */}
-          <Layer ref={guidesLayerRef} listening={false}>
+          {/* Background layer (kept visible during export) */}
+          <Layer ref={bgLayerRef} listening={false}>
             <Rect x={0} y={0} width={wsW} height={wsH} fill={PASTEBOARD_COLOR} />
             {slides.map((slide, i) => {
               const ap = artboardPositions[i]!
               return (
+                <Rect
+                  key={slide.id}
+                  x={ap.x} y={ap.y}
+                  width={W} height={H}
+                  fill={slide.bgColor || '#ffffff'}
+                />
+              )
+            })}
+          </Layer>
+
+          {/* Guides layer (hidden during export) */}
+          <Layer ref={guidesLayerRef} listening={false}>
+            {slides.map((slide, i) => {
+              const ap = artboardPositions[i]!
+              return (
                 <Group key={slide.id} x={ap.x} y={ap.y}>
-                  <Rect x={0} y={0} width={W} height={H} fill={slide.bgColor || '#ffffff'} />
                   <Rect x={0} y={0} width={W} height={H} stroke="rgba(255,255,255,0.12)" strokeWidth={1.5} />
                   {false && marginPct > 0 && (
                     <Rect

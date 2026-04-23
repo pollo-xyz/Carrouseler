@@ -18,7 +18,19 @@
       "mcp__paper__get_screenshot",
       "mcp__paper__get_jsx",
       "Bash(npx vite:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(timeout 15 npm run dev)",
+      "WebFetch(domain:github.com)",
+      "Bash(mv ~/.claude/.claude/skills/ui-ux-pro-max ~/.claude/skills/)",
+      "Bash(rmdir ~/.claude/.claude/skills ~/.claude/.claude)",
+      "Bash(gh api *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/macchicken/.claude/settings.json'\\)\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/macchicken/.claude/settings.json'\\)\\); print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(claude --version)",
+      "Bash(claude plugin *)",
+      "Bash(curl -s \"http://localhost:5173/src/components/EditorStage.tsx\" -o /dev/null -w \"%{http_code}\\\\n\")"
     ]
   }
 }

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import { useCarouselStore } from './store/useCarouselStore'
-import { videoElements } from './lib/videoRegistry'
 import { PRESETS } from './lib/presets'
-import { createZip } from './lib/zip'
 import './App.css'
 
 /* ============================================================
@@ -64,121 +62,6 @@ const Icon = {
   ),
 }
 
-/* Map slider value to a 0-100% fill, used by the CSS gradient track */
-function sliderFill(value: number, min: number, max: number) {
-  const pct = ((value - min) / (max - min)) * 100
-  return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
-}
-
-function downloadBlob(blob: Blob, name: string) {
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = name
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  setTimeout(() => {
-    document.body.removeChild(a)
-    URL.revokeObjectURL(a.href)
-  }, 2000)
-}
-
-/* ---- Cover frame picker for video items ---- */
-function CoverFramePicker({ item }: { item: { id: string; src: string; coverTime: number } }) {
-  const updateItem = useCarouselStore((s) => s.updateItem)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [duration, setDuration] = useState(0)
-  const [currentTime, setCurrentTime] = useState(item.coverTime || 0)
-
-  useEffect(() => {
-    const v = document.createElement('video')
-    v.src = item.src
-    v.muted = true
-    v.preload = 'auto'
-    videoRef.current = v
-
-    const onMeta = () => {
-      setDuration(v.duration)
-      v.currentTime = item.coverTime || 0
-    }
-    v.addEventListener('loadedmetadata', onMeta)
-
-    const onSeeked = () => {
-      // Draw the frame to canvas
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      const aspect = v.videoWidth / v.videoHeight
-      canvas.width = 200
-      canvas.height = Math.round(200 / aspect)
-      ctx.drawImage(v, 0, 0, canvas.width, canvas.height)
-    }
-    v.addEventListener('seeked', onSeeked)
-    v.addEventListener('loadeddata', onSeeked)
-
-    return () => {
-      v.removeEventListener('loadedmetadata', onMeta)
-      v.removeEventListener('seeked', onSeeked)
-      v.removeEventListener('loadeddata', onSeeked)
-      v.pause()
-      v.src = ''
-      videoRef.current = null
-    }
-  }, [item.src, item.coverTime])
-
-  const handleScrub = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const t = Number(e.target.value)
-    setCurrentTime(t)
-    if (videoRef.current) {
-      videoRef.current.currentTime = t
-    }
-  }, [])
-
-  const handleScrubEnd = useCallback(() => {
-    updateItem(item.id, { coverTime: currentTime })
-  }, [item.id, currentTime, updateItem])
-
-  const formatTime = (t: number) => {
-    const m = Math.floor(t / 60)
-    const s = Math.floor(t % 60)
-    const ms = Math.floor((t % 1) * 10)
-    return `${m}:${String(s).padStart(2, '0')}.${ms}`
-  }
-
-  return (
-    <div className="cover-frame-picker">
-      <h2>Cover frame</h2>
-      <canvas
-        ref={canvasRef}
-        style={{
-          width: '100%',
-          borderRadius: 6,
-          background: '#000',
-          aspectRatio: '16/9',
-          objectFit: 'contain',
-        }}
-      />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-        <input
-          type="range"
-          min={0}
-          max={duration || 1}
-          step={0.033}
-          value={currentTime}
-          onChange={handleScrub}
-          onMouseUp={handleScrubEnd}
-          onTouchEnd={handleScrubEnd}
-          style={{ flex: 1 }}
-        />
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--mono)', minWidth: 48, textAlign: 'right' }}>
-          {formatTime(currentTime)}
-        </span>
-      </div>
-    </div>
-  )
-}
 
 export default function App() {
   const stageRef = useRef<EditorStageHandle>(null)
@@ -198,9 +81,7 @@ export default function App() {
   const activeSlideId = useCarouselStore((s) => s.activeSlideId)
   const selectedId = useCarouselStore((s) => s.selectedId)
   const items = useCarouselStore((s) => s.items)
-  const moveItemToSlide = useCarouselStore((s) => s.moveItemToSlide)
   const removeItem = useCarouselStore((s) => s.removeItem)
-  const updateItem = useCarouselStore((s) => s.updateItem)
   const addMedia = useCarouselStore((s) => s.addMedia)
   const cropItemId = useCarouselStore((s) => s.cropItemId)
 
@@ -339,107 +220,58 @@ export default function App() {
   const exportAll = useCallback(async () => {
     const st = useCarouselStore.getState()
     if (!st.slides.length || !stageRef.current) return
+    if (!window.electronAPI) {
+      console.error('[export] window.electronAPI is undefined — run inside the Electron app')
+      alert('Export only works in the desktop app, not the browser.')
+      return
+    }
     setExporting(true)
     setExportProgress('')
     st.setSelected(null)
     try {
-      // Desktop app: save to a directory via native dialog
-      if (window.electronAPI) {
-        const dir = await window.electronAPI.pickDirectory()
-        if (!dir) return
+      const dir = await window.electronAPI.pickDirectory()
+      if (!dir) return
 
-        const pngFiles: { name: string; buffer: Uint8Array }[] = []
+      const pngFiles: { name: string; buffer: Uint8Array }[] = []
 
-        for (let i = 0; i < st.slides.length; i++) {
-          const slideId = st.slides[i]!.id
-          const n = String(i + 1).padStart(2, '0')
-          const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
-
-          if (hasVideo) {
-            // Video slide → export as MP4
-            setExportProgress(`Encoding slide ${i + 1} video...`)
-            const outputPath = `${dir}/carousel_${n}.mp4`
-            await stageRef.current!.exportSlideVideo(
-              slideId,
-              outputPath,
-              30,
-              (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%`),
-            )
-
-            // Also export the cover frame as PNG
-            const coverItems = st.items.filter((it) => it.slideId === slideId && it.type === 'video')
-            for (const ci of coverItems) {
-              if (ci.coverTime > 0) {
-                // Seek video to cover time, render, export PNG
-                const vel = videoElements.get(ci.id)
-                if (vel) {
-                  vel.pause()
-                  vel.currentTime = ci.coverTime
-                  await new Promise<void>((r) => {
-                    const onSeeked = () => { vel.removeEventListener('seeked', onSeeked); r() }
-                    vel.addEventListener('seeked', onSeeked)
-                  })
-                  await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
-                }
-              }
-            }
-            // Export cover frame PNG
-            await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
-            const coverBlob = await stageRef.current!.exportSlidePng(slideId)
-            if (coverBlob) {
-              pngFiles.push({
-                name: `carousel_${n}_cover.png`,
-                buffer: new Uint8Array(await coverBlob.arrayBuffer()),
-              })
-            }
-            // Restore video playback
-            for (const ci of coverItems) {
-              const vel = videoElements.get(ci.id)
-              if (vel) { vel.loop = true; vel.play().catch(() => {}) }
-            }
-          } else {
-            // Image slide → export as PNG
-            setExportProgress(`Exporting slide ${i + 1}...`)
-            await new Promise<void>((r) =>
-              requestAnimationFrame(() => requestAnimationFrame(() => r())),
-            )
-            const blob = await stageRef.current!.exportSlidePng(slideId)
-            if (blob) {
-              pngFiles.push({
-                name: `carousel_${n}.png`,
-                buffer: new Uint8Array(await blob.arrayBuffer()),
-              })
-            }
-          }
-        }
-
-        // Save all PNG files (images + cover frames)
-        if (pngFiles.length > 0) {
-          await window.electronAPI.saveFilesToDir({ dirPath: dir, files: pngFiles })
-        }
-        return
-      }
-
-      // Web fallback: only PNG export (no video encoding without ffmpeg)
-      const files: { name: string; data: Blob }[] = []
       for (let i = 0; i < st.slides.length; i++) {
         const slideId = st.slides[i]!.id
-        await new Promise<void>((r) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => r())),
-        )
-        const blob = await stageRef.current!.exportSlidePng(slideId)
-        if (blob) {
-          const n = String(i + 1).padStart(2, '0')
-          files.push({ name: `carousel_${n}.png`, data: blob })
+        const n = String(i + 1).padStart(2, '0')
+        const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
+
+        if (hasVideo) {
+          // Video slide → export as MP4
+          setExportProgress(`Encoding slide ${i + 1} video...`)
+          const outputPath = `${dir}/carousel_${n}.mp4`
+          await stageRef.current!.exportSlideVideo(
+            slideId,
+            outputPath,
+            30,
+            (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%`),
+          )
+        } else {
+          // Image slide → export as PNG
+          setExportProgress(`Exporting slide ${i + 1}...`)
+          await new Promise<void>((r) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => r())),
+          )
+          const blob = await stageRef.current!.exportSlidePng(slideId)
+          if (blob) {
+            pngFiles.push({
+              name: `carousel_${n}.png`,
+              buffer: new Uint8Array(await blob.arrayBuffer()),
+            })
+          }
         }
       }
-      if (!files.length) return
-      if (files.length === 1) {
-        downloadBlob(files[0]!.data, files[0]!.name)
-      } else {
-        const zip = await createZip(files)
-        downloadBlob(zip, 'carousel.zip')
+
+      if (pngFiles.length > 0) {
+        await window.electronAPI.saveFilesToDir({ dirPath: dir, files: pngFiles })
       }
+      console.log(`[export] wrote ${pngFiles.length} PNG(s) to ${dir}`)
+    } catch (err) {
+      console.error('[export] failed:', err)
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setExporting(false)
       setExportProgress('')
@@ -565,65 +397,9 @@ export default function App() {
           {selectedId && (() => {
             const raw = items.find((x) => x.id === selectedId)
             if (!raw) return null
-            const sel = { brightness: 0, contrast: 0, saturation: 1, ...raw }
             return (
               <div className="selection-panel">
                 <h2><Icon.Target />Selection</h2>
-                <label className="field">
-                  <span>Move to slide</span>
-                  <select
-                    value={sel.slideId}
-                    onChange={(e) => moveItemToSlide(selectedId, e.target.value)}
-                  >
-                    {slides.map((s, i) => (
-                      <option key={s.id} value={s.id}>{i + 1}</option>
-                    ))}
-                  </select>
-                </label>
-
-                {sel.type === 'video' && <CoverFramePicker item={sel} />}
-
-                <h2><Icon.Sliders />Color corrections</h2>
-                <label className="slider-field">
-                  <span className="slider-field__label">
-                    Exposure
-                    <span className="slider-field__value">{sel.brightness.toFixed(2)}</span>
-                  </span>
-                  <input type="range" min={-1} max={1} step={0.01} value={sel.brightness}
-                    style={sliderFill(sel.brightness, -1, 1)}
-                    onChange={(e) => updateItem(selectedId, { brightness: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="slider-field">
-                  <span className="slider-field__label">
-                    Contrast
-                    <span className="slider-field__value">{Math.round(sel.contrast)}</span>
-                  </span>
-                  <input type="range" min={-100} max={100} step={1} value={sel.contrast}
-                    style={sliderFill(sel.contrast, -100, 100)}
-                    onChange={(e) => updateItem(selectedId, { contrast: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="slider-field">
-                  <span className="slider-field__label">
-                    Saturation
-                    <span className="slider-field__value">{sel.saturation.toFixed(2)}</span>
-                  </span>
-                  <input type="range" min={0} max={2} step={0.01} value={sel.saturation}
-                    style={sliderFill(sel.saturation, 0, 2)}
-                    onChange={(e) => updateItem(selectedId, { saturation: Number(e.target.value) })}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="btn btn--outline btn--sm"
-                  style={{ marginTop: 8, alignSelf: 'flex-start', gap: 6, flexDirection: 'row' }}
-                  onClick={() => updateItem(selectedId, { brightness: 0, contrast: 0, saturation: 1 })}
-                >
-                  <Icon.Reset style={{ width: 11, height: 11 }} />
-                  Reset
-                </button>
-
                 <button
                   type="button"
                   className="btn btn--ghost btn--danger btn--sm"

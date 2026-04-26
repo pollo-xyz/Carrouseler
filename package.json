@@ -21,6 +21,9 @@
       "dist/**",
       "dist-electron/**"
     ],
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**"
+    ],
     "fileAssociations": [
       {
         "ext": "vpost",
@@ -29,7 +32,21 @@
       }
     ],
     "mac": {
-      "category": "public.app-category.graphics-design"
+      "category": "public.app-category.graphics-design",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ]
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {

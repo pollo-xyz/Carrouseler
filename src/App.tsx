@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import { useCarouselStore } from './store/useCarouselStore'
 import { PRESETS } from './lib/presets'
+import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
 import './App.css'
+
+const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]
 
 /* ============================================================
    Tiny inline icon set — keeps bundle small, tunable with CSS
@@ -67,6 +70,9 @@ export default function App() {
   const stageRef = useRef<EditorStageHandle>(null)
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState('')
+  const [projectPath, setProjectPath] = useState<string | null>(null)
+  const projectPathRef = useRef<string | null>(null)
+  projectPathRef.current = projectPath
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
 
@@ -79,28 +85,39 @@ export default function App() {
 
   const slides = useCarouselStore((s) => s.slides)
   const activeSlideId = useCarouselStore((s) => s.activeSlideId)
-  const selectedId = useCarouselStore((s) => s.selectedId)
+  const selectedIds = useCarouselStore((s) => s.selectedIds)
   const items = useCarouselStore((s) => s.items)
   const removeItem = useCarouselStore((s) => s.removeItem)
+  const removeItems = useCarouselStore((s) => s.removeItems)
   const addMedia = useCarouselStore((s) => s.addMedia)
-  const cropItemId = useCarouselStore((s) => s.cropItemId)
 
   const showGrid = useCarouselStore((s) => s.showGrid)
   const gridSize = useCarouselStore((s) => s.gridSize)
-  const marginPct = useCarouselStore((s) => s.marginPct)
   const showCenterGuides = useCarouselStore((s) => s.showCenterGuides)
   const snapGrid = useCarouselStore((s) => s.snapGrid)
   const snapCenter = useCarouselStore((s) => s.snapCenter)
   const snapItems = useCarouselStore((s) => s.snapItems)
   const snapMargins = useCarouselStore((s) => s.snapMargins)
+  const seamlessSlides = useCarouselStore((s) => s.seamlessSlides)
+  const setSeamlessSlides = useCarouselStore((s) => s.setSeamlessSlides)
+  const showHiddenZone = useCarouselStore((s) => s.showHiddenZone)
+  const setShowHiddenZone = useCarouselStore((s) => s.setShowHiddenZone)
   const setShowGrid = useCarouselStore((s) => s.setShowGrid)
   const setGridSize = useCarouselStore((s) => s.setGridSize)
-  const setMarginPct = useCarouselStore((s) => s.setMarginPct)
   const setShowCenterGuides = useCarouselStore((s) => s.setShowCenterGuides)
   const setSnapGrid = useCarouselStore((s) => s.setSnapGrid)
   const setSnapCenter = useCarouselStore((s) => s.setSnapCenter)
   const setSnapItems = useCarouselStore((s) => s.setSnapItems)
   const setSnapMargins = useCarouselStore((s) => s.setSnapMargins)
+  const setAllSlidesBgColor = useCarouselStore((s) => s.setAllSlidesBgColor)
+
+  // Global background color — shared across slides. Reflects the shared color
+  // when all slides match, else shows the first slide's color.
+  const allBgSameColor = (() => {
+    if (slides.length === 0) return '#ffffff'
+    const first = slides[0]!.bgColor || '#ffffff'
+    return slides.every((s) => (s.bgColor || '#ffffff') === first) ? first : ''
+  })()
 
   const layoutRef = useRef<HTMLDivElement>(null)
 
@@ -190,30 +207,53 @@ export default function App() {
 
       const st = useCarouselStore.getState()
 
+      // Undo / redo (allowed even in crop mode so user can escape).
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
+        if (e.shiftKey) st.redo()
+        else st.undo()
+        e.preventDefault()
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || e.key === 'Y')) {
+        st.redo()
+        e.preventDefault()
+        return
+      }
+
       // Block shortcuts during crop mode
       if (st.cropItemId) return
 
-      // [ and ] to move selected item to prev/next slide
-      if ((e.key === '[' || e.key === ']') && st.selectedId) {
-        const item = st.items.find((x) => x.id === st.selectedId)
+      // [ and ] to move selected item(s) to prev/next slide
+      if ((e.key === '[' || e.key === ']') && st.selectedIds.length) {
+        const primaryId = st.selectedIds[0]!
+        const item = st.items.find((x) => x.id === primaryId)
         if (!item) return
         const currentIdx = st.slides.findIndex((s) => s.id === item.slideId)
         if (currentIdx < 0) return
         const targetIdx = e.key === '[' ? currentIdx - 1 : currentIdx + 1
         if (targetIdx < 0 || targetIdx >= st.slides.length) return
-        st.moveItemToSlide(st.selectedId, st.slides[targetIdx]!.id)
+        const targetSlideId = st.slides[targetIdx]!.id
+        st.selectedIds.forEach((id) => st.moveItemToSlide(id, targetSlideId))
         e.preventDefault()
         return
       }
 
-      // Delete/Backspace to remove selected item
-      if ((e.key === 'Delete' || e.key === 'Backspace') && st.selectedId) {
-        st.removeItem(st.selectedId)
+      // Delete/Backspace to remove selected item(s)
+      if ((e.key === 'Delete' || e.key === 'Backspace') && st.selectedIds.length) {
+        st.removeItems(st.selectedIds)
         e.preventDefault()
       }
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    // In Electron, the Edit menu's Cmd/Ctrl+Z accelerator fires before the
+    // renderer sees the keydown — so also listen for IPC events from main.
+    const offUndo = window.electronAPI?.onUndo(() => useCarouselStore.getState().undo())
+    const offRedo = window.electronAPI?.onRedo(() => useCarouselStore.getState().redo())
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      offUndo?.()
+      offRedo?.()
+    }
   }, [])
 
   /* ---- Export all slides ---- */
@@ -227,7 +267,7 @@ export default function App() {
     }
     setExporting(true)
     setExportProgress('')
-    st.setSelected(null)
+    st.setSelectedIds([])
     try {
       const dir = await window.electronAPI.pickDirectory()
       if (!dir) return
@@ -278,6 +318,117 @@ export default function App() {
     }
   }, [])
 
+  /* ---- Save / Open project ---- */
+  const handleSave = useCallback(async (forcePrompt: boolean) => {
+    if (!window.electronAPI) {
+      alert('Saving projects only works in the desktop app, not the browser.')
+      return
+    }
+    const st = useCarouselStore.getState()
+    try {
+      const blob = await serializeProject(
+        {
+          slides: st.slides,
+          items: st.items,
+          dimensions: st.dimensions,
+          presetId: st.presetId,
+          customWidth: st.customWidth,
+          customHeight: st.customHeight,
+        },
+        async (src) => (await fetch(src)).blob(),
+      )
+      const buffer = new Uint8Array(await blob.arrayBuffer())
+
+      const existing = projectPathRef.current
+      if (existing && !forcePrompt) {
+        await window.electronAPI.writeFile({ path: existing, buffer })
+        return
+      }
+
+      const defaultName = existing
+        ? existing.split('/').pop() || 'Untitled.vpost'
+        : 'Untitled.vpost'
+      const path = await window.electronAPI.saveFile({
+        defaultName,
+        filters: VPOST_FILTER,
+        buffer,
+      })
+      if (path) setProjectPath(path)
+    } catch (err) {
+      console.error('[save] failed:', err)
+      alert(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [])
+
+  const loadFromBuffer = useCallback((buffer: Uint8Array, path: string) => {
+    try {
+      const { manifest, assetBlobs } = deserializeProject(buffer)
+      const assetUrls = new Map<string, string>()
+      for (const [id, blob] of assetBlobs) {
+        assetUrls.set(id, URL.createObjectURL(blob))
+      }
+      const items = hydrateItems(manifest, assetUrls)
+      useCarouselStore.getState().loadProjectState({
+        slides: manifest.slides,
+        items,
+        dimensions: manifest.dimensions,
+        presetId: manifest.presetId,
+        customWidth: manifest.customWidth,
+        customHeight: manifest.customHeight,
+      })
+      setProjectPath(path)
+    } catch (err) {
+      console.error('[open] failed:', err)
+      alert(`Open failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [])
+
+  const handleOpen = useCallback(async () => {
+    if (!window.electronAPI) {
+      alert('Opening projects only works in the desktop app, not the browser.')
+      return
+    }
+    try {
+      const result = await window.electronAPI.openFile({ filters: VPOST_FILTER })
+      if (!result) return
+      loadFromBuffer(result.buffer, result.path)
+    } catch (err) {
+      console.error('[open] failed:', err)
+      alert(`Open failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [loadFromBuffer])
+
+  const handleNew = useCallback(() => {
+    if (!window.confirm('Discard current project and start fresh?')) return
+    useCarouselStore.getState().resetProject()
+    setProjectPath(null)
+  }, [])
+
+  /* ---- Wire File menu IPC + window title ---- */
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api) return
+    const offNew = api.onNewProject(() => handleNew())
+    const offOpen = api.onOpenProject(() => handleOpen())
+    const offSave = api.onSaveProject(() => handleSave(false))
+    const offSaveAs = api.onSaveProjectAs(() => handleSave(true))
+    const offOpenFile = api.onOpenProjectFile(({ path, buffer }) => {
+      loadFromBuffer(buffer, path)
+    })
+    return () => {
+      offNew?.()
+      offOpen?.()
+      offSave?.()
+      offSaveAs?.()
+      offOpenFile?.()
+    }
+  }, [handleNew, handleOpen, handleSave, loadFromBuffer])
+
+  useEffect(() => {
+    const base = projectPath ? projectPath.split('/').pop() : null
+    document.title = base ? `${base} — Tiovivo` : 'Tiovivo'
+  }, [projectPath])
+
   /* ---- Active slide indicator ---- */
   const activeSlideIndex = slides.findIndex((s) => s.id === activeSlideId)
 
@@ -285,8 +436,8 @@ export default function App() {
     <div className="app">
       <header className="app__header">
         <div className="app__brand">
-          <div className="app__brand-mark" aria-hidden>C</div>
-          <span className="app__brand-title">Carrouseler</span>
+          <div className="app__brand-mark" aria-hidden>T</div>
+          <span className="app__brand-title">Tiovivo</span>
         </div>
         <div className="app__brand-sep" aria-hidden />
         <div className="app__presets">
@@ -348,6 +499,22 @@ export default function App() {
         <div className="app__spacer" />
         <button
           type="button"
+          className="btn"
+          onClick={handleOpen}
+          title="Open project (⌘O)"
+        >
+          Open
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => handleSave(false)}
+          title="Save project (⌘S)"
+        >
+          Save
+        </button>
+        <button
+          type="button"
           className="btn btn--export"
           disabled={exporting}
           onClick={exportAll}
@@ -360,8 +527,36 @@ export default function App() {
       <div className="app__body">
         <aside className="app__sidebar">
           <details className="collapsible" open>
+            <summary><h2><Icon.Sliders />Background</h2></summary>
+            <div className="collapsible__body">
+              <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <span>All slides</span>
+                <input
+                  type="color"
+                  value={allBgSameColor || '#ffffff'}
+                  onChange={(e) => setAllSlidesBgColor(e.target.value)}
+                  title="Apply this background color to every slide"
+                  style={{ width: 32, height: 24, padding: 0, border: '1.5px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
+                  {allBgSameColor ? allBgSameColor : 'mixed'}
+                </span>
+              </label>
+            </div>
+          </details>
+
+          <details className="collapsible" open>
             <summary><h2><Icon.Grid />Guides & snap</h2></summary>
             <div className="collapsible__body">
+              <label className="check">
+                <input type="checkbox" checked={seamlessSlides} onChange={(e) => setSeamlessSlides(e.target.checked)} />
+                Seamless slides
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
+                Hidden zone
+              </label>
+              <hr />
               <label className="check">
                 <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
                 Grid
@@ -394,20 +589,25 @@ export default function App() {
             </div>
           </details>
 
-          {selectedId && (() => {
-            const raw = items.find((x) => x.id === selectedId)
-            if (!raw) return null
+          {selectedIds.length > 0 && (() => {
+            const count = selectedIds.length
+            const singleId = count === 1 ? selectedIds[0]! : null
+            const singleOk = singleId ? !!items.find((x) => x.id === singleId) : false
+            if (singleId && !singleOk) return null
             return (
               <div className="selection-panel">
-                <h2><Icon.Target />Selection</h2>
+                <h2><Icon.Target />{count > 1 ? `Selection (${count})` : 'Selection'}</h2>
                 <button
                   type="button"
                   className="btn btn--ghost btn--danger btn--sm"
                   style={{ marginTop: 10, alignSelf: 'flex-start', gap: 6, flexDirection: 'row' }}
-                  onClick={() => removeItem(selectedId)}
+                  onClick={() => {
+                    if (count > 1) removeItems(selectedIds)
+                    else if (singleId) removeItem(singleId)
+                  }}
                 >
                   <Icon.Trash style={{ width: 11, height: 11 }} />
-                  Remove media
+                  {count > 1 ? `Remove ${count} items` : 'Remove media'}
                 </button>
               </div>
             )

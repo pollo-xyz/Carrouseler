@@ -21,11 +21,16 @@ export interface PlacedMedia {
   brightness: number   // -1 to 1  (exposure)
   contrast: number     // -100 to 100
   saturation: number   // 0 to 2 (1 = normal)
+  blur: number         // 0 to 200 (pixel radius, 0 = no blur)
+  flipX: boolean       // horizontal mirror
+  flipY: boolean       // vertical mirror
   cropX: number        // crop region in natural image coords
   cropY: number
   cropW: number        // 0 = no crop (use full image)
   cropH: number
   coverTime: number    // video cover frame time in seconds (0 = first frame)
+  trimStart: number    // video trim start in seconds (0 = from start)
+  trimEnd: number      // video trim end in seconds (0 = play to end)
 }
 
 export interface Slide {
@@ -63,12 +68,14 @@ interface CarouselState {
   customHeight: number
 
   items: PlacedMedia[]
-  selectedId: string | null
+  selectedIds: string[]
 
   showGrid: boolean
   gridSize: number
   marginPct: number
   showCenterGuides: boolean
+  seamlessSlides: boolean
+  showHiddenZone: boolean
   snapGrid: boolean
   snapCenter: boolean
   snapItems: boolean
@@ -83,14 +90,21 @@ interface CarouselState {
 
   addMedia: (file: File, naturalW: number, naturalH: number) => void
   updateItem: (id: string, patch: Partial<PlacedMedia>) => void
+  updateItems: (patches: { id: string; patch: Partial<PlacedMedia> }[]) => void
   removeItem: (id: string) => void
+  removeItems: (ids: string[]) => void
   moveItemToSlide: (itemId: string, slideId: string) => void
+  reorderSlideLayers: (slideId: string, orderedIds: string[]) => void
   setSelected: (id: string | null) => void
+  setSelectedIds: (ids: string[]) => void
+  toggleSelected: (id: string) => void
 
   thumbnails: Record<string, string>
   refreshThumbnail: (slideId: string) => void
   refreshAllThumbnails: () => void
 
+  setSeamlessSlides: (v: boolean) => void
+  setShowHiddenZone: (v: boolean) => void
   setShowGrid: (v: boolean) => void
   setGridSize: (n: number) => void
   setMarginPct: (n: number) => void
@@ -100,14 +114,75 @@ interface CarouselState {
   setSnapItems: (v: boolean) => void
   setSnapMargins: (v: boolean) => void
   setSlideBgColor: (slideId: string, color: string) => void
+  setAllSlidesBgColor: (color: string) => void
 
   cropItemId: string | null
   setCropMode: (id: string | null) => void
   applyCrop: (id: string, cx: number, cy: number, cw: number, ch: number) => void
   resetCrop: (id: string) => void
+
+  _past: HistorySnapshot[]
+  _future: HistorySnapshot[]
+  _historyKey: string | null
+  _historyTime: number
+  undo: () => void
+  redo: () => void
+
+  loadProjectState: (payload: {
+    slides: Slide[]
+    items: PlacedMedia[]
+    dimensions: Size
+    presetId: PresetId
+    customWidth: number
+    customHeight: number
+  }) => void
+  resetProject: () => void
 }
 
+interface HistorySnapshot {
+  slides: Slide[]
+  items: PlacedMedia[]
+  dimensions: Size
+  presetId: PresetId
+  customWidth: number
+  customHeight: number
+}
+
+const HISTORY_LIMIT = 100
+const HISTORY_COALESCE_MS = 500
+
 const initialSlideId = newId()
+
+/* Undo/redo helpers — snapshot content-bearing fields only (not UI toggles). */
+function snapshotOf(s: CarouselState): HistorySnapshot {
+  return {
+    slides: s.slides,
+    items: s.items,
+    dimensions: s.dimensions,
+    presetId: s.presetId,
+    customWidth: s.customWidth,
+    customHeight: s.customHeight,
+  }
+}
+
+function pushHistory(key: string) {
+  const s = useCarouselStore.getState()
+  const now = Date.now()
+  // Coalesce: if the same "kind" of change fires within HISTORY_COALESCE_MS,
+  // treat as a single logical edit (e.g. a drag streams many updateItem calls).
+  if (s._historyKey === key && now - s._historyTime < HISTORY_COALESCE_MS) {
+    useCarouselStore.setState({ _historyTime: now, _future: [] })
+    return
+  }
+  const past = s._past.concat([snapshotOf(s)])
+  if (past.length > HISTORY_LIMIT) past.shift()
+  useCarouselStore.setState({
+    _past: past,
+    _future: [],
+    _historyKey: key,
+    _historyTime: now,
+  })
+}
 
 /* Debounced thumbnail regeneration per slide */
 const thumbTimers: Record<string, ReturnType<typeof setTimeout>> = {}
@@ -134,12 +209,14 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   customHeight: 1350,
 
   items: [],
-  selectedId: null,
+  selectedIds: [],
 
   showGrid: false,
   gridSize: 40,
   marginPct: 4,
   showCenterGuides: false,
+  seamlessSlides: false,
+  showHiddenZone: true,
   snapGrid: false,
   snapCenter: true,
   snapItems: true,
@@ -147,6 +224,11 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
 
   thumbnails: {},
   cropItemId: null,
+
+  _past: [],
+  _future: [],
+  _historyKey: null,
+  _historyTime: 0,
 
   refreshThumbnail: (slideId) => {
     debouncedThumbRefresh(slideId)
@@ -160,6 +242,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   },
 
   setPreset: (id) => {
+    pushHistory('preset')
     const prev = get().dimensions
     if (id === 'custom') {
       const cur = get().dimensions
@@ -180,6 +263,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   },
 
   setCustomDimensions: (w, h) => {
+    pushHistory('dims')
     const prev = get().dimensions
     const next = clampSize(w, h)
     set({
@@ -191,18 +275,22 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     })
   },
 
-  setActiveSlide: (id) => set({ activeSlideId: id, selectedId: null }),
+  // Note: this does NOT clear selectedIds. Click handlers that want to replace
+  // selection must call setSelected(...) / setSelectedIds(...) explicitly. Keeping
+  // selection here is what enables additive (cmd/shift) click to preserve prior
+  // selection — including cross-slide multi-select.
+  setActiveSlide: (id) => set({ activeSlideId: id }),
 
   addSlide: (afterIndex) => {
-    const { slides } = get()
+    pushHistory('addSlide')
+    const { slides, activeSlideId } = get()
     const sid = newId()
-    const idx =
-      afterIndex !== undefined
-        ? afterIndex + 1
-        : slides.findIndex((s) => s.id === get().activeSlideId) + 1
+    const activeIdx = slides.findIndex((s) => s.id === activeSlideId)
+    const idx = afterIndex !== undefined ? afterIndex + 1 : activeIdx + 1
+    const inheritedColor = slides[activeIdx]?.bgColor ?? '#ffffff'
     const next = [...slides]
-    next.splice(Math.min(idx, next.length), 0, { id: sid, bgColor: '#ffffff' })
-    set({ slides: next, activeSlideId: sid, selectedId: null })
+    next.splice(Math.min(idx, next.length), 0, { id: sid, bgColor: inheritedColor })
+    set({ slides: next, activeSlideId: sid, selectedIds: [] })
   },
 
   removeSlide: (id) => {
@@ -210,17 +298,16 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     if (slides.length <= 1) return
     const idx = slides.findIndex((s) => s.id === id)
     if (idx < 0) return
+    pushHistory('removeSlide:' + id)
     const fallback = slides[idx + 1]?.id ?? slides[idx - 1]!.id
     const nextSlides = slides.filter((s) => s.id !== id)
     const removedItems = items.filter((i) => i.slideId === id)
-    removedItems.forEach((i) => URL.revokeObjectURL(i.src))
+    // Note: don't revoke URLs so undo can still use them.
     set({
       slides: nextSlides,
       activeSlideId: activeSlideId === id ? fallback : activeSlideId,
       items: items.filter((i) => i.slideId !== id),
-      selectedId: get().selectedId && removedItems.some((r) => r.id === get().selectedId)
-        ? null
-        : get().selectedId,
+      selectedIds: get().selectedIds.filter((sid) => !removedItems.some((r) => r.id === sid)),
     })
   },
 
@@ -230,6 +317,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     const from = slides.findIndex((s) => s.id === activeId)
     const to = slides.findIndex((s) => s.id === overId)
     if (from < 0 || to < 0) return
+    pushHistory('reorderSlides')
     const next = [...slides]
     const [removed] = next.splice(from, 1)
     next.splice(to, 0, removed!)
@@ -237,6 +325,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   },
 
   addMedia: (file, naturalW, naturalH) => {
+    pushHistory('addMedia')
     const { dimensions, activeSlideId, items } = get()
     const src = URL.createObjectURL(file)
     const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
@@ -269,17 +358,23 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       brightness: 0,
       contrast: 0,
       saturation: 1,
+      blur: 0,
+      flipX: false,
+      flipY: false,
       cropX: 0,
       cropY: 0,
       cropW: 0,
       cropH: 0,
       coverTime: 0,
+      trimStart: 0,
+      trimEnd: 0,
     }
-    set({ items: [...items, item], selectedId: item.id })
+    set({ items: [...items, item], selectedIds: [item.id] })
     debouncedThumbRefresh(activeSlideId)
   },
 
   updateItem: (id, patch) => {
+    pushHistory('updateItem:' + id)
     const item = get().items.find((x) => x.id === id)
     set({
       items: get().items.map((i) => (i.id === id ? { ...i, ...patch } : i)),
@@ -287,17 +382,47 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     if (item) debouncedThumbRefresh(item.slideId)
   },
 
+  updateItems: (patches) => {
+    if (patches.length === 0) return
+    pushHistory('updateItems:' + patches.map((p) => p.id).sort().join(','))
+    const map = new Map(patches.map((p) => [p.id, p.patch]))
+    const touchedSlides = new Set<string>()
+    const next = get().items.map((i) => {
+      const p = map.get(i.id)
+      if (!p) return i
+      touchedSlides.add(i.slideId)
+      return { ...i, ...p }
+    })
+    set({ items: next })
+    touchedSlides.forEach((sid) => debouncedThumbRefresh(sid))
+  },
+
   removeItem: (id) => {
+    pushHistory('removeItem:' + id)
     const i = get().items.find((x) => x.id === id)
-    if (i) URL.revokeObjectURL(i.src)
+    // Note: don't revoke URLs so undo can still use them.
     set({
       items: get().items.filter((x) => x.id !== id),
-      selectedId: get().selectedId === id ? null : get().selectedId,
+      selectedIds: get().selectedIds.filter((sid) => sid !== id),
     })
     if (i) debouncedThumbRefresh(i.slideId)
   },
 
+  removeItems: (ids) => {
+    if (ids.length === 0) return
+    pushHistory('removeItems:' + ids.slice().sort().join(','))
+    const idSet = new Set(ids)
+    const removed = get().items.filter((x) => idSet.has(x.id))
+    set({
+      items: get().items.filter((x) => !idSet.has(x.id)),
+      selectedIds: get().selectedIds.filter((sid) => !idSet.has(sid)),
+    })
+    const slideIds = new Set(removed.map((r) => r.slideId))
+    slideIds.forEach((sid) => debouncedThumbRefresh(sid))
+  },
+
   moveItemToSlide: (itemId, slideId) => {
+    pushHistory('moveItemToSlide:' + itemId)
     const item = get().items.find((x) => x.id === itemId)
     const oldSlideId = item?.slideId
     set({
@@ -309,7 +434,34 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     debouncedThumbRefresh(slideId)
   },
 
-  setSelected: (id) => set({ selectedId: id }),
+  reorderSlideLayers: (slideId, orderedIds) => {
+    pushHistory('reorderLayers:' + slideId)
+    const { items } = get()
+    const idToItem = new Map(items.map((it) => [it.id, it]))
+    const targetSet = new Set(orderedIds)
+    if (targetSet.size !== orderedIds.length) return
+    for (const id of orderedIds) if (!idToItem.has(id)) return
+    // Indices in global items where the target items live, in global order.
+    const slotIdxs: number[] = []
+    items.forEach((it, i) => { if (targetSet.has(it.id)) slotIdxs.push(i) })
+    if (slotIdxs.length !== orderedIds.length) return
+    const newItems = items.slice()
+    slotIdxs.forEach((globalIdx, j) => {
+      newItems[globalIdx] = idToItem.get(orderedIds[j]!)!
+    })
+    set({ items: newItems })
+    debouncedThumbRefresh(slideId)
+  },
+
+  setSelected: (id) => set({ selectedIds: id ? [id] : [] }),
+
+  setSelectedIds: (ids) => set({ selectedIds: ids }),
+
+  toggleSelected: (id) => {
+    const cur = get().selectedIds
+    if (cur.includes(id)) set({ selectedIds: cur.filter((x) => x !== id) })
+    else set({ selectedIds: [...cur, id] })
+  },
 
   setShowGrid: (v) => set({ showGrid: v }),
   setGridSize: (n) => set({ gridSize: Math.max(4, Math.min(400, n)) }),
@@ -318,9 +470,12 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   setSnapGrid: (v) => set({ snapGrid: v }),
   setSnapCenter: (v) => set({ snapCenter: v }),
   setSnapItems: (v) => set({ snapItems: v }),
+  setSeamlessSlides: (v) => set({ seamlessSlides: v }),
+  setShowHiddenZone: (v) => set({ showHiddenZone: v }),
   setSnapMargins: (v) => set({ snapMargins: v }),
 
   setSlideBgColor: (slideId, color) => {
+    pushHistory('bgColor:' + slideId)
     set({
       slides: get().slides.map((s) =>
         s.id === slideId ? { ...s, bgColor: color } : s,
@@ -328,11 +483,20 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     })
   },
 
-  setCropMode: (id) => set({ cropItemId: id, selectedId: id }),
+  setAllSlidesBgColor: (color) => {
+    pushHistory('bgColorAll')
+    set({
+      slides: get().slides.map((s) => ({ ...s, bgColor: color })),
+    })
+    get().refreshAllThumbnails()
+  },
+
+  setCropMode: (id) => set({ cropItemId: id, selectedIds: id ? [id] : [] }),
 
   applyCrop: (id, cx, cy, cw, ch) => {
     const item = get().items.find((x) => x.id === id)
     if (!item) return
+    pushHistory('applyCrop:' + id)
     const oldCX = item.cropW > 0 ? item.cropX : 0
     const oldCY = item.cropH > 0 ? item.cropY : 0
     const effCW = item.cropW || item.naturalWidth
@@ -358,6 +522,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   resetCrop: (id) => {
     const item = get().items.find((x) => x.id === id)
     if (!item || item.cropW === 0) return
+    pushHistory('resetCrop:' + id)
     const scale = item.width / item.cropW
     set({
       items: get().items.map((i) =>
@@ -374,5 +539,87 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       ),
     })
     debouncedThumbRefresh(item.slideId)
+  },
+
+  undo: () => {
+    const s = get()
+    if (s._past.length === 0) return
+    const past = s._past.slice()
+    const prev = past.pop()!
+    const future = s._future.concat([snapshotOf(s)])
+    const validIds = new Set(prev.items.map((i) => i.id))
+    set({
+      ...prev,
+      _past: past,
+      _future: future,
+      _historyKey: null,
+      _historyTime: 0,
+      cropItemId: null,
+      selectedIds: s.selectedIds.filter((id) => validIds.has(id)),
+      activeSlideId: prev.slides.some((sl) => sl.id === s.activeSlideId) ? s.activeSlideId : prev.slides[0]!.id,
+    })
+    get().refreshAllThumbnails()
+  },
+
+  redo: () => {
+    const s = get()
+    if (s._future.length === 0) return
+    const future = s._future.slice()
+    const next = future.pop()!
+    const past = s._past.concat([snapshotOf(s)])
+    const validIds = new Set(next.items.map((i) => i.id))
+    set({
+      ...next,
+      _past: past,
+      _future: future,
+      _historyKey: null,
+      _historyTime: 0,
+      cropItemId: null,
+      selectedIds: s.selectedIds.filter((id) => validIds.has(id)),
+      activeSlideId: next.slides.some((sl) => sl.id === s.activeSlideId) ? s.activeSlideId : next.slides[0]!.id,
+    })
+    get().refreshAllThumbnails()
+  },
+
+  loadProjectState: (payload) => {
+    const firstSlideId = payload.slides[0]?.id
+    if (!firstSlideId) throw new Error('Project has no slides')
+    set({
+      slides: payload.slides,
+      items: payload.items,
+      dimensions: payload.dimensions,
+      presetId: payload.presetId,
+      customWidth: payload.customWidth,
+      customHeight: payload.customHeight,
+      activeSlideId: firstSlideId,
+      selectedIds: [],
+      cropItemId: null,
+      thumbnails: {},
+      _past: [],
+      _future: [],
+      _historyKey: null,
+      _historyTime: 0,
+    })
+    get().refreshAllThumbnails()
+  },
+
+  resetProject: () => {
+    const sid = newId()
+    set({
+      slides: [{ id: sid, bgColor: '#ffffff' }],
+      activeSlideId: sid,
+      dimensions: { ...PRESETS['3:4'] },
+      presetId: '3:4',
+      customWidth: 1080,
+      customHeight: 1350,
+      items: [],
+      selectedIds: [],
+      cropItemId: null,
+      thumbnails: {},
+      _past: [],
+      _future: [],
+      _historyKey: null,
+      _historyTime: 0,
+    })
   },
 }))

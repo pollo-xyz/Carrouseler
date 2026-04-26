@@ -1,5 +1,5 @@
 {
-  "name": "post-preparator",
+  "name": "tiovivo",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,7 +9,28 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "dist": "electron-builder"
+    "dist": "tsc -b && vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.verso.tiovivo",
+    "productName": "Tiovivo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "vpost",
+        "name": "Tiovivo Project",
+        "role": "Editor"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design"
+    }
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

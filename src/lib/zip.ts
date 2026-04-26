@@ -99,5 +99,66 @@ export async function createZip(
   ev.setUint16(20, 0, true) // comment length
   parts.push(end)
 
-  return new Blob(parts, { type: 'application/zip' })
+  return new Blob(parts as BlobPart[], { type: 'application/zip' })
+}
+
+export interface ZipEntry {
+  name: string
+  data: Uint8Array
+}
+
+/**
+ * Minimal STORE-only ZIP reader. Supports the format produced by createZip
+ * above (no compression, no encryption, no zip64). Throws on malformed input
+ * or any compressed entry.
+ */
+export function readZip(buffer: Uint8Array): ZipEntry[] {
+  const dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+
+  // Find End of Central Directory Record. Scan from the end; comment is usually empty.
+  const EOCD_SIG = 0x06054b50
+  let eocdOffset = -1
+  const maxScan = Math.min(buffer.length, 65557) // 22 + 65535 max comment
+  for (let i = buffer.length - 22; i >= buffer.length - maxScan && i >= 0; i--) {
+    if (dv.getUint32(i, true) === EOCD_SIG) {
+      eocdOffset = i
+      break
+    }
+  }
+  if (eocdOffset < 0) throw new Error('readZip: no end-of-central-directory found')
+
+  const cdEntries = dv.getUint16(eocdOffset + 10, true)
+  const cdOffset = dv.getUint32(eocdOffset + 16, true)
+
+  const entries: ZipEntry[] = []
+  let p = cdOffset
+  const CD_SIG = 0x02014b50
+  const LFH_SIG = 0x04034b50
+
+  for (let i = 0; i < cdEntries; i++) {
+    if (dv.getUint32(p, true) !== CD_SIG) throw new Error('readZip: bad central directory entry')
+    const compression = dv.getUint16(p + 10, true)
+    const compSize = dv.getUint32(p + 20, true)
+    const uncompSize = dv.getUint32(p + 24, true)
+    const nameLen = dv.getUint16(p + 28, true)
+    const extraLen = dv.getUint16(p + 30, true)
+    const commentLen = dv.getUint16(p + 32, true)
+    const localOffset = dv.getUint32(p + 42, true)
+    if (compression !== 0) throw new Error('readZip: only STORE compression is supported')
+    if (compSize !== uncompSize) throw new Error('readZip: size mismatch on STORE entry')
+
+    const name = new TextDecoder().decode(buffer.subarray(p + 46, p + 46 + nameLen))
+
+    // Jump to local file header to find the actual data offset
+    if (dv.getUint32(localOffset, true) !== LFH_SIG) throw new Error('readZip: bad local header')
+    const lhNameLen = dv.getUint16(localOffset + 26, true)
+    const lhExtraLen = dv.getUint16(localOffset + 28, true)
+    const dataStart = localOffset + 30 + lhNameLen + lhExtraLen
+    const data = buffer.subarray(dataStart, dataStart + uncompSize)
+
+    entries.push({ name, data })
+    p += 46 + nameLen + extraLen + commentLen
+  }
+
+  return entries
 }

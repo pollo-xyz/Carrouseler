@@ -232,3 +232,114 @@ export function snapPosition(opts: SnapOptions): SnapResult {
 
   return { x, y, guides }
 }
+
+export interface SnapResizeResult {
+  x: number
+  y: number
+  width: number
+  height: number
+  guides: GuideLine[]
+}
+
+export interface SnapResizeOptions {
+  stage: Size
+  oldBox: { x: number; y: number; width: number; height: number }
+  newBox: { x: number; y: number; width: number; height: number }
+  others: { x: number; y: number; width: number; height: number }[]
+  marginPx: number
+  snapItems: boolean
+  snapCenter: boolean
+  snapMargins: boolean
+}
+
+/** Snap the moving edges of a resize box to other items' edges/centers,
+ *  artboard edges, center, and margins. Returns snapped dims + guides. */
+export function snapResize(opts: SnapResizeOptions): SnapResizeResult {
+  const { width: W, height: H } = opts.stage
+  const { x: ox, y: oy, width: ow, height: oh } = opts.oldBox
+  let { x, y, width, height } = opts.newBox
+
+  const oldR = ox + ow, oldB = oy + oh
+  const EPS = 0.25
+  const leftMoved = Math.abs(x - ox) > EPS
+  const rightMoved = Math.abs((x + width) - oldR) > EPS
+  const topMoved = Math.abs(y - oy) > EPS
+  const bottomMoved = Math.abs((y + height) - oldB) > EPS
+
+  const vLines: number[] = []
+  const hLines: number[] = []
+  if (opts.snapItems) {
+    for (const o of opts.others) {
+      vLines.push(o.x, o.x + o.width, o.x + o.width / 2)
+      hLines.push(o.y, o.y + o.height, o.y + o.height / 2)
+    }
+  }
+  if (opts.snapCenter) {
+    vLines.push(0, W, W / 2)
+    hLines.push(0, H, H / 2)
+  }
+  if (opts.snapMargins && opts.marginPx > 0) {
+    vLines.push(opts.marginPx, W - opts.marginPx)
+    hLines.push(opts.marginPx, H - opts.marginPx)
+  }
+
+  const guides: GuideLine[] = []
+
+  const bestMatch = (target: number, candidates: number[]) => {
+    let best = target, bestD = THRESH + 1
+    for (const c of candidates) {
+      const d = Math.abs(c - target)
+      if (d < bestD && d <= THRESH) { bestD = d; best = c }
+    }
+    return bestD <= THRESH ? best : null
+  }
+
+  // Snap left edge
+  if (leftMoved) {
+    const snap = bestMatch(x, vLines)
+    if (snap !== null) {
+      const newWidth = width + (x - snap)
+      if (newWidth > 12) {
+        width = newWidth
+        x = snap
+        guides.push({ orientation: 'vertical', pos: snap, from: Math.min(y, 0), to: Math.max(y + height, H) })
+      }
+    }
+  }
+  // Snap right edge
+  if (rightMoved) {
+    const snap = bestMatch(x + width, vLines)
+    if (snap !== null) {
+      const newWidth = snap - x
+      if (newWidth > 12) {
+        width = newWidth
+        guides.push({ orientation: 'vertical', pos: snap, from: Math.min(y, 0), to: Math.max(y + height, H) })
+      }
+    }
+  }
+  // Snap top edge
+  if (topMoved) {
+    const snap = bestMatch(y, hLines)
+    if (snap !== null) {
+      const newHeight = height + (y - snap)
+      if (newHeight > 12) {
+        height = newHeight
+        y = snap
+        guides.push({ orientation: 'horizontal', pos: snap, from: Math.min(x, 0), to: Math.max(x + width, W) })
+      }
+    }
+  }
+  // Snap bottom edge
+  if (bottomMoved) {
+    const snap = bestMatch(y + height, hLines)
+    if (snap !== null) {
+      const newHeight = snap - y
+      if (newHeight > 12) {
+        height = newHeight
+        guides.push({ orientation: 'horizontal', pos: snap, from: Math.min(x, 0), to: Math.max(x + width, W) })
+      }
+    }
+  }
+
+  return { x, y, width, height, guides }
+}

@@ -7,6 +7,15 @@ export interface ElectronAPI {
 
   pickDirectory: () => Promise<string | null>
 
+  openFile: (options: {
+    filters: { name: string; extensions: string[] }[]
+  }) => Promise<{ path: string; buffer: Uint8Array } | null>
+
+  writeFile: (options: {
+    path: string
+    buffer: Uint8Array
+  }) => Promise<string>
+
   saveFilesToDir: (options: {
     dirPath: string
     files: { name: string; buffer: Uint8Array }[]
@@ -37,6 +46,18 @@ export interface ElectronAPI {
     width: number
     height: number
   }) => Promise<string>
+
+  onUndo: (cb: () => void) => () => void
+  onRedo: (cb: () => void) => () => void
+
+  onNewProject: (cb: () => void) => () => void
+  onOpenProject: (cb: () => void) => () => void
+  onSaveProject: (cb: () => void) => () => void
+  onSaveProjectAs: (cb: () => void) => () => void
+
+  onOpenProjectFile: (
+    cb: (payload: { path: string; buffer: Uint8Array }) => void,
+  ) => () => void
 }
 
 declare global {

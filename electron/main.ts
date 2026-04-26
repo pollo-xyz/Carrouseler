@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -38,6 +38,31 @@ process.env.VITE_PUBLIC = app.isPackaged
 let win: BrowserWindow | null = null
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
+// Pending file path to open once the renderer is ready (Finder double-click,
+// "Open With", or argv-on-launch). On macOS the open-file event can fire
+// before app.whenReady(), so we queue here and flush after window load.
+let pendingOpenPath: string | null = null
+let rendererReady = false
+
+function deliverPendingOpen() {
+  if (!pendingOpenPath || !win) return
+  try {
+    const buffer = fs.readFileSync(pendingOpenPath)
+    win.webContents.send('app:open-project-file', {
+      path: pendingOpenPath,
+      buffer: new Uint8Array(buffer),
+    })
+    pendingOpenPath = null
+  } catch (err) {
+    console.error('[open-file] read failed:', err)
+  }
+}
+
+function queueOpenPath(filePath: string) {
+  pendingOpenPath = filePath
+  if (rendererReady) deliverPendingOpen()
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1400,
@@ -60,6 +85,91 @@ function createWindow() {
   } else {
     win.loadFile(path.join(process.env.DIST!, 'index.html'))
   }
+
+  win.webContents.on('did-finish-load', () => {
+    rendererReady = true
+    deliverPendingOpen()
+  })
+  win.on('closed', () => {
+    rendererReady = false
+  })
+}
+
+// Build a custom app menu so Cmd/Ctrl+Z reaches our renderer instead of being
+// swallowed by the default Edit → Undo role (which only undoes text input).
+function buildMenu() {
+  const isMac = process.platform === 'darwin'
+  const sendToFocused = (channel: string) => {
+    const w = BrowserWindow.getFocusedWindow() ?? win
+    w?.webContents.send(channel)
+  }
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [{
+          label: app.name,
+          submenu: [
+            { role: 'about' as const },
+            { type: 'separator' as const },
+            { role: 'services' as const },
+            { type: 'separator' as const },
+            { role: 'hide' as const },
+            { role: 'hideOthers' as const },
+            { role: 'unhide' as const },
+            { type: 'separator' as const },
+            { role: 'quit' as const },
+          ],
+        }]
+      : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Project',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => sendToFocused('app:new-project'),
+        },
+        {
+          label: 'Open Project…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => sendToFocused('app:open-project'),
+        },
+        { type: 'separator' },
+        {
+          label: 'Save Project',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => sendToFocused('app:save-project'),
+        },
+        {
+          label: 'Save Project As…',
+          accelerator: 'Shift+CmdOrCtrl+S',
+          click: () => sendToFocused('app:save-project-as'),
+        },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        {
+          label: 'Undo',
+          accelerator: 'CmdOrCtrl+Z',
+          click: () => sendToFocused('app:undo'),
+        },
+        {
+          label: 'Redo',
+          accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'CmdOrCtrl+Y',
+          click: () => sendToFocused('app:redo'),
+        },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 app.on('window-all-closed', () => {
@@ -75,7 +185,40 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(createWindow)
+// macOS: Finder hands us paths via this event (fires before whenReady on
+// cold-launch via double-click, and at any time during runtime via Open With).
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  if (!filePath.toLowerCase().endsWith('.vpost')) return
+  queueOpenPath(filePath)
+})
+
+// Single-instance: when a second launch happens (e.g. user double-clicks
+// another .vpost while app is running on Win/Linux), focus the existing
+// window and pick up the new path from argv.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_e, argv) => {
+    const fileArg = argv.find((a) => a.toLowerCase().endsWith('.vpost'))
+    if (fileArg) queueOpenPath(fileArg)
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })
+}
+
+app.whenReady().then(() => {
+  // Cold-launch with file argument (Win/Linux; macOS uses open-file event).
+  if (process.platform !== 'darwin') {
+    const fileArg = process.argv.slice(1).find((a) => a.toLowerCase().endsWith('.vpost'))
+    if (fileArg && fs.existsSync(fileArg)) queueOpenPath(fileArg)
+  }
+  buildMenu()
+  createWindow()
+})
 
 /* ------------------------------------------------------------------ */
 /*  IPC handlers — file operations                                    */
@@ -115,6 +258,29 @@ ipcMain.handle('save-files-to-dir', async (_event, options: {
     fs.writeFileSync(filePath, Buffer.from(file.buffer))
   }
   return options.files.length
+})
+
+// Open a single file with an open dialog
+ipcMain.handle('open-file', async (_event, options: {
+  filters: { name: string; extensions: string[] }[]
+}) => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: options.filters,
+  })
+  if (result.canceled || !result.filePaths.length) return null
+  const filePath = result.filePaths[0]!
+  const buffer = fs.readFileSync(filePath)
+  return { path: filePath, buffer: new Uint8Array(buffer) }
+})
+
+// Write a buffer to a known path (no dialog)
+ipcMain.handle('write-file', async (_event, options: {
+  path: string
+  buffer: Uint8Array
+}) => {
+  fs.writeFileSync(options.path, Buffer.from(options.buffer))
+  return options.path
 })
 
 /* ------------------------------------------------------------------ */

@@ -7,6 +7,12 @@ import './App.css'
 
 const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]
 
+// Strip characters that are illegal or troublesome in filenames on macOS,
+// Windows, and Linux. Trim trailing dots/spaces too (Windows refuses them).
+function sanitizeFilename(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '_').replace(/[. ]+$/g, '')
+}
+
 /* ============================================================
    Tiny inline icon set — keeps bundle small, tunable with CSS
    ============================================================ */
@@ -73,6 +79,8 @@ export default function App() {
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const projectPathRef = useRef<string | null>(null)
   projectPathRef.current = projectPath
+
+  const [exportPrefix, setExportPrefix] = useState<string>('')
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
 
@@ -268,6 +276,9 @@ export default function App() {
     setExporting(true)
     setExportProgress('')
     st.setSelectedIds([])
+    const prefix = sanitizeFilename(exportPrefix.trim()) || 'carousel'
+    const written: string[] = []
+    let videoErrors = 0
     try {
       const dir = await window.electronAPI.pickDirectory()
       if (!dir) return
@@ -282,13 +293,21 @@ export default function App() {
         if (hasVideo) {
           // Video slide → export as MP4
           setExportProgress(`Encoding slide ${i + 1} video...`)
-          const outputPath = `${dir}/carousel_${n}.mp4`
-          await stageRef.current!.exportSlideVideo(
-            slideId,
-            outputPath,
-            30,
-            (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%`),
-          )
+          const filename = `${prefix}_${n}.mp4`
+          const outputPath = `${dir}/${filename}`
+          try {
+            const result = await stageRef.current!.exportSlideVideo(
+              slideId,
+              outputPath,
+              30,
+              (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%`),
+            )
+            if (result) written.push(filename)
+            else videoErrors++
+          } catch (err) {
+            videoErrors++
+            console.error(`[export] video slide ${i + 1} failed:`, err)
+          }
         } else {
           // Image slide → export as PNG
           setExportProgress(`Exporting slide ${i + 1}...`)
@@ -297,10 +316,12 @@ export default function App() {
           )
           const blob = await stageRef.current!.exportSlidePng(slideId)
           if (blob) {
+            const filename = `${prefix}_${n}.png`
             pngFiles.push({
-              name: `carousel_${n}.png`,
+              name: filename,
               buffer: new Uint8Array(await blob.arrayBuffer()),
             })
+            written.push(filename)
           }
         }
       }
@@ -308,7 +329,17 @@ export default function App() {
       if (pngFiles.length > 0) {
         await window.electronAPI.saveFilesToDir({ dirPath: dir, files: pngFiles })
       }
-      console.log(`[export] wrote ${pngFiles.length} PNG(s) to ${dir}`)
+      console.log(`[export] wrote ${written.length} file(s) to ${dir}`, written)
+      if (videoErrors > 0) {
+        alert(
+          `Exported ${written.length} file(s) to:\n${dir}\n\n` +
+          `${videoErrors} video slide(s) failed. Check the dev console (View → Toggle Developer Tools) for details.`,
+        )
+      } else if (written.length > 0) {
+        alert(`Exported ${written.length} file(s) to:\n${dir}`)
+      } else {
+        alert(`Nothing was exported. The slide list is empty or every slide failed.`)
+      }
     } catch (err) {
       console.error('[export] failed:', err)
       alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -316,7 +347,7 @@ export default function App() {
       setExporting(false)
       setExportProgress('')
     }
-  }, [])
+  }, [exportPrefix])
 
   /* ---- Save / Open project ---- */
   const handleSave = useCallback(async (forcePrompt: boolean) => {
@@ -427,6 +458,11 @@ export default function App() {
   useEffect(() => {
     const base = projectPath ? projectPath.split('/').pop() : null
     document.title = base ? `${base} — Tiovivo` : 'Tiovivo'
+    if (base) {
+      // Default the export prefix to the project file basename without extension.
+      const stem = base.replace(/\.vpost$/i, '')
+      setExportPrefix(stem)
+    }
   }, [projectPath])
 
   /* ---- Active slide indicator ---- */
@@ -513,6 +549,39 @@ export default function App() {
         >
           Save
         </button>
+        <label
+          className="app__export-name"
+          title="Filename prefix used for exported PNGs/MP4s. Defaults to the project name."
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '0 8px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 6,
+            background: 'rgba(255,255,255,0.03)',
+            height: 32,
+          }}
+        >
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Name</span>
+          <input
+            type="text"
+            value={exportPrefix}
+            onChange={(e) => setExportPrefix(e.target.value)}
+            placeholder="carousel"
+            spellCheck={false}
+            style={{
+              width: 120,
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              color: '#fff',
+              fontSize: 13,
+              fontFamily: 'inherit',
+            }}
+          />
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)' }}>_NN</span>
+        </label>
         <button
           type="button"
           className="btn btn--export"

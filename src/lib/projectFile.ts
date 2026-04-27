@@ -22,7 +22,10 @@ export interface ProjectManifest {
   customHeight: number
   slides: Slide[]
   assets: ProjectAsset[]
-  items: (Omit<PlacedMedia, 'src'> & { assetId: string })[]
+  items: (Omit<PlacedMedia, 'src' | 'coverImageSrc'> & {
+    assetId: string
+    coverAssetId?: string
+  })[]
 }
 
 export interface SerializeInput {
@@ -56,16 +59,24 @@ export async function serializeProject(
 ): Promise<Blob> {
   const srcToAsset = new Map<string, ProjectAsset>()
   const assetBlobs: { name: string; data: Blob }[] = []
-
   let counter = 0
-  for (const item of state.items) {
-    if (srcToAsset.has(item.src)) continue
-    const blob = await getAssetBlob(item.src)
+
+  const registerAsset = async (src: string, displayName: string) => {
+    if (srcToAsset.has(src)) return srcToAsset.get(src)!.id
+    const blob = await getAssetBlob(src)
     const id = `a${++counter}`
-    const ext = extFromMime(blob.type, extFromName(item.name))
+    const ext = extFromMime(blob.type, extFromName(displayName))
     const path = `assets/${id}.${ext}`
-    srcToAsset.set(item.src, { id, name: item.name, mime: blob.type, path })
+    srcToAsset.set(src, { id, name: displayName, mime: blob.type, path })
     assetBlobs.push({ name: path, data: blob })
+    return id
+  }
+
+  for (const item of state.items) {
+    await registerAsset(item.src, item.name)
+    if (item.coverImageSrc) {
+      await registerAsset(item.coverImageSrc, `cover-${item.name}`)
+    }
   }
 
   const manifest: ProjectManifest = {
@@ -78,9 +89,16 @@ export async function serializeProject(
     slides: state.slides,
     assets: Array.from(srcToAsset.values()),
     items: state.items.map((it) => {
-      const { src: _src, ...rest } = it
-      void _src
-      return { ...rest, assetId: srcToAsset.get(it.src)!.id }
+      const { src: _src, coverImageSrc: _cs, ...rest } = it
+      void _src; void _cs
+      const out: ProjectManifest['items'][number] = {
+        ...rest,
+        assetId: srcToAsset.get(it.src)!.id,
+      }
+      if (it.coverImageSrc) {
+        out.coverAssetId = srcToAsset.get(it.coverImageSrc)!.id
+      }
+      return out
     }),
   }
 
@@ -134,8 +152,13 @@ export function hydrateItems(
   return manifest.items.map((it) => {
     const url = assetUrls.get(it.assetId)
     if (!url) throw new Error(`No URL for assetId ${it.assetId}`)
-    const { assetId: _aid, ...rest } = it
+    const { assetId: _aid, coverAssetId, ...rest } = it
     void _aid
-    return { ...rest, src: url, type: rest.type as MediaType }
+    const hydrated: PlacedMedia = { ...rest, src: url, type: rest.type as MediaType }
+    if (coverAssetId) {
+      const coverUrl = assetUrls.get(coverAssetId)
+      if (coverUrl) hydrated.coverImageSrc = coverUrl
+    }
+    return hydrated
   })
 }

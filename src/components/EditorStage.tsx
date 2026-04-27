@@ -12,7 +12,7 @@ import Konva from 'konva'
 import { Image as KonvaImage } from 'react-konva'
 import { useCarouselStore, type PlacedMedia } from '../store/useCarouselStore'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
-import { videoElements } from '../lib/videoRegistry'
+import { coverImageElements, videoElements } from '../lib/videoRegistry'
 import LayerStack from './LayerStack'
 
 /* ------------------------------------------------------------------ */
@@ -170,6 +170,20 @@ function MediaItemView({
     }
     return () => v.removeEventListener('timeupdate', onTime)
   }, [item.id, item.type, item.trimStart, item.trimEnd, img])
+
+  // Load custom cover image (videos only) into the registry so the export
+  // pipeline can swap it in for frame 0.
+  useEffect(() => {
+    if (item.type !== 'video' || !item.coverImageSrc) {
+      coverImageElements.delete(item.id)
+      return
+    }
+    const im = new window.Image()
+    im.crossOrigin = 'anonymous'
+    im.onload = () => coverImageElements.set(item.id, im)
+    im.src = item.coverImageSrc
+    return () => { coverImageElements.delete(item.id) }
+  }, [item.id, item.type, item.coverImageSrc])
 
   if (!img) return null
 
@@ -645,10 +659,13 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
   const updateItem = useCarouselStore((s) => s.updateItem)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [duration, setDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(item.coverTime || 0)
+  const usingImage = !!item.coverImageSrc
 
   useEffect(() => {
+    if (usingImage) return
     const v = document.createElement('video')
     v.src = item.src
     v.muted = true
@@ -682,7 +699,24 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
       v.src = ''
       videoRef.current = null
     }
-  }, [item.src, item.coverTime])
+  }, [item.src, item.coverTime, usingImage])
+
+  const handlePickImage = () => fileInputRef.current?.click()
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    // Revoke any previous custom cover URL so we don't leak blob references.
+    if (item.coverImageSrc) URL.revokeObjectURL(item.coverImageSrc)
+    const url = URL.createObjectURL(f)
+    updateItem(item.id, { coverImageSrc: url })
+    e.target.value = ''
+  }
+
+  const handleClearImage = () => {
+    if (item.coverImageSrc) URL.revokeObjectURL(item.coverImageSrc)
+    updateItem(item.id, { coverImageSrc: undefined })
+  }
 
   const handleScrub = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const t = Number(e.target.value)
@@ -723,27 +757,59 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
         gap: 8,
       }}
     >
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover frame</span>
-      <canvas
-        ref={canvasRef}
-        style={{ width: '100%', borderRadius: 4, background: '#000', aspectRatio: '16/9', objectFit: 'contain' }}
-      />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <input
-          type="range"
-          min={0}
-          max={duration || 1}
-          step={0.033}
-          value={currentTime}
-          onChange={handleScrub}
-          onMouseUp={handleScrubEnd}
-          onTouchEnd={handleScrubEnd}
-          style={{ flex: 1 }}
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover</span>
+      {usingImage ? (
+        <img
+          src={item.coverImageSrc}
+          style={{ width: '100%', borderRadius: 4, background: '#000', aspectRatio: '16/9', objectFit: 'contain' }}
+          alt=""
         />
-        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
-          {fmt(currentTime)}
-        </span>
-      </div>
+      ) : (
+        <canvas
+          ref={canvasRef}
+          style={{ width: '100%', borderRadius: 4, background: '#000', aspectRatio: '16/9', objectFit: 'contain' }}
+        />
+      )}
+      {!usingImage && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="range"
+            min={0}
+            max={duration || 1}
+            step={0.033}
+            value={currentTime}
+            onChange={handleScrub}
+            onMouseUp={handleScrubEnd}
+            onTouchEnd={handleScrubEnd}
+            style={{ flex: 1 }}
+          />
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
+            {fmt(currentTime)}
+          </span>
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
+      <button
+        type="button"
+        onClick={usingImage ? handleClearImage : handlePickImage}
+        style={{
+          fontSize: 11,
+          padding: '6px 8px',
+          borderRadius: 4,
+          border: '1px solid rgba(255,255,255,0.15)',
+          background: 'rgba(255,255,255,0.05)',
+          color: 'rgba(255,255,255,0.85)',
+          cursor: 'pointer',
+        }}
+      >
+        {usingImage ? 'Use video frame' : 'Use image…'}
+      </button>
     </div>
   )
 }
@@ -1729,8 +1795,28 @@ const EditorStage = forwardRef<
           // frame 0: seek to each video's coverTime; subsequent frames: play from 0
           const time = frame === 0 ? null : (frame - 1) / fps
 
-          const seekPromises = videoEls.map(({ el, coverTime, trimStart, trimEnd }) => {
+          // For frame 0 only: swap the Konva node's image to the custom cover
+          // image when the user picked one. Restore right after capture.
+          const coverSwaps: { node: Konva.Image; original: CanvasImageSource }[] = []
+          if (time === null) {
+            for (const { item } of videoEls) {
+              if (!item.coverImageSrc) continue
+              const coverImg = coverImageElements.get(item.id)
+              if (!coverImg) continue
+              const node = stage.findOne(`#media-${item.id}`) as Konva.Image | undefined
+              if (!node) continue
+              coverSwaps.push({ node, original: node.image() as CanvasImageSource })
+              node.image(coverImg)
+            }
+          }
+
+          const seekPromises = videoEls.map(({ item, el, coverTime, trimStart, trimEnd }) => {
             return new Promise<void>((resolve) => {
+              // Skip seeking when this frame uses a custom cover image —
+              // the video element won't be drawn.
+              if (time === null && item.coverImageSrc && coverImageElements.has(item.id)) {
+                resolve(); return
+              }
               const target = time === null ? coverTime : trimStart + time
               const cap = Math.min(trimEnd, el.duration) - 0.001
               const clamped = target >= cap ? cap : target
@@ -1755,6 +1841,12 @@ const EditorStage = forwardRef<
           const ctx = canvas.getContext('2d')!
           const imageData = ctx.getImageData(0, 0, W, H)
           const frameData = new Uint8Array(imageData.data.buffer)
+
+          // Restore the original (video) image source on any nodes we
+          // swapped above so subsequent frames render the video stream.
+          for (const { node, original } of coverSwaps) {
+            node.image(original as unknown as Parameters<Konva.Image['image']>[0])
+          }
 
           // Make sure the previous write finished (bounded queue of 1)
           // before dispatching the next one — keeps IPC pipelined with

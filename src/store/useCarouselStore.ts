@@ -29,6 +29,7 @@ export interface PlacedMedia {
   cropW: number        // 0 = no crop (use full image)
   cropH: number
   coverTime: number    // video cover frame time in seconds (0 = first frame)
+  coverImageSrc?: string // optional custom cover image (overrides coverTime when set)
   trimStart: number    // video trim start in seconds (0 = from start)
   trimEnd: number      // video trim end in seconds (0 = play to end)
 }

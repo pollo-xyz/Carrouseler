@@ -20,6 +20,7 @@ export interface ProjectManifest {
   presetId: PresetId
   customWidth: number
   customHeight: number
+  workspaceBgColor?: string
   slides: Slide[]
   assets: ProjectAsset[]
   items: (Omit<PlacedMedia, 'src' | 'coverImageSrc'> & {
@@ -35,6 +36,7 @@ export interface SerializeInput {
   presetId: PresetId
   customWidth: number
   customHeight: number
+  workspaceBgColor: string
 }
 
 function extFromMime(mime: string, fallback: string): string {
@@ -86,6 +88,7 @@ export async function serializeProject(
     presetId: state.presetId,
     customWidth: state.customWidth,
     customHeight: state.customHeight,
+    workspaceBgColor: state.workspaceBgColor,
     slides: state.slides,
     assets: Array.from(srcToAsset.values()),
     items: state.items.map((it) => {

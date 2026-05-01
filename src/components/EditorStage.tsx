@@ -22,7 +22,6 @@ import LayerStack from './LayerStack'
 const PASTEBOARD_PAD_BASE = 1500
 const PASTEBOARD_PAD_FACTOR = 2 // pasteboard extends this × max(W,H) beyond slides
 const ARTBOARD_GAP = 120
-const PASTEBOARD_COLOR = '#0a0a0e'
 const GUIDE_COLOR = '#3366ff'
 const GUIDE_COLOR_CENTER = '#3399ff'
 const MIN_ZOOM = 0.02
@@ -1188,8 +1187,8 @@ export interface EditorStageHandle {
 
 const EditorStage = forwardRef<
   EditorStageHandle,
-  { maxViewWidth: number; maxViewHeight: number }
->(function EditorStage({ maxViewWidth, maxViewHeight }, ref) {
+  { maxViewWidth: number; maxViewHeight: number; onExportSingleSlide?: (slideId: string) => void }
+>(function EditorStage({ maxViewWidth, maxViewHeight, onExportSingleSlide }, ref) {
   const stageRef = useRef<Konva.Stage>(null)
   const bgLayerRef = useRef<Konva.Layer>(null)
   const guidesLayerRef = useRef<Konva.Layer>(null)
@@ -1216,6 +1215,11 @@ const EditorStage = forwardRef<
   const removeSlide = useCarouselStore((s) => s.removeSlide)
   const reorderSlides = useCarouselStore((s) => s.reorderSlides)
   const setSlideBgColor = useCarouselStore((s) => s.setSlideBgColor)
+  const toggleSlideExport = useCarouselStore((s) => s.toggleSlideExport)
+  const workspaceBgColor = useCarouselStore((s) => s.workspaceBgColor)
+  const fitItemToSlide = useCarouselStore((s) => s.fitItemToSlide)
+  const fillItemToSlide = useCarouselStore((s) => s.fillItemToSlide)
+  const resetItemScale = useCarouselStore((s) => s.resetItemScale)
   const cropItemId = useCarouselStore((s) => s.cropItemId)
   const setCropMode = useCarouselStore((s) => s.setCropMode)
   const resetCropAction = useCarouselStore((s) => s.resetCrop)
@@ -1421,7 +1425,7 @@ const EditorStage = forwardRef<
   /* ---- multi-drag state: captured at drag start for co-movement ---- */
   const dragMultiRef = useRef<{
     primary: string
-    items: { id: string; slideId: string; initialLocalX: number; initialLocalY: number; initialWorldX: number; initialWorldY: number }[]
+    items: { id: string; slideId: string; initialLocalX: number; initialLocalY: number }[]
   } | null>(null)
 
   const handleDragStart = useCallback(
@@ -1437,27 +1441,20 @@ const EditorStage = forwardRef<
       }
       const snap = useCarouselStore.getState()
       const all = snap.items
-      const slideArr = snap.slides
-      const captured: { id: string; slideId: string; initialLocalX: number; initialLocalY: number; initialWorldX: number; initialWorldY: number }[] = []
+      const captured: { id: string; slideId: string; initialLocalX: number; initialLocalY: number }[] = []
       for (const id of selectedIds) {
         const it = all.find((x) => x.id === id)
         if (!it) continue
-        const idx = slideArr.findIndex((s) => s.id === it.slideId)
-        if (idx < 0) continue
-        const ap = artboardPositions[idx]
-        if (!ap) continue
         captured.push({
           id,
           slideId: it.slideId,
           initialLocalX: it.x,
           initialLocalY: it.y,
-          initialWorldX: ap.x + it.x,
-          initialWorldY: ap.y + it.y,
         })
       }
       dragMultiRef.current = { primary: item.id, items: captured }
     },
-    [selectedIds, artboardPositions, setSelected],
+    [selectedIds, setSelected],
   )
 
   /* ---- snapping during drag ---- */
@@ -1495,22 +1492,23 @@ const EditorStage = forwardRef<
       node.x(ap.x + result.x - groupX)
       node.y(ap.y + result.y - groupY)
 
-      // Move sibling selected items by the same world-space delta.
+      // Move sibling selected items by the same slide-local delta. Computing
+      // the delta in slide-local coords (not world-space) means cross-slide
+      // selections stay put in their own slides instead of being shoved by
+      // the inter-artboard gap each drag — which used to compound visibly.
       if (multi && multi.primary === item.id) {
         const primaryInit = multi.items.find((x) => x.id === item.id)
         if (primaryInit) {
-          const finalWsX = group.x() + node.x()
-          const finalWsY = group.y() + node.y()
-          const dX = finalWsX - primaryInit.initialWorldX
-          const dY = finalWsY - primaryInit.initialWorldY
+          const dXLocal = result.x - primaryInit.initialLocalX
+          const dYLocal = result.y - primaryInit.initialLocalY
           const stage = stageRef.current
           if (stage) {
             for (const sib of multi.items) {
               if (sib.id === item.id) continue
               const sibNode = stage.findOne(`#media-${sib.id}`) as Konva.Image | null
               if (!sibNode) continue
-              sibNode.x(sib.initialLocalX + dX)
-              sibNode.y(sib.initialLocalY + dY)
+              sibNode.x(sib.initialLocalX + dXLocal)
+              sibNode.y(sib.initialLocalY + dYLocal)
             }
             stage.batchDraw()
           }
@@ -1547,18 +1545,17 @@ const EditorStage = forwardRef<
       const localY = groupY + node.y() - ap.y
       const crossSlide = target.slideId !== item.slideId
 
-      // Commit sibling positions for multi-drag, then clear state.
+      // Commit sibling positions for multi-drag, then clear state. Use the
+      // primary's slide-local delta — same correction as in handleDragMove.
       const multi = dragMultiRef.current
       if (multi && multi.primary === item.id) {
         const primaryInit = multi.items.find((x) => x.id === item.id)
         if (primaryInit) {
-          const finalWsX = groupX + node.x()
-          const finalWsY = groupY + node.y()
-          const dX = finalWsX - primaryInit.initialWorldX
-          const dY = finalWsY - primaryInit.initialWorldY
+          const dXLocal = localX - primaryInit.initialLocalX
+          const dYLocal = localY - primaryInit.initialLocalY
           const patches = multi.items
             .filter((s) => s.id !== item.id)
-            .map((s) => ({ id: s.id, patch: { x: s.initialLocalX + dX, y: s.initialLocalY + dY } }))
+            .map((s) => ({ id: s.id, patch: { x: s.initialLocalX + dXLocal, y: s.initialLocalY + dYLocal } }))
           if (patches.length) updateItems(patches)
         }
         dragMultiRef.current = null
@@ -2039,7 +2036,44 @@ const EditorStage = forwardRef<
                   opacity: isDragged ? 0.7 : 1,
                 }}
               >
-                <span>Slide {i + 1}</span>
+                <span style={{ opacity: slide.exportEnabled ? 1 : 0.45 }}>Slide {i + 1}</span>
+                <button
+                  type="button"
+                  title={slide.exportEnabled ? 'Included in export — click to skip' : 'Skipped in export — click to include'}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); toggleSlideExport(slide.id) }}
+                  style={{
+                    background: slide.exportEnabled ? 'rgba(124,108,240,0.25)' : 'transparent',
+                    border: `1px solid ${slide.exportEnabled ? 'rgba(124,108,240,0.5)' : 'rgba(255,255,255,0.18)'}`,
+                    color: slide.exportEnabled ? '#fff' : 'rgba(255,255,255,0.45)',
+                    borderRadius: 3, cursor: 'pointer', fontSize: 10,
+                    padding: '1px 5px', lineHeight: 1.3, fontWeight: 600,
+                    fontFamily: 'system-ui, sans-serif',
+                  }}
+                >
+                  {slide.exportEnabled ? '✓ export' : '⌀ skip'}
+                </button>
+                {onExportSingleSlide && (
+                  <button
+                    type="button"
+                    title="Export only this slide"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); onExportSingleSlide(slide.id) }}
+                    style={{
+                      background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)',
+                      cursor: 'pointer', padding: 2, lineHeight: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = '#fff' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 4v12" />
+                      <path d="M7 11l5 5 5-5" />
+                      <path d="M5 20h14" />
+                    </svg>
+                  </button>
+                )}
                 {slides.length > 1 && (
                   <button
                     type="button"
@@ -2117,6 +2151,55 @@ const EditorStage = forwardRef<
                   {slide.bgColor || '#ffffff'}
                 </span>
               </div>
+
+              {/* Upscale warning badges — one per upscaled item, anchored to the
+                  item's top-right corner. HTML overlay so it never lands in exports. */}
+              {items
+                .filter((it) => it.slideId === slide.id)
+                .map((it) => {
+                  const live = dragLive && dragLive.itemId === it.id && dragLive.slideIdx === i ? dragLive : null
+                  const ix = live ? live.x : it.x
+                  const iy = live ? live.y : it.y
+                  const iw = live ? live.width : it.width
+                  const ih = live ? live.height : it.height
+                  const isUp = it.naturalWidth > 0 && it.naturalHeight > 0 &&
+                    (iw > it.naturalWidth * 1.01 || ih > it.naturalHeight * 1.01)
+                  if (!isUp) return null
+                  const bx = (ap.x + ix + iw) * zoom + panOffset.x
+                  const by = (ap.y + iy) * zoom + panOffset.y
+                  const targetW = Math.round(iw)
+                  const targetH = Math.round(ih)
+                  return (
+                    <div
+                      key={`warn-${it.id}`}
+                      title={`Upscaled past native size (${it.naturalWidth}×${it.naturalHeight}px → ${targetW}×${targetH}px). Quality will degrade in export.`}
+                      style={{
+                        position: 'absolute',
+                        left: bx,
+                        top: by,
+                        transform: 'translate(-50%, -50%)',
+                        width: 22,
+                        height: 22,
+                        borderRadius: '50%',
+                        background: '#ffb020',
+                        color: '#1a1100',
+                        border: '2px solid rgba(0,0,0,0.55)',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 14,
+                        fontWeight: 800,
+                        fontFamily: 'system-ui, sans-serif',
+                        cursor: 'help',
+                        pointerEvents: 'auto',
+                        userSelect: 'none',
+                      }}
+                    >
+                      !
+                    </div>
+                  )
+                })}
 
               {/* Layer stack — below color picker */}
               <div
@@ -2269,6 +2352,45 @@ const EditorStage = forwardRef<
                       </svg>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); fitItemToSlide(selectedId!) }}
+                    title="Fit to slide"
+                    style={btnBase}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="1.5" />
+                      <rect x="8" y="9" width="8" height="6" rx="0.5" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); fillItemToSlide(selectedId!) }}
+                    title="Fill slide"
+                    style={btnBase}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="1.5" />
+                      <path d="M2 8 L8 8 L8 2" />
+                      <path d="M22 8 L16 8 L16 2" />
+                      <path d="M2 16 L8 16 L8 22" />
+                      <path d="M22 16 L16 16 L16 22" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); resetItemScale(selectedId!) }}
+                    title="Reset to 100%"
+                    style={btnBase}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                  >
+                    <span style={{ fontFamily: 'var(--mono, monospace)', fontSize: 11, fontWeight: 700, letterSpacing: -0.3 }}>1:1</span>
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setRotateMode((v) => !v) }}
@@ -2513,7 +2635,7 @@ const EditorStage = forwardRef<
         style={{
           position: 'absolute', top: 0, left: 0,
           width: maxViewWidth, height: maxViewHeight,
-          background: PASTEBOARD_COLOR,
+          background: workspaceBgColor,
           overflow: 'hidden',
         }}
       >
@@ -2599,6 +2721,7 @@ const EditorStage = forwardRef<
           <Layer ref={guidesLayerRef} listening={false}>
             {slides.map((slide, i) => {
               const ap = artboardPositions[i]!
+              const slideItems = items.filter((it) => it.slideId === slide.id)
               return (
                 <Group key={slide.id} x={ap.x} y={ap.y}>
                   <Rect x={0} y={0} width={W} height={H} stroke="rgba(255,255,255,0.12)" strokeWidth={1.5} />
@@ -2621,6 +2744,30 @@ const EditorStage = forwardRef<
                       <Line points={[0, H / 2, W, H / 2]} stroke="rgba(120,180,255,0.3)" strokeWidth={1} strokeScaleEnabled={false} />
                     </>
                   )}
+                  {/* Upscale outline — thicker dashed ring on items being scaled past natural size.
+                      Lives in the guides layer so it's hidden during export. Uses dragLive when
+                      the item is currently being dragged so the ring follows in real time. */}
+                  {slideItems.map((item) => {
+                    const live = dragLive && dragLive.itemId === item.id && dragLive.slideIdx === i ? dragLive : null
+                    const ix = live ? live.x : item.x
+                    const iy = live ? live.y : item.y
+                    const iw = live ? live.width : item.width
+                    const ih = live ? live.height : item.height
+                    const up = item.naturalWidth > 0 && item.naturalHeight > 0 &&
+                      (iw > item.naturalWidth * 1.01 || ih > item.naturalHeight * 1.01)
+                    if (!up) return null
+                    return (
+                      <Rect
+                        key={`upscale-${item.id}`}
+                        x={ix} y={iy}
+                        width={iw} height={ih}
+                        rotation={item.rotation}
+                        stroke="#ffb020" strokeWidth={3} dash={[12, 7]}
+                        strokeScaleEnabled={false}
+                        listening={false}
+                      />
+                    )
+                  })}
                 </Group>
               )
             })}
@@ -2659,22 +2806,6 @@ const EditorStage = forwardRef<
                       onRegisterApply={(fn) => { cropApplyRef.current = fn }}
                     />
                   )}
-                  {/* Upscale indicators — red dashed border when image exceeds natural size */}
-                  {slideItems.map((item) => {
-                    const up = item.naturalWidth > 0 && item.naturalHeight > 0 &&
-                      (item.width > item.naturalWidth * 1.01 || item.height > item.naturalHeight * 1.01)
-                    if (!up) return null
-                    return (
-                      <Rect
-                        key={`upscale-${item.id}`}
-                        x={item.x} y={item.y}
-                        width={item.width} height={item.height}
-                        rotation={item.rotation}
-                        stroke="#ff3333" strokeWidth={2.5} dash={[10, 6]}
-                        listening={false}
-                      />
-                    )
-                  })}
                   {/* Multi-select borders — only when 2+ items selected.
                       Konva's Transformer wraps the union bbox; a per-item border
                       makes individual selection visible. strokeScaleEnabled=false
@@ -2696,6 +2827,117 @@ const EditorStage = forwardRef<
                 </Group>
               )
             })}
+          </Layer>
+
+          {/* Hidden-zone veil: opaque core around slides, gradient fade to transparent at outer edge */}
+          {showHiddenZone && hiddenZone && artboardPositions.length > 0 && (() => {
+            const first = artboardPositions[0]!
+            const last = artboardPositions[artboardPositions.length - 1]!
+            const P = Math.min(W, H) * 0.8
+            const P2 = P * 0.5
+            const sx0 = first.x, sy0 = first.y
+            const sx1 = last.x + W, sy1 = first.y + H
+            const cx0 = sx0 - P2, cy0 = sy0 - P2
+            const cx1 = sx1 + P2, cy1 = sy1 + P2
+            const ox0 = sx0 - P, oy0 = sy0 - P
+            // Match veil to the user-chosen workspace color so the seamless
+            // illusion holds regardless of the picked color.
+            const hex = (workspaceBgColor || '#0a0a0e').replace('#', '')
+            const hr = parseInt(hex.slice(0, 2), 16) || 0
+            const hg = parseInt(hex.slice(2, 4), 16) || 0
+            const hb = parseInt(hex.slice(4, 6), 16) || 0
+            const OPAQUE = `rgba(${hr},${hg},${hb},1)`
+            const CLEAR = `rgba(${hr},${hg},${hb},0)`
+            const stops = [0, OPAQUE, 1, CLEAR]
+            return (
+              <Layer ref={veilLayerRef} listening={false}>
+                {/* Opaque core */}
+                <Rect x={cx0} y={cy0} width={cx1 - cx0} height={cy1 - cy0} fill={OPAQUE} />
+                {/* Top edge */}
+                <Rect
+                  x={cx0} y={oy0} width={cx1 - cx0} height={P2}
+                  fillLinearGradientStartPoint={{ x: 0, y: P2 }}
+                  fillLinearGradientEndPoint={{ x: 0, y: 0 }}
+                  fillLinearGradientColorStops={stops}
+                />
+                {/* Bottom edge */}
+                <Rect
+                  x={cx0} y={cy1} width={cx1 - cx0} height={P2}
+                  fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+                  fillLinearGradientEndPoint={{ x: 0, y: P2 }}
+                  fillLinearGradientColorStops={stops}
+                />
+                {/* Left edge */}
+                <Rect
+                  x={ox0} y={cy0} width={P2} height={cy1 - cy0}
+                  fillLinearGradientStartPoint={{ x: P2, y: 0 }}
+                  fillLinearGradientEndPoint={{ x: 0, y: 0 }}
+                  fillLinearGradientColorStops={stops}
+                />
+                {/* Right edge */}
+                <Rect
+                  x={cx1} y={cy0} width={P2} height={cy1 - cy0}
+                  fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+                  fillLinearGradientEndPoint={{ x: P2, y: 0 }}
+                  fillLinearGradientColorStops={stops}
+                />
+                {/* Top-left corner: radial from inner corner out */}
+                <Rect
+                  x={ox0} y={oy0} width={P2} height={P2}
+                  fillRadialGradientStartPoint={{ x: P2, y: P2 }}
+                  fillRadialGradientEndPoint={{ x: P2, y: P2 }}
+                  fillRadialGradientStartRadius={0}
+                  fillRadialGradientEndRadius={P2}
+                  fillRadialGradientColorStops={stops}
+                />
+                {/* Top-right corner */}
+                <Rect
+                  x={cx1} y={oy0} width={P2} height={P2}
+                  fillRadialGradientStartPoint={{ x: 0, y: P2 }}
+                  fillRadialGradientEndPoint={{ x: 0, y: P2 }}
+                  fillRadialGradientStartRadius={0}
+                  fillRadialGradientEndRadius={P2}
+                  fillRadialGradientColorStops={stops}
+                />
+                {/* Bottom-left corner */}
+                <Rect
+                  x={ox0} y={cy1} width={P2} height={P2}
+                  fillRadialGradientStartPoint={{ x: P2, y: 0 }}
+                  fillRadialGradientEndPoint={{ x: P2, y: 0 }}
+                  fillRadialGradientStartRadius={0}
+                  fillRadialGradientEndRadius={P2}
+                  fillRadialGradientColorStops={stops}
+                />
+                {/* Bottom-right corner */}
+                <Rect
+                  x={cx1} y={cy1} width={P2} height={P2}
+                  fillRadialGradientStartPoint={{ x: 0, y: 0 }}
+                  fillRadialGradientEndPoint={{ x: 0, y: 0 }}
+                  fillRadialGradientStartRadius={0}
+                  fillRadialGradientEndRadius={P2}
+                  fillRadialGradientColorStops={stops}
+                />
+                {/* Slide-shaped holes */}
+                {slides.map((slide, i) => {
+                  const ap = artboardPositions[i]!
+                  return (
+                    <Rect
+                      key={`veil-hole-${slide.id}`}
+                      x={ap.x} y={ap.y}
+                      width={W} height={H}
+                      fill="#000"
+                      globalCompositeOperation="destination-out"
+                    />
+                  )
+                })}
+              </Layer>
+            )
+          })()}
+
+          {/* Selection handles layer — sits ABOVE the hidden-zone veil so the
+              Transformer anchors and rotation ruler stay visible regardless of
+              whether the selected item is inside or outside an artboard. */}
+          <Layer>
             <Transformer
               ref={trRef}
               boundBoxFunc={(oldBox, newBox) => {
@@ -2829,105 +3071,6 @@ const EditorStage = forwardRef<
               )
             })()}
           </Layer>
-
-          {/* Hidden-zone veil: opaque core around slides, gradient fade to transparent at outer edge */}
-          {showHiddenZone && hiddenZone && artboardPositions.length > 0 && (() => {
-            const first = artboardPositions[0]!
-            const last = artboardPositions[artboardPositions.length - 1]!
-            const P = Math.min(W, H) * 0.8
-            const P2 = P * 0.5
-            const sx0 = first.x, sy0 = first.y
-            const sx1 = last.x + W, sy1 = first.y + H
-            const cx0 = sx0 - P2, cy0 = sy0 - P2
-            const cx1 = sx1 + P2, cy1 = sy1 + P2
-            const ox0 = sx0 - P, oy0 = sy0 - P
-            const OPAQUE = 'rgba(10,10,14,1)'
-            const CLEAR = 'rgba(10,10,14,0)'
-            const stops = [0, OPAQUE, 1, CLEAR]
-            return (
-              <Layer ref={veilLayerRef} listening={false}>
-                {/* Opaque core */}
-                <Rect x={cx0} y={cy0} width={cx1 - cx0} height={cy1 - cy0} fill={PASTEBOARD_COLOR} />
-                {/* Top edge */}
-                <Rect
-                  x={cx0} y={oy0} width={cx1 - cx0} height={P2}
-                  fillLinearGradientStartPoint={{ x: 0, y: P2 }}
-                  fillLinearGradientEndPoint={{ x: 0, y: 0 }}
-                  fillLinearGradientColorStops={stops}
-                />
-                {/* Bottom edge */}
-                <Rect
-                  x={cx0} y={cy1} width={cx1 - cx0} height={P2}
-                  fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-                  fillLinearGradientEndPoint={{ x: 0, y: P2 }}
-                  fillLinearGradientColorStops={stops}
-                />
-                {/* Left edge */}
-                <Rect
-                  x={ox0} y={cy0} width={P2} height={cy1 - cy0}
-                  fillLinearGradientStartPoint={{ x: P2, y: 0 }}
-                  fillLinearGradientEndPoint={{ x: 0, y: 0 }}
-                  fillLinearGradientColorStops={stops}
-                />
-                {/* Right edge */}
-                <Rect
-                  x={cx1} y={cy0} width={P2} height={cy1 - cy0}
-                  fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-                  fillLinearGradientEndPoint={{ x: P2, y: 0 }}
-                  fillLinearGradientColorStops={stops}
-                />
-                {/* Top-left corner: radial from inner corner out */}
-                <Rect
-                  x={ox0} y={oy0} width={P2} height={P2}
-                  fillRadialGradientStartPoint={{ x: P2, y: P2 }}
-                  fillRadialGradientEndPoint={{ x: P2, y: P2 }}
-                  fillRadialGradientStartRadius={0}
-                  fillRadialGradientEndRadius={P2}
-                  fillRadialGradientColorStops={stops}
-                />
-                {/* Top-right corner */}
-                <Rect
-                  x={cx1} y={oy0} width={P2} height={P2}
-                  fillRadialGradientStartPoint={{ x: 0, y: P2 }}
-                  fillRadialGradientEndPoint={{ x: 0, y: P2 }}
-                  fillRadialGradientStartRadius={0}
-                  fillRadialGradientEndRadius={P2}
-                  fillRadialGradientColorStops={stops}
-                />
-                {/* Bottom-left corner */}
-                <Rect
-                  x={ox0} y={cy1} width={P2} height={P2}
-                  fillRadialGradientStartPoint={{ x: P2, y: 0 }}
-                  fillRadialGradientEndPoint={{ x: P2, y: 0 }}
-                  fillRadialGradientStartRadius={0}
-                  fillRadialGradientEndRadius={P2}
-                  fillRadialGradientColorStops={stops}
-                />
-                {/* Bottom-right corner */}
-                <Rect
-                  x={cx1} y={cy1} width={P2} height={P2}
-                  fillRadialGradientStartPoint={{ x: 0, y: 0 }}
-                  fillRadialGradientEndPoint={{ x: 0, y: 0 }}
-                  fillRadialGradientStartRadius={0}
-                  fillRadialGradientEndRadius={P2}
-                  fillRadialGradientColorStops={stops}
-                />
-                {/* Slide-shaped holes */}
-                {slides.map((slide, i) => {
-                  const ap = artboardPositions[i]!
-                  return (
-                    <Rect
-                      key={`veil-hole-${slide.id}`}
-                      x={ap.x} y={ap.y}
-                      width={W} height={H}
-                      fill="#000"
-                      globalCompositeOperation="destination-out"
-                    />
-                  )
-                })}
-              </Layer>
-            )
-          })()}
 
           {/* Snap guides + box selection */}
           <Layer ref={snapGuidesLayerRef} listening={false}>

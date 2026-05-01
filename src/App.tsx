@@ -128,6 +128,9 @@ export default function App() {
   })()
 
   const layoutRef = useRef<HTMLDivElement>(null)
+  const addMediaInputRef = useRef<HTMLInputElement>(null)
+  const workspaceBgColor = useCarouselStore((s) => s.workspaceBgColor)
+  const setWorkspaceBgColor = useCarouselStore((s) => s.setWorkspaceBgColor)
 
   useEffect(() => {
     const el = layoutRef.current
@@ -286,7 +289,9 @@ export default function App() {
       const pngFiles: { name: string; buffer: Uint8Array }[] = []
 
       for (let i = 0; i < st.slides.length; i++) {
-        const slideId = st.slides[i]!.id
+        const slide = st.slides[i]!
+        if (slide.exportEnabled === false) continue
+        const slideId = slide.id
         const n = String(i + 1).padStart(2, '0')
         const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
 
@@ -349,6 +354,65 @@ export default function App() {
     }
   }, [exportPrefix])
 
+  /* ---- Export a single slide on demand (per-slide export button) ---- */
+  const exportSingleSlide = useCallback(async (slideId: string) => {
+    const st = useCarouselStore.getState()
+    if (!stageRef.current) return
+    if (!window.electronAPI) {
+      alert('Export only works in the desktop app, not the browser.')
+      return
+    }
+    const idx = st.slides.findIndex((s) => s.id === slideId)
+    if (idx < 0) return
+    const prefix = sanitizeFilename(exportPrefix.trim()) || 'carousel'
+    const n = String(idx + 1).padStart(2, '0')
+    const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
+    setExporting(true)
+    setExportProgress(`Exporting slide ${idx + 1}...`)
+    st.setSelectedIds([])
+    try {
+      if (hasVideo) {
+        const defaultName = `${prefix}_${n}.mp4`
+        const outputPath = await window.electronAPI.saveFile({
+          defaultName,
+          filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+        })
+        if (!outputPath) return
+        setExportProgress(`Encoding slide ${idx + 1}: 0%`)
+        const result = await stageRef.current.exportSlideVideo(
+          slideId,
+          outputPath,
+          30,
+          (pct) => setExportProgress(`Encoding slide ${idx + 1}: ${Math.round(pct)}%`),
+        )
+        if (!result) alert('Video export failed. Check the dev console for details.')
+      } else {
+        await new Promise<void>((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => r())),
+        )
+        const blob = await stageRef.current.exportSlidePng(slideId)
+        if (!blob) {
+          alert('Export failed.')
+          return
+        }
+        const defaultName = `${prefix}_${n}.png`
+        const buffer = new Uint8Array(await blob.arrayBuffer())
+        const path = await window.electronAPI.saveFile({
+          defaultName,
+          filters: [{ name: 'PNG image', extensions: ['png'] }],
+          buffer,
+        })
+        if (path) console.log(`[export] wrote ${path}`)
+      }
+    } catch (err) {
+      console.error('[export-single] failed:', err)
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setExporting(false)
+      setExportProgress('')
+    }
+  }, [exportPrefix])
+
   /* ---- Save / Open project ---- */
   const handleSave = useCallback(async (forcePrompt: boolean) => {
     if (!window.electronAPI) {
@@ -365,6 +429,7 @@ export default function App() {
           presetId: st.presetId,
           customWidth: st.customWidth,
           customHeight: st.customHeight,
+          workspaceBgColor: st.workspaceBgColor,
         },
         async (src) => (await fetch(src)).blob(),
       )
@@ -377,7 +442,7 @@ export default function App() {
       }
 
       const defaultName = existing
-        ? existing.split('/').pop() || 'Untitled.vpost'
+        ? existing.split(/[/\\]/).pop() || 'Untitled.vpost'
         : 'Untitled.vpost'
       const path = await window.electronAPI.saveFile({
         defaultName,
@@ -406,6 +471,7 @@ export default function App() {
         presetId: manifest.presetId,
         customWidth: manifest.customWidth,
         customHeight: manifest.customHeight,
+        workspaceBgColor: manifest.workspaceBgColor,
       })
       setProjectPath(path)
     } catch (err) {
@@ -456,7 +522,9 @@ export default function App() {
   }, [handleNew, handleOpen, handleSave, loadFromBuffer])
 
   useEffect(() => {
-    const base = projectPath ? projectPath.split('/').pop() : null
+    // Cross-platform basename split: on Windows, paths use backslashes — splitting
+    // only on '/' there leaves the entire path in the export prefix.
+    const base = projectPath ? projectPath.split(/[/\\]/).pop() : null
     document.title = base ? `${base} — Tiovivo` : 'Tiovivo'
     if (base) {
       // Default the export prefix to the project file basename without extension.
@@ -595,6 +663,37 @@ export default function App() {
 
       <div className="app__body">
         <aside className="app__sidebar">
+          <input
+            ref={addMediaInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = e.target.files
+              onFiles(files)
+              if (e.target) e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            className="btn btn--outline"
+            onClick={() => addMediaInputRef.current?.click()}
+            title="Add images or videos"
+            style={{
+              flexDirection: 'row',
+              gap: 8,
+              padding: '7px 12px',
+              fontSize: '0.78rem',
+              justifyContent: 'center',
+              width: '100%',
+              marginBottom: 12,
+            }}
+          >
+            <Icon.Plus style={{ width: 13, height: 13 }} />
+            Add media
+          </button>
+
           <details className="collapsible" open>
             <summary><h2><Icon.Sliders />Background</h2></summary>
             <div className="collapsible__body">
@@ -610,6 +709,43 @@ export default function App() {
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
                   {allBgSameColor ? allBgSameColor : 'mixed'}
                 </span>
+              </label>
+              <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <span>Workspace</span>
+                <input
+                  type="color"
+                  value={workspaceBgColor || '#0a0a0e'}
+                  onChange={(e) => setWorkspaceBgColor(e.target.value)}
+                  title="Pasteboard color around the slides"
+                  style={{ width: 32, height: 24, padding: 0, border: '1.5px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
+                  {workspaceBgColor || '#0a0a0e'}
+                </span>
+                {workspaceBgColor && workspaceBgColor.toLowerCase() !== '#0a0a0e' && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); setWorkspaceBgColor('#0a0a0e') }}
+                    title="Reset to default"
+                    style={{
+                      marginLeft: 'auto',
+                      background: 'transparent',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      borderRadius: 4,
+                      color: 'rgba(255,255,255,0.55)',
+                      cursor: 'pointer',
+                      padding: '2px 6px',
+                      fontSize: 10,
+                      lineHeight: 1.4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                  >
+                    <Icon.Reset style={{ width: 10, height: 10 }} />
+                    Reset
+                  </button>
+                )}
               </label>
             </div>
           </details>
@@ -710,6 +846,7 @@ export default function App() {
               ref={stageRef}
               maxViewWidth={viewport.w}
               maxViewHeight={viewport.h}
+              onExportSingleSlide={exportSingleSlide}
             />
           </div>
         </main>

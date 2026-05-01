@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  /** Save a single file via native save dialog */
+  /** Save a single file via native save dialog. Omit buffer to get just the chosen path. */
   saveFile: (options: {
     defaultName: string
     filters: { name: string; extensions: string[] }[]
-    buffer: Uint8Array
+    buffer?: Uint8Array
   }) => ipcRenderer.invoke('save-file', options),
 
   /** Open a native directory picker */

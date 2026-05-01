@@ -37,6 +37,7 @@ export interface PlacedMedia {
 export interface Slide {
   id: string
   bgColor: string
+  exportEnabled: boolean
 }
 
 function newId() {
@@ -70,6 +71,8 @@ interface CarouselState {
 
   items: PlacedMedia[]
   selectedIds: string[]
+
+  workspaceBgColor: string
 
   showGrid: boolean
   gridSize: number
@@ -116,6 +119,12 @@ interface CarouselState {
   setSnapMargins: (v: boolean) => void
   setSlideBgColor: (slideId: string, color: string) => void
   setAllSlidesBgColor: (color: string) => void
+  setWorkspaceBgColor: (color: string) => void
+  toggleSlideExport: (slideId: string) => void
+  setSlideExport: (slideId: string, enabled: boolean) => void
+  fitItemToSlide: (id: string) => void
+  fillItemToSlide: (id: string) => void
+  resetItemScale: (id: string) => void
 
   cropItemId: string | null
   setCropMode: (id: string | null) => void
@@ -136,6 +145,7 @@ interface CarouselState {
     presetId: PresetId
     customWidth: number
     customHeight: number
+    workspaceBgColor?: string
   }) => void
   resetProject: () => void
 }
@@ -147,6 +157,7 @@ interface HistorySnapshot {
   presetId: PresetId
   customWidth: number
   customHeight: number
+  workspaceBgColor: string
 }
 
 const HISTORY_LIMIT = 100
@@ -163,6 +174,7 @@ function snapshotOf(s: CarouselState): HistorySnapshot {
     presetId: s.presetId,
     customWidth: s.customWidth,
     customHeight: s.customHeight,
+    workspaceBgColor: s.workspaceBgColor,
   }
 }
 
@@ -202,7 +214,7 @@ function debouncedThumbRefresh(slideId: string, delay = 300) {
 }
 
 export const useCarouselStore = create<CarouselState>((set, get) => ({
-  slides: [{ id: initialSlideId, bgColor: '#ffffff' }],
+  slides: [{ id: initialSlideId, bgColor: '#ffffff', exportEnabled: true }],
   activeSlideId: initialSlideId,
   dimensions: { ...PRESETS['3:4'] },
   presetId: '3:4',
@@ -211,6 +223,8 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
 
   items: [],
   selectedIds: [],
+
+  workspaceBgColor: '#0a0a0e',
 
   showGrid: false,
   gridSize: 40,
@@ -290,7 +304,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     const idx = afterIndex !== undefined ? afterIndex + 1 : activeIdx + 1
     const inheritedColor = slides[activeIdx]?.bgColor ?? '#ffffff'
     const next = [...slides]
-    next.splice(Math.min(idx, next.length), 0, { id: sid, bgColor: inheritedColor })
+    next.splice(Math.min(idx, next.length), 0, { id: sid, bgColor: inheritedColor, exportEnabled: true })
     set({ slides: next, activeSlideId: sid, selectedIds: [] })
   },
 
@@ -334,14 +348,9 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     if (file.type.startsWith('video/')) type = 'video'
     else if (file.type === 'image/gif' || ext === 'gif') type = 'gif'
 
-    // Place at real pixel size; only scale down if larger than the slide
-    let w = naturalW
-    let h = naturalH
-    if (w > dimensions.width || h > dimensions.height) {
-      const scale = Math.min(dimensions.width / w, dimensions.height / h)
-      w *= scale
-      h *= scale
-    }
+    // Place at real pixel size — overflow is allowed; user can fit/fill explicitly.
+    const w = naturalW
+    const h = naturalH
 
     const item: PlacedMedia = {
       id: newId(),
@@ -492,6 +501,110 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     get().refreshAllThumbnails()
   },
 
+  setWorkspaceBgColor: (color) => {
+    pushHistory('workspaceBg')
+    set({ workspaceBgColor: color })
+  },
+
+  toggleSlideExport: (slideId) => {
+    pushHistory('toggleExport:' + slideId)
+    set({
+      slides: get().slides.map((s) =>
+        s.id === slideId ? { ...s, exportEnabled: !s.exportEnabled } : s,
+      ),
+    })
+  },
+
+  setSlideExport: (slideId, enabled) => {
+    pushHistory('setExport:' + slideId)
+    set({
+      slides: get().slides.map((s) =>
+        s.id === slideId ? { ...s, exportEnabled: enabled } : s,
+      ),
+    })
+  },
+
+  fitItemToSlide: (id) => {
+    const item = get().items.find((x) => x.id === id)
+    if (!item) return
+    const { dimensions } = get()
+    const effW = item.cropW > 0 ? item.cropW : item.naturalWidth
+    const effH = item.cropH > 0 ? item.cropH : item.naturalHeight
+    if (effW <= 0 || effH <= 0) return
+    const scale = Math.min(dimensions.width / effW, dimensions.height / effH)
+    const newW = effW * scale
+    const newH = effH * scale
+    pushHistory('fitItem:' + id)
+    set({
+      items: get().items.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              width: newW,
+              height: newH,
+              x: (dimensions.width - newW) / 2,
+              y: (dimensions.height - newH) / 2,
+              rotation: 0,
+            }
+          : i,
+      ),
+    })
+    debouncedThumbRefresh(item.slideId)
+  },
+
+  fillItemToSlide: (id) => {
+    const item = get().items.find((x) => x.id === id)
+    if (!item) return
+    const { dimensions } = get()
+    const effW = item.cropW > 0 ? item.cropW : item.naturalWidth
+    const effH = item.cropH > 0 ? item.cropH : item.naturalHeight
+    if (effW <= 0 || effH <= 0) return
+    const scale = Math.max(dimensions.width / effW, dimensions.height / effH)
+    const newW = effW * scale
+    const newH = effH * scale
+    pushHistory('fillItem:' + id)
+    set({
+      items: get().items.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              width: newW,
+              height: newH,
+              x: (dimensions.width - newW) / 2,
+              y: (dimensions.height - newH) / 2,
+              rotation: 0,
+            }
+          : i,
+      ),
+    })
+    debouncedThumbRefresh(item.slideId)
+  },
+
+  resetItemScale: (id) => {
+    const item = get().items.find((x) => x.id === id)
+    if (!item) return
+    const effW = item.cropW > 0 ? item.cropW : item.naturalWidth
+    const effH = item.cropH > 0 ? item.cropH : item.naturalHeight
+    if (effW <= 0 || effH <= 0) return
+    const cx = item.x + item.width / 2
+    const cy = item.y + item.height / 2
+    pushHistory('resetScale:' + id)
+    set({
+      items: get().items.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              width: effW,
+              height: effH,
+              x: cx - effW / 2,
+              y: cy - effH / 2,
+            }
+          : i,
+      ),
+    })
+    debouncedThumbRefresh(item.slideId)
+  },
+
   setCropMode: (id) => set({ cropItemId: id, selectedIds: id ? [id] : [] }),
 
   applyCrop: (id, cx, cy, cw, ch) => {
@@ -585,13 +698,19 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   loadProjectState: (payload) => {
     const firstSlideId = payload.slides[0]?.id
     if (!firstSlideId) throw new Error('Project has no slides')
+    // Backwards compat: older project files don't have exportEnabled on slides.
+    const slides = payload.slides.map((s) => ({
+      ...s,
+      exportEnabled: s.exportEnabled ?? true,
+    }))
     set({
-      slides: payload.slides,
+      slides,
       items: payload.items,
       dimensions: payload.dimensions,
       presetId: payload.presetId,
       customWidth: payload.customWidth,
       customHeight: payload.customHeight,
+      workspaceBgColor: payload.workspaceBgColor ?? '#0a0a0e',
       activeSlideId: firstSlideId,
       selectedIds: [],
       cropItemId: null,
@@ -607,12 +726,13 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   resetProject: () => {
     const sid = newId()
     set({
-      slides: [{ id: sid, bgColor: '#ffffff' }],
+      slides: [{ id: sid, bgColor: '#ffffff', exportEnabled: true }],
       activeSlideId: sid,
       dimensions: { ...PRESETS['3:4'] },
       presetId: '3:4',
       customWidth: 1080,
       customHeight: 1350,
+      workspaceBgColor: '#0a0a0e',
       items: [],
       selectedIds: [],
       cropItemId: null,

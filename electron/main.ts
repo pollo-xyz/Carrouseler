@@ -224,18 +224,19 @@ app.whenReady().then(() => {
 /*  IPC handlers — file operations                                    */
 /* ------------------------------------------------------------------ */
 
-// Save a single file with a save dialog
+// Save a single file with a save dialog. When `buffer` is omitted, the caller
+// just wants the chosen path back (e.g. ffmpeg writes the file itself).
 ipcMain.handle('save-file', async (_event, options: {
   defaultName: string
   filters: { name: string; extensions: string[] }[]
-  buffer: Uint8Array
+  buffer?: Uint8Array
 }) => {
   const result = await dialog.showSaveDialog({
     defaultPath: options.defaultName,
     filters: options.filters,
   })
   if (result.canceled || !result.filePath) return null
-  fs.writeFileSync(result.filePath, Buffer.from(options.buffer))
+  if (options.buffer) fs.writeFileSync(result.filePath, Buffer.from(options.buffer))
   return result.filePath
 })
 

@@ -2,7 +2,7 @@ export interface ElectronAPI {
   saveFile: (options: {
     defaultName: string
     filters: { name: string; extensions: string[] }[]
-    buffer: Uint8Array
+    buffer?: Uint8Array
   }) => Promise<string | null>
 
   pickDirectory: () => Promise<string | null>

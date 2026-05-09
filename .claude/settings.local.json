@@ -30,7 +30,10 @@
       "Bash(python3 -c \"import json; d=json.load\\(open\\('/Users/macchicken/.claude/settings.json'\\)\\); print\\(list\\(d.keys\\(\\)\\)\\)\")",
       "Bash(claude --version)",
       "Bash(claude plugin *)",
-      "Bash(curl -s \"http://localhost:5173/src/components/EditorStage.tsx\" -o /dev/null -w \"%{http_code}\\\\n\")"
+      "Bash(curl -s \"http://localhost:5173/src/components/EditorStage.tsx\" -o /dev/null -w \"%{http_code}\\\\n\")",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

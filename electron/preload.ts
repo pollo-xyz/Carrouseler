@@ -1,5 +1,25 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+// Tracks in-flight video frames per session so a session-failed event can
+// reject the pending promise instead of letting it hang on a missing reply.
+const pendingFrames = new Map<string, Set<{
+  reject: (e: Error) => void
+}>>()
+ipcRenderer.on('app:session-failed', (_e, payload: {
+  sessionId: string
+  code: number | null
+  stderr: string
+}) => {
+  const set = pendingFrames.get(payload.sessionId)
+  if (!set) return
+  const err = new Error(
+    `ffmpeg session ${payload.sessionId.slice(0, 8)} exited with code ${payload.code}` +
+    (payload.stderr ? `:\n${payload.stderr.slice(-512)}` : ''),
+  )
+  for (const entry of set) entry.reject(err)
+  pendingFrames.delete(payload.sessionId)
+})
+
 contextBridge.exposeInMainWorld('electronAPI', {
   /** Save a single file via native save dialog. Omit buffer to get just the chosen path. */
   saveFile: (options: {
@@ -41,16 +61,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
     outputPath: string
   }) => ipcRenderer.invoke('start-video-encode', options),
 
-  /** Send a raw RGBA frame to the encoding session */
+  /** Send a raw RGBA frame to the encoding session. The promise resolves
+   *  once ffmpeg has consumed the bytes (or rejects if the session crashes
+   *  via the app:session-failed broadcast). */
   videoFrame: (options: {
     sessionId: string
     frameData: Uint8Array
-  }) => ipcRenderer.invoke('video-frame', options),
+  }) => {
+    return new Promise<void>((resolve, reject) => {
+      let bucket = pendingFrames.get(options.sessionId)
+      if (!bucket) {
+        bucket = new Set()
+        pendingFrames.set(options.sessionId, bucket)
+      }
+      const entry = { reject }
+      bucket.add(entry)
+      const cleanup = () => {
+        bucket!.delete(entry)
+        if (bucket!.size === 0) pendingFrames.delete(options.sessionId)
+      }
+      ipcRenderer.invoke('video-frame', options)
+        .then(() => { cleanup(); resolve() })
+        .catch((err) => { cleanup(); reject(err as Error) })
+    })
+  },
 
   /** Finish encoding — returns the output file path */
   endVideoEncode: (options: {
     sessionId: string
   }) => ipcRenderer.invoke('end-video-encode', options),
+
+  /** Returns the probe diagnostics: ffmpeg path, compiled encoders, and the
+   *  per-candidate exit code + stderr from the probe. Useful for diagnosing
+   *  why a hardware encoder wasn't selected. */
+  getEncoderDiagnostics: () => ipcRenderer.invoke('get-encoder-diagnostics'),
 
   /** Extract a single frame from an encoded video as a PNG */
   extractCoverFrame: (options: {

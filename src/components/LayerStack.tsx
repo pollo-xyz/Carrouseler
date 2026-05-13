@@ -72,6 +72,19 @@ function LayerRow({
             draggable={false}
             style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
           />
+        ) : item.type === 'text' ? (
+          <span
+            style={{
+              color: 'rgba(255,255,255,0.85)',
+              fontWeight: 700,
+              fontSize: 13,
+              lineHeight: 1,
+              fontFamily: 'serif',
+            }}
+            aria-hidden
+          >
+            T
+          </span>
         ) : (
           <img
             src={item.src}
@@ -91,9 +104,9 @@ function LayerRow({
           flex: 1,
           minWidth: 0,
         }}
-        title={item.name}
+        title={item.type === 'text' ? (item.text || item.name) : item.name}
       >
-        {item.name}
+        {item.type === 'text' ? (item.text || 'Text') : item.name}
       </span>
     </div>
   )

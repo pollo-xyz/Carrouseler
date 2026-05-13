@@ -55,6 +55,63 @@ export async function generateThumbnail(
   const loadPromises = items.map(
     (item) =>
       new Promise<void>((resolve) => {
+        if (item.type === 'text') {
+          const bold = !!item.bold
+          const italic = !!item.italic
+          const fontStyle =
+            bold && italic ? 'italic bold' : bold ? 'bold' : italic ? 'italic' : 'normal'
+          // In fill mode, fit the font to the (width, height) of the box at
+          // slide-space, then scale the result by ratio so the thumbnail
+          // matches what's drawn in the editor.
+          let baseFontSize: number
+          if (item.fillMode) {
+            const measure = (size: number) => {
+              const n = new Konva.Text({
+                text: item.text || '',
+                fontFamily: item.fontFamily || 'Inter',
+                fontSize: size,
+                fontStyle,
+                lineHeight: item.lineHeight || 1.15,
+                letterSpacing: item.letterSpacing || 0,
+                width: item.width,
+                wrap: 'word',
+              })
+              const h = n.height()
+              n.destroy()
+              return h
+            }
+            let lo = 4, hi = 4000
+            for (let k = 0; k < 14; k++) {
+              const mid = (lo + hi) / 2
+              const h = measure(mid)
+              if (h <= 0 || h > item.height) hi = mid
+              else lo = mid
+            }
+            baseFontSize = Math.max(4, Math.floor(lo))
+          } else {
+            baseFontSize = item.fontSize || 64
+          }
+          layer.add(
+            new Konva.Text({
+              x: item.x * ratio,
+              y: item.y * ratio,
+              width: item.width * ratio,
+              height: item.fillMode ? item.height * ratio : undefined,
+              rotation: item.rotation,
+              text: item.text || '',
+              fontFamily: item.fontFamily || 'Inter',
+              fontSize: Math.max(1, baseFontSize * ratio),
+              fontStyle,
+              fill: item.textColor || '#ffffff',
+              align: item.textAlign || 'left',
+              lineHeight: item.lineHeight || 1.15,
+              letterSpacing: (item.letterSpacing || 0) * ratio,
+              wrap: 'word',
+            }),
+          )
+          resolve()
+          return
+        }
         if (item.type === 'video') {
           const v = document.createElement('video')
           v.src = item.src

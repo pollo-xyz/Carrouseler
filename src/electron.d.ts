@@ -39,6 +39,13 @@ export interface ElectronAPI {
     sessionId: string
   }) => Promise<string>
 
+  getEncoderDiagnostics: () => Promise<{
+    ffmpegPath: string
+    availableH264Encoders: string[]
+    probeAttempts: { encoder: string; exitCode: number; stderr: string }[]
+    chosen: string
+  } | null>
+
   extractCoverFrame: (options: {
     videoPath: string
     time: number

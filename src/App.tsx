@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
-import { useCarouselStore } from './store/useCarouselStore'
+import NumberField from './components/NumberField'
+import { useCarouselStore, type PlacedMedia, type TextAlign } from './store/useCarouselStore'
 import { PRESETS } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
+import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
 import './App.css'
 
 const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]
@@ -69,6 +71,13 @@ const Icon = {
       <path d="M3 4v5h5" />
     </svg>
   ),
+  Text: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M5 4h14" />
+      <path d="M12 4v16" />
+      <path d="M9 20h6" />
+    </svg>
+  ),
 }
 
 
@@ -83,6 +92,7 @@ export default function App() {
   const [exportPrefix, setExportPrefix] = useState<string>('')
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
+  const [fontList, setFontList] = useState<string[]>(FALLBACK_FONTS)
 
   const dimensions = useCarouselStore((s) => s.dimensions)
   const presetId = useCarouselStore((s) => s.presetId)
@@ -98,9 +108,13 @@ export default function App() {
   const removeItem = useCarouselStore((s) => s.removeItem)
   const removeItems = useCarouselStore((s) => s.removeItems)
   const addMedia = useCarouselStore((s) => s.addMedia)
+  const addText = useCarouselStore((s) => s.addText)
+  const updateItem = useCarouselStore((s) => s.updateItem)
 
   const showGrid = useCarouselStore((s) => s.showGrid)
   const gridSize = useCarouselStore((s) => s.gridSize)
+  const gridOpacity = useCarouselStore((s) => s.gridOpacity)
+  const setGridOpacity = useCarouselStore((s) => s.setGridOpacity)
   const showCenterGuides = useCarouselStore((s) => s.showCenterGuides)
   const snapGrid = useCarouselStore((s) => s.snapGrid)
   const snapCenter = useCarouselStore((s) => s.snapCenter)
@@ -210,6 +224,15 @@ export default function App() {
     [onFiles],
   )
 
+  /* ---- App-internal clipboard (selected items) ---- */
+  // `items` are deep copies sans id/slideId. `offsetCount` increases with each
+  // successive paste so a chain of Cmd+V doesn't stack copies on top of each
+  // other.
+  const clipboardRef = useRef<{
+    items: Omit<PlacedMedia, 'id' | 'slideId'>[]
+    offsetCount: number
+  } | null>(null)
+
   /* ---- Keyboard shortcuts ---- */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -233,6 +256,55 @@ export default function App() {
 
       // Block shortcuts during crop mode
       if (st.cropItemId) return
+
+      // Copy selected items into the app clipboard.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'c' || e.key === 'C')) {
+        if (!st.selectedIds.length) return
+        const selected = st.items.filter((it) => st.selectedIds.includes(it.id))
+        clipboardRef.current = {
+          items: selected.map(({ id: _id, slideId: _sid, ...rest }) => {
+            void _id; void _sid
+            return rest
+          }),
+          offsetCount: 1,
+        }
+        e.preventDefault()
+        return
+      }
+
+      // Cut = copy + remove.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'x' || e.key === 'X')) {
+        if (!st.selectedIds.length) return
+        const selected = st.items.filter((it) => st.selectedIds.includes(it.id))
+        clipboardRef.current = {
+          items: selected.map(({ id: _id, slideId: _sid, ...rest }) => {
+            void _id; void _sid
+            return rest
+          }),
+          offsetCount: 1,
+        }
+        st.removeItems(st.selectedIds)
+        e.preventDefault()
+        return
+      }
+
+      // Paste — drops clones onto the active slide with a growing offset so
+      // repeated pastes don't pile on the same spot.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'v' || e.key === 'V')) {
+        const clip = clipboardRef.current
+        if (!clip || !clip.items.length) return
+        const dx = 24 * clip.offsetCount
+        const dy = 24 * clip.offsetCount
+        const templates = clip.items.map((it) => ({
+          ...it,
+          x: it.x + dx,
+          y: it.y + dy,
+        }))
+        st.pasteItems(templates)
+        clip.offsetCount += 1
+        e.preventDefault()
+        return
+      }
 
       // [ and ] to move selected item(s) to prev/next slide
       if ((e.key === '[' || e.key === ']') && st.selectedIds.length) {
@@ -285,6 +357,28 @@ export default function App() {
     try {
       const dir = await window.electronAPI.pickDirectory()
       if (!dir) return
+
+      // One-shot diagnostic dump so the user can see which encoder was
+      // chosen and (importantly) why the GPU candidates were rejected.
+      // Open View → Toggle Developer Tools to view.
+      try {
+        const diag = await window.electronAPI.getEncoderDiagnostics?.()
+        if (diag) {
+          console.group('[ffmpeg] encoder diagnostics')
+          console.log('binary:', diag.ffmpegPath)
+          console.log('compiled h264 encoders:', diag.availableH264Encoders.join(', ') || '(none)')
+          console.log('chosen:', diag.chosen)
+          for (const a of diag.probeAttempts) {
+            console.log(
+              `probe ${a.encoder}: exit=${a.exitCode}` +
+              (a.stderr ? `\nstderr tail:\n${a.stderr.slice(-1500)}` : ''),
+            )
+          }
+          console.groupEnd()
+        }
+      } catch (err) {
+        console.warn('[ffmpeg] diagnostics unavailable:', err)
+      }
 
       const pngFiles: { name: string; buffer: Uint8Array }[] = []
 
@@ -430,6 +524,20 @@ export default function App() {
           customWidth: st.customWidth,
           customHeight: st.customHeight,
           workspaceBgColor: st.workspaceBgColor,
+          guides: {
+            showGrid: st.showGrid,
+            gridSize: st.gridSize,
+            gridOpacity: st.gridOpacity,
+            showCenterGuides: st.showCenterGuides,
+            seamlessSlides: st.seamlessSlides,
+            showHiddenZone: st.showHiddenZone,
+            marginPct: st.marginPct,
+            snapGrid: st.snapGrid,
+            snapCenter: st.snapCenter,
+            snapItems: st.snapItems,
+            snapMargins: st.snapMargins,
+          },
+          lastTextStyle: st.lastTextStyle,
         },
         async (src) => (await fetch(src)).blob(),
       )
@@ -472,6 +580,8 @@ export default function App() {
         customWidth: manifest.customWidth,
         customHeight: manifest.customHeight,
         workspaceBgColor: manifest.workspaceBgColor,
+        guides: manifest.guides,
+        lastTextStyle: manifest.lastTextStyle,
       })
       setProjectPath(path)
     } catch (err) {
@@ -536,6 +646,29 @@ export default function App() {
   /* ---- Active slide indicator ---- */
   const activeSlideIndex = slides.findIndex((s) => s.id === activeSlideId)
 
+  /* ---- Text selection (for properties panel) ---- */
+  const selectedTextItem: PlacedMedia | null = useMemo(() => {
+    if (selectedIds.length !== 1) return null
+    const it = items.find((x) => x.id === selectedIds[0])
+    return it && it.type === 'text' ? it : null
+  }, [selectedIds, items])
+
+  const refreshFonts = useCallback(async () => {
+    try {
+      const list = await listSystemFonts()
+      if (list.length) setFontList(list)
+    } catch {
+      // already falls back inside listSystemFonts
+    }
+  }, [])
+
+  const onAddText = useCallback(() => {
+    addText()
+    // Trigger font enumeration on the user gesture (queryLocalFonts requires
+    // a transient activation).
+    void refreshFonts()
+  }, [addText, refreshFonts])
+
   return (
     <div className="app">
       <header className="app__header">
@@ -576,27 +709,21 @@ export default function App() {
         <div className="app__custom-size">
           <label>
             W
-            <input
-              type="number"
+            <NumberField
               min={64}
               max={8192}
               value={customWidth}
-              onChange={(e) =>
-                setCustomDimensions(Number(e.target.value) || 64, customHeight)
-              }
+              onCommit={(n) => setCustomDimensions(n, customHeight)}
             />
           </label>
           <span>x</span>
           <label>
             H
-            <input
-              type="number"
+            <NumberField
               min={64}
               max={8192}
               value={customHeight}
-              onChange={(e) =>
-                setCustomDimensions(customWidth, Number(e.target.value) || 64)
-              }
+              onCommit={(n) => setCustomDimensions(customWidth, n)}
             />
           </label>
         </div>
@@ -675,24 +802,42 @@ export default function App() {
               if (e.target) e.target.value = ''
             }}
           />
-          <button
-            type="button"
-            className="btn btn--outline"
-            onClick={() => addMediaInputRef.current?.click()}
-            title="Add images or videos"
-            style={{
-              flexDirection: 'row',
-              gap: 8,
-              padding: '7px 12px',
-              fontSize: '0.78rem',
-              justifyContent: 'center',
-              width: '100%',
-              marginBottom: 12,
-            }}
-          >
-            <Icon.Plus style={{ width: 13, height: 13 }} />
-            Add media
-          </button>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btn--outline"
+              onClick={() => addMediaInputRef.current?.click()}
+              title="Add images or videos"
+              style={{
+                flexDirection: 'row',
+                gap: 8,
+                padding: '7px 12px',
+                fontSize: '0.78rem',
+                justifyContent: 'center',
+                flex: 1,
+              }}
+            >
+              <Icon.Plus style={{ width: 13, height: 13 }} />
+              Add media
+            </button>
+            <button
+              type="button"
+              className="btn btn--outline"
+              onClick={onAddText}
+              title="Add a text layer"
+              style={{
+                flexDirection: 'row',
+                gap: 8,
+                padding: '7px 12px',
+                fontSize: '0.78rem',
+                justifyContent: 'center',
+                flex: 1,
+              }}
+            >
+              <Icon.Text style={{ width: 13, height: 13 }} />
+              Add text
+            </button>
+          </div>
 
           <details className="collapsible" open>
             <summary><h2><Icon.Sliders />Background</h2></summary>
@@ -768,7 +913,30 @@ export default function App() {
               </label>
               <label className="field">
                 <span>Grid px</span>
-                <input type="number" min={4} max={400} value={gridSize} onChange={(e) => setGridSize(Number(e.target.value) || 40)} />
+                <NumberField
+                  min={4}
+                  max={400}
+                  value={gridSize}
+                  onCommit={(n) => setGridSize(n)}
+                  style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                />
+              </label>
+              <label className="field" title="Visibility of the grid overlay on top of media">
+                <span>Grid opacity</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={gridOpacity}
+                    onChange={(e) => setGridOpacity(Number(e.target.value))}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--mono)', minWidth: 32, textAlign: 'right' }}>
+                    {Math.round(gridOpacity * 100)}%
+                  </span>
+                </div>
               </label>
               <label className="check">
                 <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
@@ -793,6 +961,194 @@ export default function App() {
               </label>
             </div>
           </details>
+
+          {selectedTextItem && (() => {
+            const t = selectedTextItem
+            const patch = (p: Partial<PlacedMedia>) => updateItem(t.id, p)
+            const align: TextAlign = (t.textAlign as TextAlign) || 'left'
+            return (
+              <details className="collapsible" open>
+                <summary><h2><Icon.Text />Text</h2></summary>
+                <div className="collapsible__body">
+                  <label className="field" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                    <span>Content</span>
+                    <textarea
+                      value={t.text || ''}
+                      onChange={(e) => patch({ text: e.target.value })}
+                      spellCheck={false}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: 6,
+                        borderRadius: 4,
+                        background: 'rgba(255,255,255,0.04)',
+                        color: '#fff',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        fontFamily: 'inherit',
+                        fontSize: 12,
+                        resize: 'vertical',
+                      }}
+                    />
+                  </label>
+
+                  <label className="field" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                    <span>Font</span>
+                    <input
+                      type="text"
+                      list="app-system-fonts"
+                      value={t.fontFamily ?? ''}
+                      onChange={(e) => patch({ fontFamily: e.target.value })}
+                      onFocus={() => void refreshFonts()}
+                      spellCheck={false}
+                      placeholder="Inter"
+                      style={{
+                        width: '100%',
+                        padding: '5px 7px',
+                        borderRadius: 4,
+                        background: 'rgba(255,255,255,0.04)',
+                        color: '#fff',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        fontSize: 12,
+                      }}
+                    />
+                    <datalist id="app-system-fonts">
+                      {fontList.map((f) => <option key={f} value={f} />)}
+                    </datalist>
+                  </label>
+
+                  <label className="check" title="When on, font size grows or shrinks so the text fills the box width × height.">
+                    <input
+                      type="checkbox"
+                      checked={!!t.fillMode}
+                      onChange={(e) => patch({ fillMode: e.target.checked })}
+                    />
+                    Fill box (auto-size)
+                  </label>
+
+                  <div className="field" style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <label
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}
+                      title={t.fillMode ? 'Disabled — size is computed from the box dimensions while Fill is on.' : undefined}
+                    >
+                      <span>Size{t.fillMode ? ' (auto)' : ''}</span>
+                      <NumberField
+                        min={4}
+                        max={2000}
+                        value={Math.round(t.fontSize || 64)}
+                        onCommit={(n) => patch({ fontSize: n })}
+                        style={{
+                          width: '100%',
+                          minWidth: 0,
+                          boxSizing: 'border-box',
+                          opacity: t.fillMode ? 0.5 : 1,
+                          pointerEvents: t.fillMode ? 'none' : 'auto',
+                        }}
+                      />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                      <span>Line height</span>
+                      <NumberField
+                        step={0.05}
+                        min={0.6}
+                        max={4}
+                        decimals={2}
+                        value={t.lineHeight ?? 1.15}
+                        onCommit={(n) => patch({ lineHeight: n })}
+                        style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="field" style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                      <span>Letter spacing</span>
+                      <NumberField
+                        step={0.5}
+                        decimals={1}
+                        value={t.letterSpacing ?? 0}
+                        onCommit={(n) => patch({ letterSpacing: n })}
+                        style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                      />
+                    </label>
+                    <label
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}
+                      title="Width of the text box. Text wraps to a new line when a word would extend past this width. Same as dragging the side handles on the canvas."
+                    >
+                      <span>Box width</span>
+                      <NumberField
+                        min={20}
+                        value={Math.round(t.width)}
+                        onCommit={(n) => patch({ width: n })}
+                        style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  </div>
+
+                  {t.fillMode && (
+                    <label
+                      className="field"
+                      title="Height of the text box. Font grows to fill this height while keeping word-wrap inside the box width."
+                    >
+                      <span>Box height</span>
+                      <NumberField
+                        min={20}
+                        value={Math.round(t.height)}
+                        onCommit={(n) => patch({ height: n })}
+                        style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  )}
+
+                  <div className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <button
+                      type="button"
+                      className={`btn btn--sm ${t.bold ? 'btn--accent' : ''}`}
+                      style={{ fontWeight: 700, padding: '4px 10px' }}
+                      onClick={() => patch({ bold: !t.bold })}
+                      title="Bold"
+                    >
+                      B
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn--sm ${t.italic ? 'btn--accent' : ''}`}
+                      style={{ fontStyle: 'italic', padding: '4px 10px' }}
+                      onClick={() => patch({ italic: !t.italic })}
+                      title="Italic"
+                    >
+                      I
+                    </button>
+                    <div style={{ flex: 1 }} />
+                    {(['left', 'center', 'right', 'justify'] as const).map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        className={`btn btn--sm ${align === a ? 'btn--accent' : ''}`}
+                        style={{ padding: '4px 8px', fontSize: 11 }}
+                        onClick={() => patch({ textAlign: a })}
+                        title={`Align ${a}`}
+                      >
+                        {a === 'left' ? '⯇' : a === 'center' ? '≡' : a === 'right' ? '⯈' : '☰'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <span>Color</span>
+                    <input
+                      type="color"
+                      value={t.textColor || '#ffffff'}
+                      onChange={(e) => patch({ textColor: e.target.value })}
+                      style={{ width: 32, height: 24, padding: 0, border: '1.5px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
+                      {t.textColor || '#ffffff'}
+                    </span>
+                  </label>
+                </div>
+              </details>
+            )
+          })()}
 
           {selectedIds.length > 0 && (() => {
             const count = selectedIds.length

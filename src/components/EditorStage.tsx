@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { Arc, Circle, Group, Layer, Line, Rect, Stage, Transformer } from 'react-konva'
 import Konva from 'konva'
-import { Image as KonvaImage } from 'react-konva'
+import { Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import { useCarouselStore, type PlacedMedia } from '../store/useCarouselStore'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
@@ -259,6 +259,215 @@ function MediaItemView({
           flipX: isFlipped,
           flipY: isFlippedY,
         })
+      }}
+    />
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  TextItemView                                                      */
+/* ------------------------------------------------------------------ */
+
+function fontStyleString(bold?: boolean, italic?: boolean): string {
+  if (bold && italic) return 'italic bold'
+  if (bold) return 'bold'
+  if (italic) return 'italic'
+  return 'normal'
+}
+
+/**
+ * Binary-search the largest fontSize such that wrapped text fits within
+ * (boxWidth, boxHeight). Uses a detached Konva.Text for measurement — no
+ * layer mutation, so callable from render.
+ */
+function fitFontSize(opts: {
+  text: string
+  fontFamily: string
+  fontStyle: string
+  boxWidth: number
+  boxHeight: number
+  lineHeight: number
+  letterSpacing: number
+  min?: number
+  max?: number
+}): number {
+  if (!opts.text || opts.boxWidth <= 0 || opts.boxHeight <= 0) return opts.min ?? 4
+  const measure = (size: number): number => {
+    const node = new Konva.Text({
+      text: opts.text,
+      fontFamily: opts.fontFamily,
+      fontSize: size,
+      fontStyle: opts.fontStyle,
+      lineHeight: opts.lineHeight,
+      letterSpacing: opts.letterSpacing,
+      width: opts.boxWidth,
+      wrap: 'word',
+    })
+    const h = node.height()
+    node.destroy()
+    return h
+  }
+  let lo = opts.min ?? 4
+  let hi = opts.max ?? 2000
+  // 14 iterations over a 4..2000 range → sub-pixel precision, well under 1ms.
+  // A measured height of 0 means a single character was wider than boxWidth,
+  // so Konva couldn't lay out any line — treat as "doesn't fit" and shrink
+  // the search window, otherwise the binary search runs away upward.
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2
+    const h = measure(mid)
+    if (h <= 0 || h > opts.boxHeight) hi = mid
+    else lo = mid
+  }
+  return Math.max(opts.min ?? 4, Math.floor(lo))
+}
+
+/** Pick a foreground stroke/grid color that contrasts with a hex bg. */
+function contrastStrokeFor(bgColor: string, alpha = 0.22): string {
+  const hex = (bgColor || '#ffffff').replace('#', '')
+  const r = parseInt(hex.slice(0, 2), 16) || 0
+  const g = parseInt(hex.slice(2, 4), 16) || 0
+  const b = parseInt(hex.slice(4, 6), 16) || 0
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return lum > 140 ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`
+}
+
+function TextItemView({
+  item,
+  isEditing,
+  onSelect,
+  onChange,
+  onRequestEdit,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: {
+  item: PlacedMedia
+  isEditing: boolean
+  onSelect: (additive: boolean) => void
+  onChange: (patch: Partial<PlacedMedia>) => void
+  onRequestEdit: () => void
+  onDragStart: (node: Konva.Text) => void
+  onDragMove: (node: Konva.Text) => void
+  onDragEnd: (node: Konva.Text) => void
+}) {
+  const shapeRef = useRef<Konva.Text>(null)
+  const updateItem = useCarouselStore((s) => s.updateItem)
+  const fillMode = !!item.fillMode
+
+  const fontStyle = fontStyleString(item.bold, item.italic)
+  const lineHeight = item.lineHeight ?? 1.15
+  const letterSpacing = item.letterSpacing ?? 0
+
+  // When fill mode is on, derive fontSize from the box dimensions so the text
+  // grows to fit. Off mode uses the stored fontSize as-is.
+  const renderedFontSize = useMemo(() => {
+    if (!fillMode) return item.fontSize || 64
+    return fitFontSize({
+      text: item.text || '',
+      fontFamily: item.fontFamily || 'Inter',
+      fontStyle,
+      boxWidth: item.width,
+      boxHeight: item.height,
+      lineHeight,
+      letterSpacing,
+      min: 4,
+      max: 4000,
+    })
+  }, [fillMode, item.text, item.fontFamily, fontStyle, item.width, item.height,
+      lineHeight, letterSpacing, item.fontSize])
+
+  // In off mode, the rendered text's height determines the item's height —
+  // sync it back so selection / snap / transformer match what's drawn.
+  // In fill mode, height is user-controlled (the target), so we don't sync.
+  useEffect(() => {
+    if (fillMode) return
+    const n = shapeRef.current
+    if (!n) return
+    const measured = n.height()
+    if (measured > 0 && Math.abs(measured - item.height) > 1) {
+      updateItem(item.id, { height: measured })
+    }
+  }, [fillMode, item.id, item.text, item.fontFamily, item.fontSize, item.bold,
+      item.italic, item.textAlign, item.lineHeight, item.letterSpacing,
+      item.width, item.height, updateItem])
+
+  return (
+    <KonvaText
+      ref={shapeRef}
+      id={`media-${item.id}`}
+      name="media"
+      x={item.x}
+      y={item.y}
+      width={item.width}
+      // Pinning height in fill mode keeps the transformer bbox matching the
+      // box rather than the (smaller, fitted) text. Konva will draw text
+      // overflowing height — but the fit step guarantees it doesn't.
+      height={fillMode ? item.height : undefined}
+      rotation={item.rotation}
+      text={item.text || ''}
+      fontFamily={item.fontFamily || 'Inter'}
+      fontSize={renderedFontSize}
+      fontStyle={fontStyle}
+      fill={item.textColor || '#ffffff'}
+      align={item.textAlign || 'left'}
+      lineHeight={lineHeight}
+      letterSpacing={letterSpacing}
+      wrap="word"
+      visible={!isEditing}
+      draggable
+      perfectDrawEnabled={false}
+      onClick={(e) => {
+        e.cancelBubble = true
+        const ev = e.evt as MouseEvent | undefined
+        const additive = !!(ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey))
+        onSelect(additive)
+      }}
+      onTap={(e) => { e.cancelBubble = true; onSelect(false) }}
+      onDblClick={(e) => { e.cancelBubble = true; onRequestEdit() }}
+      onDblTap={(e) => { e.cancelBubble = true; onRequestEdit() }}
+      onDragStart={(e) => onDragStart(e.target as Konva.Text)}
+      onDragMove={(e) => onDragMove(e.target as Konva.Text)}
+      onDragEnd={(e) => onDragEnd(e.target as Konva.Text)}
+      onTransformEnd={() => {
+        const n = shapeRef.current
+        if (!n) return
+        const sx = Math.abs(n.scaleX())
+        const sy = Math.abs(n.scaleY())
+        const newWidth = Math.max(20, item.width * sx)
+        if (fillMode) {
+          // Box-driven: both dimensions are user targets. The fontSize will
+          // recompute from the new (width, height) on next render.
+          const newHeight = Math.max(20, item.height * sy)
+          n.scaleX(1)
+          n.scaleY(1)
+          n.width(newWidth)
+          n.height(newHeight)
+          onChange({
+            x: n.x(),
+            y: n.y(),
+            width: newWidth,
+            height: newHeight,
+            rotation: n.rotation(),
+          })
+        } else {
+          // Off mode: corner = uniform scale → fontSize follows width;
+          // side = wrap width only, font unchanged.
+          const uniform = Math.abs(sx - sy) < 0.01
+          const newFontSize = uniform
+            ? Math.max(4, (item.fontSize || 64) * sx)
+            : (item.fontSize || 64)
+          n.scaleX(1)
+          n.scaleY(1)
+          n.width(newWidth)
+          onChange({
+            x: n.x(),
+            y: n.y(),
+            width: newWidth,
+            fontSize: newFontSize,
+            rotation: n.rotation(),
+          })
+        }
       }}
     />
   )
@@ -1194,9 +1403,11 @@ const EditorStage = forwardRef<
   const guidesLayerRef = useRef<Konva.Layer>(null)
   const snapGuidesLayerRef = useRef<Konva.Layer>(null)
   const veilLayerRef = useRef<Konva.Layer>(null)
+  const overlayLayerRef = useRef<Konva.Layer>(null)
   const trRef = useRef<Konva.Transformer>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const cropApplyRef = useRef<(() => void) | null>(null)
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
 
   /* ---- store ---- */
   const dimensions = useCarouselStore((s) => s.dimensions)
@@ -1212,6 +1423,7 @@ const EditorStage = forwardRef<
   const updateItems = useCarouselStore((s) => s.updateItems)
   const moveItemToSlide = useCarouselStore((s) => s.moveItemToSlide)
   const addSlide = useCarouselStore((s) => s.addSlide)
+  const duplicateSlide = useCarouselStore((s) => s.duplicateSlide)
   const removeSlide = useCarouselStore((s) => s.removeSlide)
   const reorderSlides = useCarouselStore((s) => s.reorderSlides)
   const setSlideBgColor = useCarouselStore((s) => s.setSlideBgColor)
@@ -1226,6 +1438,7 @@ const EditorStage = forwardRef<
 
   const showGrid = useCarouselStore((s) => s.showGrid)
   const gridSize = useCarouselStore((s) => s.gridSize)
+  const gridOpacity = useCarouselStore((s) => s.gridOpacity)
   const marginPct = useCarouselStore((s) => s.marginPct)
   const showCenterGuides = useCarouselStore((s) => s.showCenterGuides)
   const seamlessSlides = useCarouselStore((s) => s.seamlessSlides)
@@ -1648,7 +1861,7 @@ const EditorStage = forwardRef<
         // Also temporarily reset the stage transform so toCanvas's x/y/width/height
         // are interpreted in artboard (world) coords at 1:1, independent of zoom.
         const stage = stageRef.current
-        const overlays = [veilLayerRef.current, guidesLayerRef.current, snapGuidesLayerRef.current]
+        const overlays = [veilLayerRef.current, guidesLayerRef.current, snapGuidesLayerRef.current, overlayLayerRef.current]
         const wasVisible = overlays.map((l) => l?.visible() ?? true)
         const prevX = stage.x(), prevY = stage.y()
         const prevSX = stage.scaleX(), prevSY = stage.scaleY()
@@ -1711,17 +1924,17 @@ const EditorStage = forwardRef<
   /* ---- export ---- */
   const exportSlidePng = useCallback(
     async (slideId: string) => {
-      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current
+      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current
       if (!stage) return null
       const idx = slides.findIndex((s) => s.id === slideId)
       if (idx < 0) return null
       const ap = artboardPositions[idx]!
       const ps = stage.scaleX(), pp = stage.position()
       stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-      if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide()
+      if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide()
       stage.draw()
       const blob = (await stage.toBlob({ x: ap.x, y: ap.y, width: W, height: H, pixelRatio: 1, mimeType: 'image/png', quality: 1 })) as Blob | null
-      if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show()
+      if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show()
       stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
       return blob
     },
@@ -1732,7 +1945,7 @@ const EditorStage = forwardRef<
   const exportSlideVideo = useCallback(
     async (slideId: string, outputPath: string, fps = 30, onProgress?: (pct: number) => void): Promise<string | null> => {
       if (!window.electronAPI) return null
-      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current
+      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current
       if (!stage) return null
       const st = useCarouselStore.getState()
       const idx = st.slides.findIndex((s) => s.id === slideId)
@@ -1769,8 +1982,10 @@ const EditorStage = forwardRef<
       const totalFrames = 1 + videoFrames
 
       try {
-        // Start ffmpeg session
-        await window.electronAPI.startVideoEncode({
+        // Start ffmpeg session. The response includes which encoder ffmpeg
+        // is actually using — log it to the renderer console so the user
+        // can confirm GPU vs CPU via View → Toggle Developer Tools.
+        const startResult = await window.electronAPI.startVideoEncode({
           sessionId,
           width: W,
           height: H,
@@ -1778,11 +1993,15 @@ const EditorStage = forwardRef<
           duration: maxDuration,
           outputPath,
         })
+        console.log(
+          `[export] slide ${idx + 1}: ${W}×${H} ${fps}fps, ${totalFrames} frames, ` +
+          `encoder=${(startResult as { encoder?: string }).encoder ?? 'unknown'}`,
+        )
 
         // Save & reset stage transform
         const ps = stage.scaleX(), pp = stage.position()
         stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-        if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide()
+        if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide()
 
         // Frame-by-frame capture — pipeline IPC writes so ffmpeg ingestion
         // overlaps with seeking/drawing the next frame.
@@ -1807,6 +2026,9 @@ const EditorStage = forwardRef<
             }
           }
 
+          // Track whether any video actually had to seek; if not, we can
+          // skip the rAF below since the frame already matches what's drawn.
+          let anySeeked = false
           const seekPromises = videoEls.map(({ item, el, coverTime, trimStart, trimEnd }) => {
             return new Promise<void>((resolve) => {
               // Skip seeking when this frame uses a custom cover image —
@@ -1815,18 +2037,41 @@ const EditorStage = forwardRef<
                 resolve(); return
               }
               const target = time === null ? coverTime : trimStart + time
-              const cap = Math.min(trimEnd, el.duration) - 0.001
+              const cap = Math.min(trimEnd, el.duration || 0) - 0.001
+              // Guard against degenerate durations (NaN / 0). Skipping the
+              // seek here is better than waiting forever for 'seeked'.
+              if (!isFinite(cap) || cap <= 0) { resolve(); return }
               const clamped = target >= cap ? cap : target
               if (Math.abs(el.currentTime - clamped) < 1e-4) { resolve(); return }
-              const onSeeked = () => { el.removeEventListener('seeked', onSeeked); resolve() }
+              anySeeked = true
+              let done = false
+              const finish = () => {
+                if (done) return
+                done = true
+                el.removeEventListener('seeked', onSeeked)
+                clearTimeout(timer)
+                resolve()
+              }
+              const onSeeked = () => finish()
+              // Seek timeout: some video states (corrupt segment, no buffered
+              // range at the target, decoder stall) silently never fire
+              // 'seeked'. After 5s we move on with whatever frame the video
+              // is currently showing rather than hanging the whole export.
+              const timer = setTimeout(() => {
+                console.warn(`[export] seek timed out for ${item.id} target=${clamped.toFixed(3)}s — continuing with current frame`)
+                finish()
+              }, 5000)
               el.addEventListener('seeked', onSeeked)
               el.currentTime = clamped
             })
           })
           await Promise.all(seekPromises)
 
-          // Single rAF is enough for Konva to pick up the new video frame
-          await new Promise<void>((r) => requestAnimationFrame(() => r()))
+          // Single rAF is enough for Konva to pick up the new video frame.
+          // Skip when no seek actually fired — saves ~16ms per duplicate frame.
+          if (anySeeked) {
+            await new Promise<void>((r) => requestAnimationFrame(() => r()))
+          }
           stage.draw()
 
           // Capture the artboard region as raw pixels
@@ -1848,7 +2093,24 @@ const EditorStage = forwardRef<
           // Make sure the previous write finished (bounded queue of 1)
           // before dispatching the next one — keeps IPC pipelined with
           // the next frame's seek/draw without unbounded memory growth.
-          await pendingWrite
+          //
+          // Frame 0 gets a longer window because hardware encoders often
+          // need warmup (driver init, GOP buffer fill) before they start
+          // accepting input at full rate. Subsequent frames should ack in
+          // well under 10s on any healthy encoder.
+          const ackTimeoutMs = frame === 0 ? 30000 : 10000
+          let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+          await Promise.race([
+            pendingWrite,
+            new Promise<void>((_resolve, reject) => {
+              timeoutTimer = setTimeout(() => {
+                reject(new Error(
+                  `Frame ${frame} timed out after ${ackTimeoutMs}ms — ffmpeg likely hung. ` +
+                  `Open View → Toggle Developer Tools to see ffmpeg stderr for details.`,
+                ))
+              }, ackTimeoutMs)
+            }),
+          ]).finally(() => { if (timeoutTimer) clearTimeout(timeoutTimer) })
           pendingWrite = window.electronAPI.videoFrame({ sessionId, frameData })
 
           onProgress?.(((frame + 1) / totalFrames) * 100)
@@ -1857,7 +2119,7 @@ const EditorStage = forwardRef<
         await pendingWrite
 
         // Restore stage
-        if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show()
+        if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show()
         stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
 
         // Finish encoding
@@ -2074,6 +2336,24 @@ const EditorStage = forwardRef<
                     </svg>
                   </button>
                 )}
+                <button
+                  type="button"
+                  title="Duplicate slide"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); duplicateSlide(slide.id) }}
+                  style={{
+                    background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)',
+                    cursor: 'pointer', padding: 2, lineHeight: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#fff' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="8" y="8" width="13" height="13" rx="2" />
+                    <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+                  </svg>
+                </button>
                 {slides.length > 1 && (
                   <button
                     type="button"
@@ -2728,22 +3008,10 @@ const EditorStage = forwardRef<
                   {seamlessSlides && i < slides.length - 1 && (
                     <Line points={[W, 0, W, H]} stroke="rgba(0,0,0,0.25)" strokeWidth={1.5} dash={[8, 8]} />
                   )}
-                  {false && marginPct > 0 && (
-                    <Rect
-                      x={marginPx} y={marginPx}
-                      width={W - 2 * marginPx} height={H - 2 * marginPx}
-                      stroke="rgba(255,200,120,0.45)" strokeWidth={1.5} dash={[8, 6]}
-                    />
-                  )}
-                  {gridLines.map((pts, j) => (
-                    <Line key={j} points={pts} stroke="rgba(255,255,255,0.08)" strokeWidth={1} strokeScaleEnabled={false} />
-                  ))}
-                  {showCenterGuides && (
-                    <>
-                      <Line points={[W / 2, 0, W / 2, H]} stroke="rgba(120,180,255,0.3)" strokeWidth={1} strokeScaleEnabled={false} />
-                      <Line points={[0, H / 2, W, H / 2]} stroke="rgba(120,180,255,0.3)" strokeWidth={1} strokeScaleEnabled={false} />
-                    </>
-                  )}
+                  {/* Grid and center guides used to live here, but now they
+                      render in an overlay layer above the content so they sit
+                      on top of media — treated as a visual tool rather than a
+                      backing texture. See <Layer> below the content layer. */}
                   {/* Upscale outline — thicker dashed ring on items being scaled past natural size.
                       Lives in the guides layer so it's hidden during export. Uses dragLive when
                       the item is currently being dragged so the ring follows in real time. */}
@@ -2785,19 +3053,40 @@ const EditorStage = forwardRef<
                     onClick={(e) => { e.cancelBubble = true; setSelected(null); useCarouselStore.getState().setActiveSlide(slide.id) }}
                   />
                   {slideItems.map((item) => (
-                    <MediaItemView
-                      key={item.id} item={item}
-                      isCropping={item.id === cropItemId}
-                      onSelect={(additive) => {
-                        useCarouselStore.getState().setActiveSlide(slide.id)
-                        if (additive) toggleSelected(item.id)
-                        else setSelected(item.id)
-                      }}
-                      onChange={(patch) => updateItem(item.id, patch)}
-                      onDragStart={(node) => handleDragStart(node, item)}
-                      onDragMove={(node) => handleDragMove(node, item)}
-                      onDragEnd={(node) => handleDragEnd(node, item)}
-                    />
+                    item.type === 'text' ? (
+                      <TextItemView
+                        key={item.id} item={item}
+                        isEditing={editingTextId === item.id}
+                        onSelect={(additive) => {
+                          useCarouselStore.getState().setActiveSlide(slide.id)
+                          if (additive) toggleSelected(item.id)
+                          else setSelected(item.id)
+                        }}
+                        onChange={(patch) => updateItem(item.id, patch)}
+                        onRequestEdit={() => {
+                          useCarouselStore.getState().setActiveSlide(slide.id)
+                          setSelected(item.id)
+                          setEditingTextId(item.id)
+                        }}
+                        onDragStart={(node) => handleDragStart(node as unknown as Konva.Image, item)}
+                        onDragMove={(node) => handleDragMove(node as unknown as Konva.Image, item)}
+                        onDragEnd={(node) => handleDragEnd(node as unknown as Konva.Image, item)}
+                      />
+                    ) : (
+                      <MediaItemView
+                        key={item.id} item={item}
+                        isCropping={item.id === cropItemId}
+                        onSelect={(additive) => {
+                          useCarouselStore.getState().setActiveSlide(slide.id)
+                          if (additive) toggleSelected(item.id)
+                          else setSelected(item.id)
+                        }}
+                        onChange={(patch) => updateItem(item.id, patch)}
+                        onDragStart={(node) => handleDragStart(node, item)}
+                        onDragMove={(node) => handleDragMove(node, item)}
+                        onDragEnd={(node) => handleDragEnd(node, item)}
+                      />
+                    )
                   ))}
                   {cropItemId && slideItems.find((it) => it.id === cropItemId) && (
                     <CropOverlay
@@ -2828,6 +3117,37 @@ const EditorStage = forwardRef<
               )
             })}
           </Layer>
+
+          {/* Grid + center guides overlay — drawn on top of media so they
+              behave as a visual reference tool rather than a backing texture.
+              listening={false} so they never absorb pointer events. */}
+          {(showGrid || showCenterGuides) && (
+            <Layer ref={overlayLayerRef} listening={false}>
+              {slides.map((slide, i) => {
+                const ap = artboardPositions[i]!
+                const alpha = Math.max(0, Math.min(1, gridOpacity))
+                return (
+                  <Group key={slide.id} x={ap.x} y={ap.y}>
+                    {showGrid && gridLines.map((pts, j) => (
+                      <Line
+                        key={j}
+                        points={pts}
+                        stroke={contrastStrokeFor(slide.bgColor, alpha)}
+                        strokeWidth={1}
+                        strokeScaleEnabled={false}
+                      />
+                    ))}
+                    {showCenterGuides && (
+                      <>
+                        <Line points={[W / 2, 0, W / 2, H]} stroke={`rgba(120,180,255,${0.55 * alpha + 0.15})`} strokeWidth={1} strokeScaleEnabled={false} />
+                        <Line points={[0, H / 2, W, H / 2]} stroke={`rgba(120,180,255,${0.55 * alpha + 0.15})`} strokeWidth={1} strokeScaleEnabled={false} />
+                      </>
+                    )}
+                  </Group>
+                )
+              })}
+            </Layer>
+          )}
 
           {/* Hidden-zone veil: opaque core around slides, gradient fade to transparent at outer edge */}
           {showHiddenZone && hiddenZone && artboardPositions.length > 0 && (() => {
@@ -3059,8 +3379,18 @@ const EditorStage = forwardRef<
                       const dx = p.x - cx, dy = p.y - cy
                       if (dx === 0 && dy === 0) return
                       // Handle lies on the item's local +Y axis, whose world angle is rot + 90°.
-                      const newRad = Math.atan2(dy, dx) - Math.PI / 2
-                      const newDeg = newRad * 180 / Math.PI
+                      let newRad = Math.atan2(dy, dx) - Math.PI / 2
+                      let newDeg = newRad * 180 / Math.PI
+                      // Hold Shift to snap rotation. 22.5° step gives 16
+                      // equally-spaced stops around the circle, which lands
+                      // exactly on 0/45/90/135/180/225/270/315 plus three
+                      // intermediate angles between each pair.
+                      const evt = e.evt as MouseEvent | undefined
+                      if (evt && evt.shiftKey) {
+                        const step = 22.5
+                        newDeg = Math.round(newDeg / step) * step
+                        newRad = (newDeg * Math.PI) / 180
+                      }
                       // Preserve the visual bbox center while rotating.
                       const nx = (cx - ap.x) - (hw * Math.cos(newRad) - hh * Math.sin(newRad))
                       const ny = (cy - ap.y) - (hw * Math.sin(newRad) + hh * Math.cos(newRad))
@@ -3106,6 +3436,96 @@ const EditorStage = forwardRef<
           </Layer>
         </Stage>
       </div>
+
+      {/* Inline text editor — positioned over the Konva.Text node, sized
+          to match what the user was seeing before they double-clicked. */}
+      {editingTextId && (() => {
+        const it = items.find((x) => x.id === editingTextId)
+        if (!it || it.type !== 'text') return null
+        const slideIdx = slides.findIndex((s) => s.id === it.slideId)
+        const ap = artboardPositions[slideIdx]
+        if (!ap) return null
+        const left = (ap.x + it.x) * zoom + panOffset.x
+        const top = (ap.y + it.y) * zoom + panOffset.y
+        const width = Math.max(8, it.width * zoom)
+        const lh = it.lineHeight ?? 1.15
+        const ls = it.letterSpacing ?? 0
+        const fontStyle = fontStyleString(it.bold, it.italic)
+        // Match the rendered font size pre-edit. In fill mode, that's the
+        // binary-search-derived size, not item.fontSize.
+        const baseFontSize = it.fillMode
+          ? fitFontSize({
+              text: it.text || '',
+              fontFamily: it.fontFamily || 'Inter',
+              fontStyle,
+              boxWidth: it.width,
+              boxHeight: it.height,
+              lineHeight: lh,
+              letterSpacing: ls,
+              min: 4,
+              max: 4000,
+            })
+          : (it.fontSize || 64)
+        const fontPx = Math.max(2, baseFontSize * zoom)
+        // Size the textarea to the rendered box so multi-line text is fully
+        // visible — previously a one-line minHeight forced scrolling.
+        const minPx = fontPx * lh
+        const height = Math.max(minPx, it.height * zoom)
+        const commit = (value: string) => {
+          updateItem(editingTextId, { text: value })
+          setEditingTextId(null)
+        }
+        return (
+          <textarea
+            autoFocus
+            defaultValue={it.text || ''}
+            spellCheck={false}
+            onBlur={(e) => commit(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setEditingTextId(null)
+              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                commit(e.currentTarget.value)
+              }
+              e.stopPropagation()
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              left,
+              top,
+              width,
+              height,
+              transform: it.rotation ? `rotate(${it.rotation}deg)` : undefined,
+              transformOrigin: 'top left',
+              zIndex: 30,
+              margin: 0,
+              padding: 0,
+              border: '1px dashed rgba(59,130,246,0.9)',
+              outline: 'none',
+              background: 'rgba(255,255,255,0.06)',
+              backdropFilter: 'blur(2px)',
+              color: it.textColor || '#ffffff',
+              fontFamily: it.fontFamily || 'Inter',
+              fontSize: fontPx,
+              fontWeight: it.bold ? 700 : 400,
+              fontStyle: it.italic ? 'italic' : 'normal',
+              textAlign: (it.textAlign as React.CSSProperties['textAlign']) || 'left',
+              lineHeight: lh,
+              letterSpacing: ls * zoom,
+              resize: 'none',
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'normal',
+              overflowWrap: 'break-word',
+              boxSizing: 'border-box',
+            }}
+          />
+        )
+      })()}
     </div>
   )
 })

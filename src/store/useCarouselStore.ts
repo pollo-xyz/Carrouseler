@@ -3,13 +3,44 @@ import type { PresetId, Size } from '../lib/presets'
 import { PRESETS, clampSize } from '../lib/presets'
 import { generateThumbnail } from '../lib/thumbnail'
 
-export type MediaType = 'image' | 'video' | 'gif'
+export type MediaType = 'image' | 'video' | 'gif' | 'text'
+
+export type TextAlign = 'left' | 'center' | 'right' | 'justify'
+
+export interface TextStyleDefaults {
+  fontFamily: string
+  fontSize: number
+  bold: boolean
+  italic: boolean
+  textColor: string
+  textAlign: TextAlign
+  lineHeight: number
+  letterSpacing: number
+  fillMode: boolean
+}
+
+const DEFAULT_TEXT_STYLE: TextStyleDefaults = {
+  fontFamily: 'Inter',
+  fontSize: 64,
+  bold: false,
+  italic: false,
+  textColor: '#111111',
+  textAlign: 'left',
+  lineHeight: 1.15,
+  letterSpacing: 0,
+  fillMode: false,
+}
+
+const TEXT_STYLE_KEYS: (keyof TextStyleDefaults)[] = [
+  'fontFamily', 'fontSize', 'bold', 'italic', 'textColor',
+  'textAlign', 'lineHeight', 'letterSpacing', 'fillMode',
+]
 
 export interface PlacedMedia {
   id: string
   slideId: string
   type: MediaType
-  src: string
+  src: string          // empty string for text items
   name: string
   x: number
   y: number
@@ -32,6 +63,18 @@ export interface PlacedMedia {
   coverImageSrc?: string // optional custom cover image (overrides coverTime when set)
   trimStart: number    // video trim start in seconds (0 = from start)
   trimEnd: number      // video trim end in seconds (0 = play to end)
+
+  // Text-only fields (only populated when type === 'text')
+  text?: string
+  fontFamily?: string
+  fontSize?: number      // px in slide-space (user-set value; ignored when fillMode is on)
+  bold?: boolean
+  italic?: boolean
+  textColor?: string     // CSS color, e.g. '#ffffff'
+  textAlign?: TextAlign
+  lineHeight?: number    // multiplier, 1 = single
+  letterSpacing?: number // px
+  fillMode?: boolean     // when true, fontSize is derived to fill (width, height)
 }
 
 export interface Slide {
@@ -76,6 +119,7 @@ interface CarouselState {
 
   showGrid: boolean
   gridSize: number
+  gridOpacity: number  // 0..1; multiplies the contrast-aware grid stroke alpha
   marginPct: number
   showCenterGuides: boolean
   seamlessSlides: boolean
@@ -85,14 +129,27 @@ interface CarouselState {
   snapItems: boolean
   snapMargins: boolean
 
+  /**
+   * Style defaults applied to the next text item added via addText().
+   * Updated whenever a text item is patched so that styling choices
+   * (font, size, alignment, color, fillMode, etc.) carry between new
+   * text items in the same project — and are persisted in the .vpost.
+   */
+  lastTextStyle: TextStyleDefaults
+
   setPreset: (id: PresetId) => void
   setCustomDimensions: (w: number, h: number) => void
   setActiveSlide: (id: string) => void
   addSlide: (afterIndex?: number) => void
+  duplicateSlide: (id: string) => void
   removeSlide: (id: string) => void
   reorderSlides: (activeId: string, overId: string) => void
 
   addMedia: (file: File, naturalW: number, naturalH: number) => void
+  addText: (overrides?: Partial<PlacedMedia>) => string
+  /** Insert clones onto the active slide. Strips id/slideId from each template
+   *  and assigns fresh ones; returns the new item ids. */
+  pasteItems: (templates: Omit<PlacedMedia, 'id' | 'slideId'>[]) => string[]
   updateItem: (id: string, patch: Partial<PlacedMedia>) => void
   updateItems: (patches: { id: string; patch: Partial<PlacedMedia> }[]) => void
   removeItem: (id: string) => void
@@ -111,6 +168,7 @@ interface CarouselState {
   setShowHiddenZone: (v: boolean) => void
   setShowGrid: (v: boolean) => void
   setGridSize: (n: number) => void
+  setGridOpacity: (n: number) => void
   setMarginPct: (n: number) => void
   setShowCenterGuides: (v: boolean) => void
   setSnapGrid: (v: boolean) => void
@@ -146,8 +204,25 @@ interface CarouselState {
     customWidth: number
     customHeight: number
     workspaceBgColor?: string
+    guides?: Partial<GuideSettings>
+    lastTextStyle?: Partial<TextStyleDefaults>
   }) => void
   resetProject: () => void
+}
+
+/** All workspace-level guides + snap toggles, persisted per-project. */
+export interface GuideSettings {
+  showGrid: boolean
+  gridSize: number
+  gridOpacity: number
+  showCenterGuides: boolean
+  seamlessSlides: boolean
+  showHiddenZone: boolean
+  marginPct: number
+  snapGrid: boolean
+  snapCenter: boolean
+  snapItems: boolean
+  snapMargins: boolean
 }
 
 interface HistorySnapshot {
@@ -228,6 +303,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
 
   showGrid: false,
   gridSize: 40,
+  gridOpacity: 0.45,
   marginPct: 4,
   showCenterGuides: false,
   seamlessSlides: false,
@@ -236,6 +312,8 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   snapCenter: true,
   snapItems: true,
   snapMargins: true,
+
+  lastTextStyle: { ...DEFAULT_TEXT_STYLE },
 
   thumbnails: {},
   cropItemId: null,
@@ -306,6 +384,35 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     const next = [...slides]
     next.splice(Math.min(idx, next.length), 0, { id: sid, bgColor: inheritedColor, exportEnabled: true })
     set({ slides: next, activeSlideId: sid, selectedIds: [] })
+  },
+
+  duplicateSlide: (id) => {
+    const { slides, items } = get()
+    const idx = slides.findIndex((s) => s.id === id)
+    if (idx < 0) return
+    pushHistory('duplicateSlide:' + id)
+    const src = slides[idx]!
+    const newSid = newId()
+    const cloneSlide: Slide = {
+      id: newSid,
+      bgColor: src.bgColor,
+      exportEnabled: src.exportEnabled,
+    }
+    const newSlides = [...slides]
+    newSlides.splice(idx + 1, 0, cloneSlide)
+    // Clone every item that lived on the source slide, with fresh IDs pointing
+    // to the new slide. src URLs (blob: for images/videos) are reused — they
+    // outlive both items, and copying the underlying bytes would burn memory
+    // for no benefit.
+    const srcItems = items.filter((it) => it.slideId === id)
+    const newItems = srcItems.map((it) => ({ ...it, id: newId(), slideId: newSid }))
+    set({
+      slides: newSlides,
+      items: [...items, ...newItems],
+      activeSlideId: newSid,
+      selectedIds: [],
+    })
+    debouncedThumbRefresh(newSid)
   },
 
   removeSlide: (id) => {
@@ -383,12 +490,110 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     debouncedThumbRefresh(activeSlideId)
   },
 
+  addText: (overrides) => {
+    pushHistory('addText')
+    const { dimensions, activeSlideId, items, slides, lastTextStyle } = get()
+    const slide = slides.find((s) => s.id === activeSlideId)
+    // If the last text color is "white-ish" but the slide is bright (or vice
+    // versa), the carried-over color would be unreadable. Override the carried
+    // color with a contrast-aware default only when it would be invisible.
+    const bg = (slide?.bgColor || '#ffffff').replace('#', '')
+    const br = parseInt(bg.slice(0, 2), 16) || 0
+    const bgg = parseInt(bg.slice(2, 4), 16) || 0
+    const bb = parseInt(bg.slice(4, 6), 16) || 0
+    const bgLum = 0.2126 * br + 0.7152 * bgg + 0.0722 * bb
+    const carriedColor = (lastTextStyle.textColor || '#111111').replace('#', '')
+    const cr = parseInt(carriedColor.slice(0, 2), 16) || 0
+    const cg = parseInt(carriedColor.slice(2, 4), 16) || 0
+    const cb = parseInt(carriedColor.slice(4, 6), 16) || 0
+    const fgLum = 0.2126 * cr + 0.7152 * cg + 0.0722 * cb
+    const contrast = Math.abs(bgLum - fgLum)
+    const textColor = contrast < 60
+      ? (bgLum > 140 ? '#111111' : '#ffffff')
+      : lastTextStyle.textColor
+
+    const w = Math.min(720, Math.round(dimensions.width * 0.7))
+    const h = 120 // approximate; updated after Konva measures the rendered text
+    const item: PlacedMedia = {
+      id: newId(),
+      slideId: activeSlideId,
+      type: 'text',
+      src: '',
+      name: 'Text',
+      x: Math.round((dimensions.width - w) / 2),
+      y: Math.round((dimensions.height - h) / 2),
+      width: w,
+      height: h,
+      rotation: 0,
+      naturalWidth: 0,
+      naturalHeight: 0,
+      brightness: 0,
+      contrast: 0,
+      saturation: 1,
+      blur: 0,
+      flipX: false,
+      flipY: false,
+      cropX: 0,
+      cropY: 0,
+      cropW: 0,
+      cropH: 0,
+      coverTime: 0,
+      trimStart: 0,
+      trimEnd: 0,
+      text: 'Your text',
+      // Inherit styling from the last text item the user customised
+      fontFamily: lastTextStyle.fontFamily,
+      fontSize: lastTextStyle.fontSize,
+      bold: lastTextStyle.bold,
+      italic: lastTextStyle.italic,
+      textColor,
+      textAlign: lastTextStyle.textAlign,
+      lineHeight: lastTextStyle.lineHeight,
+      letterSpacing: lastTextStyle.letterSpacing,
+      fillMode: lastTextStyle.fillMode,
+      ...overrides,
+    }
+    set({ items: [...items, item], selectedIds: [item.id] })
+    debouncedThumbRefresh(activeSlideId)
+    return item.id
+  },
+
+  pasteItems: (templates) => {
+    if (!templates.length) return []
+    pushHistory('pasteItems')
+    const { activeSlideId, items } = get()
+    const newItems: PlacedMedia[] = templates.map((t) => ({
+      ...t,
+      id: newId(),
+      slideId: activeSlideId,
+    }))
+    set({
+      items: [...items, ...newItems],
+      selectedIds: newItems.map((i) => i.id),
+    })
+    debouncedThumbRefresh(activeSlideId)
+    return newItems.map((i) => i.id)
+  },
+
   updateItem: (id, patch) => {
     pushHistory('updateItem:' + id)
     const item = get().items.find((x) => x.id === id)
-    set({
-      items: get().items.map((i) => (i.id === id ? { ...i, ...patch } : i)),
-    })
+    // If editing a text item with style-affecting fields in the patch, also
+    // update lastTextStyle so subsequent addText() calls inherit them.
+    let styleUpdate: Partial<TextStyleDefaults> | null = null
+    if (item?.type === 'text') {
+      const collected: Partial<TextStyleDefaults> = {}
+      for (const k of TEXT_STYLE_KEYS) {
+        if (k in patch) {
+          ;(collected as Record<string, unknown>)[k] = (patch as Record<string, unknown>)[k]
+        }
+      }
+      if (Object.keys(collected).length > 0) styleUpdate = collected
+    }
+    set((prev) => ({
+      items: prev.items.map((i) => (i.id === id ? { ...i, ...patch } : i)),
+      ...(styleUpdate ? { lastTextStyle: { ...prev.lastTextStyle, ...styleUpdate } } : {}),
+    }))
     if (item) debouncedThumbRefresh(item.slideId)
   },
 
@@ -475,6 +680,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
 
   setShowGrid: (v) => set({ showGrid: v }),
   setGridSize: (n) => set({ gridSize: Math.max(4, Math.min(400, n)) }),
+  setGridOpacity: (n) => set({ gridOpacity: Math.max(0, Math.min(1, n)) }),
   setMarginPct: (n) => set({ marginPct: Math.max(0, Math.min(30, n)) }),
   setShowCenterGuides: (v) => set({ showCenterGuides: v }),
   setSnapGrid: (v) => set({ snapGrid: v }),
@@ -703,6 +909,8 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       ...s,
       exportEnabled: s.exportEnabled ?? true,
     }))
+    const cur = get()
+    const g = payload.guides ?? {}
     set({
       slides,
       items: payload.items,
@@ -719,6 +927,20 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       _future: [],
       _historyKey: null,
       _historyTime: 0,
+      // Guides / snap — pull each field individually so loading an older
+      // .vpost that's missing some keys keeps the current value for those.
+      showGrid: g.showGrid ?? cur.showGrid,
+      gridSize: g.gridSize ?? cur.gridSize,
+      gridOpacity: g.gridOpacity ?? cur.gridOpacity,
+      showCenterGuides: g.showCenterGuides ?? cur.showCenterGuides,
+      seamlessSlides: g.seamlessSlides ?? cur.seamlessSlides,
+      showHiddenZone: g.showHiddenZone ?? cur.showHiddenZone,
+      marginPct: g.marginPct ?? cur.marginPct,
+      snapGrid: g.snapGrid ?? cur.snapGrid,
+      snapCenter: g.snapCenter ?? cur.snapCenter,
+      snapItems: g.snapItems ?? cur.snapItems,
+      snapMargins: g.snapMargins ?? cur.snapMargins,
+      lastTextStyle: { ...DEFAULT_TEXT_STYLE, ...(payload.lastTextStyle ?? {}) },
     })
     get().refreshAllThumbnails()
   },
@@ -741,6 +963,7 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       _future: [],
       _historyKey: null,
       _historyTime: 0,
+      lastTextStyle: { ...DEFAULT_TEXT_STYLE },
     })
   },
 }))

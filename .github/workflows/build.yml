@@ -1,13 +1,21 @@
 name: Build
 
 on:
+  # Tagged releases (`vX.Y.Z`) still build + draft a GitHub Release with the
+  # artifacts attached. Pushes to any branch and PRs against main also build
+  # — those uploads are artifact-only so we can grab a Mac DMG / Windows EXE
+  # without needing to cut a release for every test build.
   push:
+    branches: ['**']
     tags:
       - 'v*'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   build:

@@ -62,6 +62,15 @@ export interface ElectronAPI {
   onSaveProject: (cb: () => void) => () => void
   onSaveProjectAs: (cb: () => void) => () => void
 
+  /** Main asks: is the current document dirty? Reply with sendDirtyResponse. */
+  onQueryDirty: (cb: () => void) => () => void
+  sendDirtyResponse: (isDirty: boolean) => void
+
+  /** Main asks the renderer to save and report success so the window can
+   *  finish closing. Reply with sendSaveResult(true|false). */
+  onSaveAndClose: (cb: () => void) => () => void
+  sendSaveResult: (ok: boolean) => void
+
   onOpenProjectFile: (
     cb: (payload: { path: string; buffer: Uint8Array }) => void,
   ) => () => void

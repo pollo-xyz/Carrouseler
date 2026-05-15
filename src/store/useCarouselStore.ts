@@ -137,6 +137,11 @@ interface CarouselState {
    */
   lastTextStyle: TextStyleDefaults
 
+  /** Has the in-memory document diverged from what was last saved to disk?
+   *  Used to drive the "Save changes before closing?" prompt. */
+  isDirty: boolean
+  setDirty: (v: boolean) => void
+
   setPreset: (id: PresetId) => void
   setCustomDimensions: (w: number, h: number) => void
   setActiveSlide: (id: string) => void
@@ -259,7 +264,7 @@ function pushHistory(key: string) {
   // Coalesce: if the same "kind" of change fires within HISTORY_COALESCE_MS,
   // treat as a single logical edit (e.g. a drag streams many updateItem calls).
   if (s._historyKey === key && now - s._historyTime < HISTORY_COALESCE_MS) {
-    useCarouselStore.setState({ _historyTime: now, _future: [] })
+    useCarouselStore.setState({ _historyTime: now, _future: [], isDirty: true })
     return
   }
   const past = s._past.concat([snapshotOf(s)])
@@ -269,6 +274,9 @@ function pushHistory(key: string) {
     _future: [],
     _historyKey: key,
     _historyTime: now,
+    // Any change that warrants a history entry also dirties the document
+    // against the on-disk version.
+    isDirty: true,
   })
 }
 
@@ -314,6 +322,9 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   snapMargins: true,
 
   lastTextStyle: { ...DEFAULT_TEXT_STYLE },
+
+  isDirty: false,
+  setDirty: (v) => set({ isDirty: v }),
 
   thumbnails: {},
   cropItemId: null,
@@ -678,17 +689,20 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
     else set({ selectedIds: [...cur, id] })
   },
 
-  setShowGrid: (v) => set({ showGrid: v }),
-  setGridSize: (n) => set({ gridSize: Math.max(4, Math.min(400, n)) }),
-  setGridOpacity: (n) => set({ gridOpacity: Math.max(0, Math.min(1, n)) }),
-  setMarginPct: (n) => set({ marginPct: Math.max(0, Math.min(30, n)) }),
-  setShowCenterGuides: (v) => set({ showCenterGuides: v }),
-  setSnapGrid: (v) => set({ snapGrid: v }),
-  setSnapCenter: (v) => set({ snapCenter: v }),
-  setSnapItems: (v) => set({ snapItems: v }),
-  setSeamlessSlides: (v) => set({ seamlessSlides: v }),
-  setShowHiddenZone: (v) => set({ showHiddenZone: v }),
-  setSnapMargins: (v) => set({ snapMargins: v }),
+  // Workspace toggles are persisted in .vpost, so changing them dirties the
+  // document. We don't push them into history because they're not part of
+  // the undo stack — but they still need to trigger the unsaved-changes prompt.
+  setShowGrid: (v) => set({ showGrid: v, isDirty: true }),
+  setGridSize: (n) => set({ gridSize: Math.max(4, Math.min(400, n)), isDirty: true }),
+  setGridOpacity: (n) => set({ gridOpacity: Math.max(0, Math.min(1, n)), isDirty: true }),
+  setMarginPct: (n) => set({ marginPct: Math.max(0, Math.min(30, n)), isDirty: true }),
+  setShowCenterGuides: (v) => set({ showCenterGuides: v, isDirty: true }),
+  setSnapGrid: (v) => set({ snapGrid: v, isDirty: true }),
+  setSnapCenter: (v) => set({ snapCenter: v, isDirty: true }),
+  setSnapItems: (v) => set({ snapItems: v, isDirty: true }),
+  setSeamlessSlides: (v) => set({ seamlessSlides: v, isDirty: true }),
+  setShowHiddenZone: (v) => set({ showHiddenZone: v, isDirty: true }),
+  setSnapMargins: (v) => set({ snapMargins: v, isDirty: true }),
 
   setSlideBgColor: (slideId, color) => {
     pushHistory('bgColor:' + slideId)
@@ -941,6 +955,8 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       snapItems: g.snapItems ?? cur.snapItems,
       snapMargins: g.snapMargins ?? cur.snapMargins,
       lastTextStyle: { ...DEFAULT_TEXT_STYLE, ...(payload.lastTextStyle ?? {}) },
+      // Just loaded from disk — in sync with the file.
+      isDirty: false,
     })
     get().refreshAllThumbnails()
   },
@@ -964,6 +980,8 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       _historyKey: null,
       _historyTime: 0,
       lastTextStyle: { ...DEFAULT_TEXT_STYLE },
+      // Fresh, empty document.
+      isDirty: false,
     })
   },
 }))

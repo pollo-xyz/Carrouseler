@@ -138,6 +138,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.off('app:save-project-as', h)
   },
 
+  /** Main is asking whether the current document has unsaved changes. The
+   *  renderer must respond via sendDirtyResponse() promptly — main times out
+   *  after 1.5s and falls through to closing. */
+  onQueryDirty: (cb: () => void) => {
+    const h = () => cb()
+    ipcRenderer.on('app:query-dirty', h)
+    return () => ipcRenderer.off('app:query-dirty', h)
+  },
+  sendDirtyResponse: (isDirty: boolean) => ipcRenderer.send('app:dirty-response', isDirty),
+
+  /** Main is asking the renderer to save the project, then signal whether
+   *  the save succeeded so main can proceed with closing the window. */
+  onSaveAndClose: (cb: () => void) => {
+    const h = () => cb()
+    ipcRenderer.on('app:save-and-close', h)
+    return () => ipcRenderer.off('app:save-and-close', h)
+  },
+  sendSaveResult: (ok: boolean) => ipcRenderer.send('app:save-result', ok),
+
   /** Fired when the OS hands us a .vpost file (Finder double-click, Open With,
    * or argv-on-launch). Payload is the file path plus its bytes — main has
    * already read the file. */

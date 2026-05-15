@@ -508,10 +508,13 @@ export default function App() {
   }, [exportPrefix])
 
   /* ---- Save / Open project ---- */
-  const handleSave = useCallback(async (forcePrompt: boolean) => {
+  // Returns true when the project was actually written to disk, false if the
+  // user cancelled the file dialog or save failed. The close-orchestration
+  // path uses the boolean to decide whether to proceed with closing the window.
+  const handleSave = useCallback(async (forcePrompt: boolean): Promise<boolean> => {
     if (!window.electronAPI) {
       alert('Saving projects only works in the desktop app, not the browser.')
-      return
+      return false
     }
     const st = useCarouselStore.getState()
     try {
@@ -546,7 +549,8 @@ export default function App() {
       const existing = projectPathRef.current
       if (existing && !forcePrompt) {
         await window.electronAPI.writeFile({ path: existing, buffer })
-        return
+        useCarouselStore.getState().setDirty(false)
+        return true
       }
 
       const defaultName = existing
@@ -557,10 +561,18 @@ export default function App() {
         filters: VPOST_FILTER,
         buffer,
       })
-      if (path) setProjectPath(path)
+      if (path) {
+        setProjectPath(path)
+        useCarouselStore.getState().setDirty(false)
+        return true
+      }
+      // User cancelled the file picker — leave isDirty alone, signal caller
+      // so the close-orchestration path keeps the window open.
+      return false
     } catch (err) {
       console.error('[save] failed:', err)
       alert(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
+      return false
     }
   }, [])
 
@@ -622,12 +634,25 @@ export default function App() {
     const offOpenFile = api.onOpenProjectFile(({ path, buffer }) => {
       loadFromBuffer(buffer, path)
     })
+    // Save-on-quit orchestration. Main asks if we're dirty (with a 1.5s
+    // timeout on its side, so respond synchronously from the store snapshot).
+    const offQueryDirty = api.onQueryDirty?.(() => {
+      api.sendDirtyResponse(useCarouselStore.getState().isDirty)
+    })
+    // Main asked us to save and report whether the save actually happened.
+    // handleSave returns false on file-picker cancel or write failure — in
+    // either case main keeps the window open.
+    const offSaveAndClose = api.onSaveAndClose?.(() => {
+      handleSave(false).then((ok) => api.sendSaveResult(ok))
+    })
     return () => {
       offNew?.()
       offOpen?.()
       offSave?.()
       offSaveAs?.()
       offOpenFile?.()
+      offQueryDirty?.()
+      offSaveAndClose?.()
     }
   }, [handleNew, handleOpen, handleSave, loadFromBuffer])
 

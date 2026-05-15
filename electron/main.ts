@@ -25,8 +25,15 @@ function getFfmpegPath(): string {
 }
 
 /** Encoder we'll use for libx264-fallback video export — probed once and
- *  cached. Priority: NVIDIA NVENC → Intel QSV → AMD AMF → libx264 (CPU). */
-type EncoderName = 'h264_nvenc' | 'h264_qsv' | 'h264_amf' | 'libx264'
+ *  cached. Priority depends on platform:
+ *   - macOS: h264_videotoolbox (Apple's GPU encoder) → libx264
+ *   - Windows/Linux: NVIDIA NVENC → Intel QSV → AMD AMF → libx264 */
+type EncoderName =
+  | 'h264_nvenc'
+  | 'h264_qsv'
+  | 'h264_amf'
+  | 'h264_videotoolbox'
+  | 'libx264'
 let cachedEncoder: EncoderName | null = null
 let encoderProbePromise: Promise<EncoderName> | null = null
 
@@ -127,7 +134,13 @@ async function probeEncoder(): Promise<EncoderName> {
     }
     const stdin = Buffer.concat([frame, frame, frame])
 
-    const candidates: EncoderName[] = ['h264_nvenc', 'h264_qsv', 'h264_amf']
+    // Platform-aware candidate order: each OS has at most one HW encoder
+    // that's actually usable. NVENC/QSV/AMF only exist on Win/Linux;
+    // videotoolbox is macOS-only. Probing irrelevant ones just wastes
+    // ~50-200ms apiece.
+    const candidates: EncoderName[] = process.platform === 'darwin'
+      ? ['h264_videotoolbox']
+      : ['h264_nvenc', 'h264_qsv', 'h264_amf']
     for (const enc of candidates) {
       // Skip candidates that aren't even compiled in — saves a 10s timeout.
       if (
@@ -216,6 +229,17 @@ function encoderArgs(enc: EncoderName): string[] {
         '-qp_p', '22',
         '-pix_fmt', 'yuv420p',
       ]
+    case 'h264_videotoolbox':
+      // Apple's hardware encoder. Bitrate-based for cross-version compat
+      // (constant-quality on videotoolbox is macOS 10.15+ only, and the
+      // exact -q:v scale shifted around). 8 Mbps at typical slide sizes
+      // (1080×1350) is visually high-quality without being huge.
+      return [
+        '-c:v', 'h264_videotoolbox',
+        '-b:v', '8M',
+        '-profile:v', 'high',
+        '-pix_fmt', 'yuv420p',
+      ]
     case 'libx264':
     default:
       // superfast was chosen over fast: ~2× faster, +10–25% file size at
@@ -300,10 +324,88 @@ function createWindow() {
     rendererReady = true
     deliverPendingOpen()
   })
+
+  // Save-on-quit prompt. We intercept the window's close event, ask the
+  // renderer whether the document is dirty, and if so show a native modal
+  // with Save / Don't Save / Cancel. The renderer drives the actual save
+  // flow (it owns the serializer + path), then signals back so we know
+  // whether to proceed with closing.
+  win.on('close', async (e) => {
+    if (!win || allowClose) return // we already orchestrated; let it close
+    e.preventDefault()
+    let dirty = false
+    try {
+      dirty = await new Promise<boolean>((resolve, reject) => {
+        const onResponse = (_event: Electron.IpcMainEvent, val: boolean) => {
+          ipcMain.off('app:dirty-response', onResponse)
+          clearTimeout(timer)
+          resolve(val)
+        }
+        const timer = setTimeout(() => {
+          // Renderer is hung or hasn't loaded — fall through to closing.
+          ipcMain.off('app:dirty-response', onResponse)
+          reject(new Error('dirty-query timeout'))
+        }, 1500)
+        ipcMain.on('app:dirty-response', onResponse)
+        win!.webContents.send('app:query-dirty')
+      })
+    } catch {
+      // If the renderer can't tell us, just close — better than wedging the
+      // user out of quitting the app entirely.
+      allowClose = true
+      win.close()
+      return
+    }
+    if (!dirty) {
+      allowClose = true
+      win.close()
+      return
+    }
+    const result = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['Save', "Don't Save", 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      title: 'Unsaved changes',
+      message: 'Save changes to your project before closing?',
+      detail: "Your changes will be lost if you don't save them.",
+      noLink: true,
+    })
+    if (result.response === 2) return // Cancel — keep window open
+    if (result.response === 1) {
+      allowClose = true
+      win.close()
+      return
+    }
+    // Save — wait for renderer to confirm it actually wrote the file.
+    let saved = false
+    try {
+      saved = await new Promise<boolean>((resolve) => {
+        const onResult = (_event: Electron.IpcMainEvent, ok: boolean) => {
+          ipcMain.off('app:save-result', onResult)
+          resolve(ok)
+        }
+        ipcMain.on('app:save-result', onResult)
+        win!.webContents.send('app:save-and-close')
+      })
+    } catch {
+      saved = false
+    }
+    if (saved) {
+      allowClose = true
+      win.close()
+    }
+    // else: save failed or user cancelled the file picker — stay open.
+  })
+
   win.on('closed', () => {
     rendererReady = false
   })
 }
+
+/** Set true once the close-confirmation flow has decided the window may
+ *  close — lets the next 'close' event fall through without re-prompting. */
+let allowClose = false
 
 // Build a custom app menu so Cmd/Ctrl+Z reaches our renderer instead of being
 // swallowed by the default Edit → Undo role (which only undoes text input).

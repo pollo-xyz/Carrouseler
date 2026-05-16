@@ -90,18 +90,30 @@ export async function detectVideoFps(
 }
 
 /**
- * Snap a detected frame rate to its nearest standard rate when it's clearly
- * close to one. Detection has small jitter so 29.94 may come back as ~29.94;
- * we'd rather report "30" than show three decimals everywhere.
+ * Snap a detected frame rate to the closest standard rate when one is clearly
+ * intended. Detection has small jitter so 29.94 may come back as ~29.94; we'd
+ * rather report "30" than show three decimals everywhere.
+ *
+ * The list contains pairs that are themselves close together (29.97 / 30,
+ * 59.94 / 60, 23.976 / 24). We must pick the *closest* candidate, not the
+ * first one within tolerance — otherwise a clean 30.00 measurement gets
+ * snapped to 29.97 just because it appears earlier in the list.
  *
  * Tolerance: ±0.5 fps. Anything outside the well-known buckets is returned
  * unrounded (with one decimal).
  */
 export function roundToCommonFps(fps: number): number {
   const candidates = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 120]
+  let best: number | null = null
+  let bestDist = 0.5
   for (const c of candidates) {
-    if (Math.abs(fps - c) < 0.5) return c
+    const d = Math.abs(fps - c)
+    if (d < bestDist) {
+      best = c
+      bestDist = d
+    }
   }
+  if (best !== null) return best
   return Math.round(fps * 10) / 10
 }
 

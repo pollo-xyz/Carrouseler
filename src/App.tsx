@@ -107,10 +107,15 @@ export default function App() {
   // Avoids the "is it frozen?" panic without lying about real progress.
   const [exportPulse, setExportPulse] = useState(0)
   const [exportElapsed, setExportElapsed] = useState('')
+  // Preview shown under the export veil. Starts as a snapshot of whatever
+  // the user was looking at pre-export so the canvas isn't visibly blank,
+  // then swaps to a downscaled live capture frame as the encoder advances.
+  const [exportPreview, setExportPreview] = useState<string | null>(null)
   useEffect(() => {
     if (!exporting) {
       setExportPulse(0)
       setExportElapsed('')
+      setExportPreview(null)
       return
     }
     const start = performance.now()
@@ -411,6 +416,12 @@ export default function App() {
       const dir = await window.electronAPI.pickDirectory()
       if (!dir) return
 
+      // Snapshot whatever the user is currently looking at so the export
+      // veil has a meaningful backdrop right away. Gets replaced by live
+      // capture frames once encoding starts.
+      const snap = stageRef.current?.captureViewportSnapshot?.()
+      if (snap) setExportPreview(snap)
+
       // One-shot diagnostic dump so the user can see which encoder was
       // chosen and (importantly) why the GPU candidates were rejected.
       // Open View → Toggle Developer Tools to view. Also surface the
@@ -518,6 +529,7 @@ export default function App() {
               outputPath,
               projectFps,
               (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%${encoderSuffix}`),
+              (dataUrl) => setExportPreview(dataUrl),
             )
             if (result) written.push(filename)
             else videoErrors++
@@ -606,11 +618,16 @@ export default function App() {
           slideFps = roundToCommonFps(sorted[Math.floor(sorted.length / 2)]!)
         }
         setExportProgress(`Encoding slide ${idx + 1}: 0%`)
+        // For the single-slide export, also seed the snapshot so the veil
+        // has content before the first frame ack lands.
+        const snap = stageRef.current?.captureViewportSnapshot?.()
+        if (snap) setExportPreview(snap)
         const result = await stageRef.current.exportSlideVideo(
           slideId,
           outputPath,
           slideFps,
           (pct) => setExportProgress(`Encoding slide ${idx + 1}: ${Math.round(pct)}%`),
+          (dataUrl) => setExportPreview(dataUrl),
         )
         if (!result) alert('Video export failed. Check the dev console for details.')
       } else {
@@ -1440,7 +1457,15 @@ export default function App() {
                 className="app__export-veil"
                 style={{ background: workspaceBgColor || '#0a0a0e' }}
                 aria-hidden
-              />
+              >
+                {exportPreview && (
+                  <img
+                    src={exportPreview}
+                    alt=""
+                    className="app__export-veil-img"
+                  />
+                )}
+              </div>
             )}
 
             {/* Export status toast — pinned to the top-right of the canvas

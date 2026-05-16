@@ -1405,9 +1405,22 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
 
 export interface EditorStageHandle {
   exportSlidePng: (slideId: string) => Promise<Blob | null>
-  exportSlideVideo: (slideId: string, outputPath: string, fps?: number, onProgress?: (pct: number) => void) => Promise<string | null>
+  exportSlideVideo: (
+    slideId: string,
+    outputPath: string,
+    fps?: number,
+    onProgress?: (pct: number) => void,
+    /** Called with a downscaled JPEG data URL of the current capture
+     *  frame, roughly every 500 ms. Used to show a live preview during
+     *  export without sending every frame back to the renderer. */
+    onPreviewFrame?: (dataUrl: string) => void,
+  ) => Promise<string | null>
   fitToScreen: () => void
   applyCrop: () => void
+  /** Snapshot of the current viewport (current zoom/pan) as a data URL.
+   *  Used by the export flow so the user sees their editor frozen during
+   *  export instead of a blank workspace. */
+  captureViewportSnapshot: () => string | null
 }
 
 const EditorStage = forwardRef<
@@ -1959,7 +1972,13 @@ const EditorStage = forwardRef<
 
   /* ---- export slide as video (frame-by-frame seek → ffmpeg) ---- */
   const exportSlideVideo = useCallback(
-    async (slideId: string, outputPath: string, fps = 30, onProgress?: (pct: number) => void): Promise<string | null> => {
+    async (
+      slideId: string,
+      outputPath: string,
+      fps = 30,
+      onProgress?: (pct: number) => void,
+      onPreviewFrame?: (dataUrl: string) => void,
+    ): Promise<string | null> => {
       if (!window.electronAPI) return null
       const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current
       if (!stage) return null
@@ -2050,7 +2069,7 @@ const EditorStage = forwardRef<
         let pendingWrite: Promise<void> = Promise.resolve()
         let framesSent = 0
 
-        const captureFrameData = (): Uint8Array => {
+        const captureFrame = (): { frameData: Uint8Array; canvas: HTMLCanvasElement } => {
           stage.draw()
           const canvas = stage.toCanvas({
             x: ap.x, y: ap.y,
@@ -2059,7 +2078,41 @@ const EditorStage = forwardRef<
           })
           const ctx = canvas.getContext('2d')!
           const imageData = ctx.getImageData(0, 0, W, H)
-          return new Uint8Array(imageData.data.buffer)
+          return { frameData: new Uint8Array(imageData.data.buffer), canvas }
+        }
+
+        // Throttled preview emitter — produces a small JPEG data URL from
+        // the just-captured canvas, ~2x/second, so the live preview chip
+        // in the UI stays current without dominating the export pipeline.
+        const PREVIEW_INTERVAL_MS = 500
+        const PREVIEW_MAX_WIDTH = 320
+        let lastPreviewAt = -Infinity
+        let previewCanvas: HTMLCanvasElement | null = null
+        const maybeEmitPreview = (sourceCanvas: HTMLCanvasElement) => {
+          if (!onPreviewFrame) return
+          const now = performance.now()
+          if (now - lastPreviewAt < PREVIEW_INTERVAL_MS) return
+          lastPreviewAt = now
+          const scale = Math.min(1, PREVIEW_MAX_WIDTH / sourceCanvas.width)
+          const pw = Math.round(sourceCanvas.width * scale)
+          const ph = Math.round(sourceCanvas.height * scale)
+          if (!previewCanvas) {
+            previewCanvas = document.createElement('canvas')
+          }
+          if (previewCanvas.width !== pw || previewCanvas.height !== ph) {
+            previewCanvas.width = pw
+            previewCanvas.height = ph
+          }
+          const pctx = previewCanvas.getContext('2d')
+          if (!pctx) return
+          pctx.drawImage(sourceCanvas, 0, 0, pw, ph)
+          // JPEG is ~10x smaller than PNG at this size and the preview is
+          // ephemeral; quality 0.7 is plenty for a glance preview.
+          try {
+            onPreviewFrame(previewCanvas.toDataURL('image/jpeg', 0.7))
+          } catch (err) {
+            console.warn('[export] preview encode failed:', err)
+          }
         }
 
         const sendFrame = async (frameData: Uint8Array) => {
@@ -2135,7 +2188,14 @@ const EditorStage = forwardRef<
           return seekToWithTimeout(el, target, `cover ${item.id.slice(0, 6)}`)
         }))
         await new Promise<void>((r) => requestAnimationFrame(() => r()))
-        await sendFrame(captureFrameData())
+        {
+          const captured = captureFrame()
+          await sendFrame(captured.frameData)
+          // Emit the cover frame as the first preview so the user
+          // immediately sees content rather than the frozen pre-export
+          // snapshot lingering for a beat.
+          maybeEmitPreview(captured.canvas)
+        }
         for (const { node, original } of coverSwaps) {
           node.image(original as unknown as Parameters<Konva.Image['image']>[0])
         }
@@ -2199,10 +2259,11 @@ const EditorStage = forwardRef<
             if (!inFlight && videoTime >= nextEmitVideoTime + frameInterval) {
               nextEmitVideoTime += frameInterval
               inFlight = true
-              const frameData = captureFrameData()
-              sendFrame(frameData)
+              const captured = captureFrame()
+              sendFrame(captured.frameData)
                 .then(() => { inFlight = false })
                 .catch((err) => stop(err))
+              maybeEmitPreview(captured.canvas)
             }
             requestAnimationFrame(tick)
           }
@@ -2232,12 +2293,27 @@ const EditorStage = forwardRef<
     [artboardPositions, W, H],
   )
 
+  // Take a snapshot of the current viewport at its current zoom/pan, used
+  // by App.tsx to show a frozen image during export instead of an empty
+  // workspace while the stage transform is reset for capture.
+  const captureViewportSnapshot = useCallback((): string | null => {
+    const stage = stageRef.current
+    if (!stage) return null
+    try {
+      return stage.toDataURL({ pixelRatio: 1 })
+    } catch (err) {
+      console.warn('[captureViewportSnapshot] failed:', err)
+      return null
+    }
+  }, [])
+
   useImperativeHandle(ref, () => ({
     exportSlidePng,
     exportSlideVideo,
     fitToScreen,
     applyCrop: () => { cropApplyRef.current?.() },
-  }), [exportSlidePng, exportSlideVideo, fitToScreen])
+    captureViewportSnapshot,
+  }), [exportSlidePng, exportSlideVideo, fitToScreen, captureViewportSnapshot])
 
   /* ---- render ---- */
   return (

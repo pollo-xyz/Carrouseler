@@ -240,6 +240,18 @@
   z-index: 15;
   pointer-events: none;
   animation: export-veil-in 0.18s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.app__export-veil-img {
+  max-width: 92%;
+  max-height: 92%;
+  object-fit: contain;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.40);
+  /* Slight rounded edge so the preview reads as a "picture" rather than
+     pretending to be the live canvas. */
+  border-radius: 4px;
 }
 @keyframes export-veil-in {
   from { opacity: 0; }

@@ -27,3 +27,7 @@ release
 
 # Personal scratch file (never committed)
 NOTES.txt
+
+# Scratch commit-message files used by the dev-side commit helpers.
+# Pattern intentionally narrow so we don't shadow anything legitimate.
+__commit_msg.txt

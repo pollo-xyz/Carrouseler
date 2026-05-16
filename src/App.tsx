@@ -1429,6 +1429,20 @@ export default function App() {
               onExportSingleSlide={exportSingleSlide}
             />
 
+            {/* Export veil — hides the canvas's necessary-but-jarring
+                visual gymnastics during export (the stage transform is
+                reset to 1:1 origin so toCanvas can grab world-coord
+                pixels; videos seek/draw frame-by-frame as we capture).
+                Konva keeps rendering underneath, the user just doesn't
+                see the camera snap around. */}
+            {exporting && (
+              <div
+                className="app__export-veil"
+                style={{ background: workspaceBgColor || '#0a0a0e' }}
+                aria-hidden
+              />
+            )}
+
             {/* Export status toast — pinned to the top-right of the canvas
                 area so it can grow as long as ffmpeg's progress string
                 wants without disturbing the header layout. */}

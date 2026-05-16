@@ -228,6 +228,24 @@
   display: block;
 }
 
+/* Solid veil that covers the canvas during export. Konva keeps drawing
+   (frame capture depends on it), the user just doesn't see the stage
+   transform get reset and the videos seek frame by frame. Z-index sits
+   below the toast (20) so the status chip stays visible on top. */
+.app__export-veil {
+  position: absolute;
+  inset: 0;
+  /* Background is set inline from the store's workspaceBgColor so the
+     veil seamlessly matches whatever pasteboard colour is in use. */
+  z-index: 15;
+  pointer-events: none;
+  animation: export-veil-in 0.18s ease-out;
+}
+@keyframes export-veil-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* Floating export status toast — pinned to the top-right of the canvas
    area. Lives here instead of the header so its constantly-changing
    ffmpeg progress string doesn't jitter the header layout. Width grows

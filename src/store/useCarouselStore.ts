@@ -258,6 +258,31 @@ function snapshotOf(s: CarouselState): HistorySnapshot {
   }
 }
 
+/**
+ * Revoke every `blob:` URL referenced by the given snapshots so we don't
+ * accumulate references to dead Blobs after a project replace. Items added
+ * via file drop and items hydrated from a .vpost both use blob URLs.
+ *
+ * Used when discarding the current project (load / reset) — at that point
+ * the in-memory state and the undo/redo history are about to be wiped, so
+ * any URL we still hold is leakable.
+ */
+function revokeBlobUrlsForSnapshots(snapshots: HistorySnapshot[]) {
+  const seen = new Set<string>()
+  for (const snap of snapshots) {
+    for (const it of snap.items) {
+      if (it.src && it.src.startsWith('blob:') && !seen.has(it.src)) {
+        seen.add(it.src)
+        try { URL.revokeObjectURL(it.src) } catch { /* best effort */ }
+      }
+      if (it.coverImageSrc && it.coverImageSrc.startsWith('blob:') && !seen.has(it.coverImageSrc)) {
+        seen.add(it.coverImageSrc)
+        try { URL.revokeObjectURL(it.coverImageSrc) } catch { /* best effort */ }
+      }
+    }
+  }
+}
+
 function pushHistory(key: string) {
   const s = useCarouselStore.getState()
   const now = Date.now()
@@ -924,6 +949,14 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
       exportEnabled: s.exportEnabled ?? true,
     }))
     const cur = get()
+    // Free blob URLs from the project we're about to discard (including any
+    // referenced only by undo/redo history) so they don't pile up over a
+    // session of opening multiple projects.
+    revokeBlobUrlsForSnapshots([
+      snapshotOf(cur),
+      ...cur._past,
+      ...cur._future,
+    ])
     const g = payload.guides ?? {}
     set({
       slides,
@@ -962,6 +995,14 @@ export const useCarouselStore = create<CarouselState>((set, get) => ({
   },
 
   resetProject: () => {
+    const cur = get()
+    // Same cleanup as loadProjectState — drop blob URLs for items we're
+    // about to discard.
+    revokeBlobUrlsForSnapshots([
+      snapshotOf(cur),
+      ...cur._past,
+      ...cur._future,
+    ])
     const sid = newId()
     set({
       slides: [{ id: sid, bgColor: '#ffffff', exportEnabled: true }],

@@ -82,10 +82,36 @@ const Icon = {
 }
 
 
+/** Format seconds → "1m 04s" / "12s" for the export elapsed-time readout. */
+function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
+}
+
 export default function App() {
   const stageRef = useRef<EditorStageHandle>(null)
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState('')
+  // Cycling 0–3 dots + a wall-clock timer keep the export indicator visibly
+  // animated even when the percentage is stuck waiting on a slow ffmpeg frame.
+  // Avoids the "is it frozen?" panic without lying about real progress.
+  const [exportPulse, setExportPulse] = useState(0)
+  const [exportElapsed, setExportElapsed] = useState('')
+  useEffect(() => {
+    if (!exporting) {
+      setExportPulse(0)
+      setExportElapsed('')
+      return
+    }
+    const start = performance.now()
+    const id = setInterval(() => {
+      setExportPulse((p) => (p + 1) % 4)
+      setExportElapsed(formatElapsed(performance.now() - start))
+    }, 500)
+    return () => clearInterval(id)
+  }, [exporting])
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const projectPathRef = useRef<string | null>(null)
   projectPathRef.current = projectPath
@@ -361,10 +387,14 @@ export default function App() {
 
       // One-shot diagnostic dump so the user can see which encoder was
       // chosen and (importantly) why the GPU candidates were rejected.
-      // Open View → Toggle Developer Tools to view.
+      // Open View → Toggle Developer Tools to view. Also surface the
+      // chosen encoder in the progress UI so it's visible without opening
+      // dev tools.
+      let chosenEncoder: string | null = null
       try {
         const diag = await window.electronAPI.getEncoderDiagnostics?.()
         if (diag) {
+          chosenEncoder = diag.chosen
           console.group('[ffmpeg] encoder diagnostics')
           console.log('binary:', diag.ffmpegPath)
           console.log('compiled h264 encoders:', diag.availableH264Encoders.join(', ') || '(none)')
@@ -380,6 +410,7 @@ export default function App() {
       } catch (err) {
         console.warn('[ffmpeg] diagnostics unavailable:', err)
       }
+      const encoderSuffix = chosenEncoder ? ` (${chosenEncoder})` : ''
 
       const pngFiles: { name: string; buffer: Uint8Array }[] = []
 
@@ -392,7 +423,7 @@ export default function App() {
 
         if (hasVideo) {
           // Video slide → export as MP4
-          setExportProgress(`Encoding slide ${i + 1} video...`)
+          setExportProgress(`Encoding slide ${i + 1} video${encoderSuffix}...`)
           const filename = `${prefix}_${n}.mp4`
           const outputPath = `${dir}/${filename}`
           try {
@@ -400,7 +431,7 @@ export default function App() {
               slideId,
               outputPath,
               30,
-              (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%`),
+              (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%${encoderSuffix}`),
             )
             if (result) written.push(filename)
             else videoErrors++
@@ -824,7 +855,9 @@ export default function App() {
           onClick={exportAll}
         >
           <Icon.Export />
-          {exporting ? (exportProgress || 'Exporting…') : 'Export all'}
+          {exporting
+            ? `${exportProgress || 'Exporting'}${exportElapsed ? ` · ${exportElapsed}` : ''}${'.'.repeat(exportPulse)}`
+            : 'Export all'}
         </button>
       </header>
 

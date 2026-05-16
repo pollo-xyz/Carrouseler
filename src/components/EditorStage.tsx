@@ -45,16 +45,32 @@ function useHtmlMedia(
         setNode(v)
         if (itemId) videoElements.set(itemId, v)
       }
+      // Surface load errors instead of leaving the item silently invisible.
+      // Stays in dev console; UI shows the existing "no image" empty state.
+      const onError = () => {
+        const err = v.error
+        const codeName = err
+          ? { 1: 'MEDIA_ERR_ABORTED', 2: 'MEDIA_ERR_NETWORK', 3: 'MEDIA_ERR_DECODE', 4: 'MEDIA_ERR_SRC_NOT_SUPPORTED' }[err.code] ?? `code ${err.code}`
+          : 'unknown'
+        console.error(`[useHtmlMedia] video load failed (${codeName})`, { src, itemId, err })
+      }
       v.addEventListener('loadeddata', onReady)
+      v.addEventListener('error', onError)
       v.play().catch(() => {})
       return () => {
-        v.removeEventListener('loadeddata', onReady); v.pause(); setNode(null)
+        v.removeEventListener('loadeddata', onReady)
+        v.removeEventListener('error', onError)
+        v.pause(); setNode(null)
         if (itemId) videoElements.delete(itemId)
       }
     }
     const img = new window.Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => setNode(img)
+    img.onerror = () => {
+      console.error('[useHtmlMedia] image load failed', { src, itemId })
+      setNode(null)
+    }
     img.src = src
     return () => { setNode(null) }
   }, [src, type, itemId])

@@ -4,6 +4,7 @@ import NumberField from './components/NumberField'
 import { useCarouselStore, type PlacedMedia, type TextAlign } from './store/useCarouselStore'
 import { PRESETS } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
+import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
 import './App.css'
 
@@ -518,6 +519,19 @@ export default function App() {
     }
     const st = useCarouselStore.getState()
     try {
+      // Render the Fit-view snapshot (all slides side-by-side) so the .vpost
+      // carries its own preview image. Failure here is non-fatal — we still
+      // save the project, just without the embedded preview.
+      const preview = await generateProjectPreview(
+        st.slides,
+        st.items,
+        st.dimensions,
+        st.workspaceBgColor,
+      ).catch((err) => {
+        console.warn('[save] preview generation failed:', err)
+        return null
+      })
+
       const blob = await serializeProject(
         {
           slides: st.slides,
@@ -527,6 +541,7 @@ export default function App() {
           customWidth: st.customWidth,
           customHeight: st.customHeight,
           workspaceBgColor: st.workspaceBgColor,
+          preview,
           guides: {
             showGrid: st.showGrid,
             gridSize: st.gridSize,

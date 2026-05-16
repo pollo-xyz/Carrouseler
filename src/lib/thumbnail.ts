@@ -1,5 +1,5 @@
 import Konva from 'konva'
-import type { PlacedMedia } from '../store/useCarouselStore'
+import type { PlacedMedia, Slide } from '../store/useCarouselStore'
 import type { Size } from './presets'
 
 /**
@@ -170,4 +170,88 @@ export async function generateThumbnail(
   document.body.removeChild(container)
 
   return dataUrl
+}
+
+/**
+ * Render the project's "Fit" view — every slide side-by-side on the workspace
+ * background — and return it as a PNG Blob. Used to embed a `preview.png`
+ * inside the .vpost so file pickers (or any future "Open Recent" UI) can show
+ * what's in the file without parsing it.
+ *
+ * Returns null when there's nothing to draw or canvas encoding fails.
+ */
+export async function generateProjectPreview(
+  slides: Slide[],
+  items: PlacedMedia[],
+  dimensions: Size,
+  workspaceBgColor: string,
+): Promise<Blob | null> {
+  if (slides.length === 0 || dimensions.width <= 0 || dimensions.height <= 0) {
+    return null
+  }
+
+  const MAX_TOTAL_W = 2400 // cap PNG size for large projects
+  const PAD = 12
+  const GAP = 12
+
+  // Start with a generous per-slide width, then shrink if the total would
+  // exceed our cap so a 20-slide project still produces a usable preview.
+  let slideW = 240
+  const overhead = PAD * 2 + GAP * Math.max(0, slides.length - 1)
+  const idealTotal = overhead + slides.length * slideW
+  if (idealTotal > MAX_TOTAL_W) {
+    slideW = Math.max(80, Math.floor((MAX_TOTAL_W - overhead) / slides.length))
+  }
+  const slideH = Math.round((slideW / dimensions.width) * dimensions.height)
+
+  // Render each slide's content at the preview resolution. generateThumbnail
+  // already handles image/video/text rendering, so we reuse it instead of
+  // duplicating the per-item drawing logic.
+  const thumbs = await Promise.all(
+    slides.map(async (s) => {
+      const slideItems = items.filter((it) => it.slideId === s.id)
+      const dataUrl = await generateThumbnail(slideItems, dimensions, slideW, slideH * 2)
+      return { dataUrl, bgColor: s.bgColor }
+    }),
+  )
+
+  const totalW = overhead + slides.length * slideW
+  const totalH = PAD * 2 + slideH
+
+  const canvas = document.createElement('canvas')
+  canvas.width = totalW
+  canvas.height = totalH
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  // Workspace pasteboard color as backdrop.
+  ctx.fillStyle = workspaceBgColor || '#0a0a0e'
+  ctx.fillRect(0, 0, totalW, totalH)
+
+  // Load all images in parallel, then composite. Per-slide bg is filled first
+  // so transparent thumbnail edges blend correctly.
+  const imgs = await Promise.all(
+    thumbs.map(({ dataUrl, bgColor }) =>
+      new Promise<{ img: HTMLImageElement | null; bg: string }>((resolve) => {
+        if (!dataUrl) { resolve({ img: null, bg: bgColor }); return }
+        const img = new Image()
+        img.onload = () => resolve({ img, bg: bgColor })
+        img.onerror = () => resolve({ img: null, bg: bgColor })
+        img.src = dataUrl
+      }),
+    ),
+  )
+
+  for (let i = 0; i < imgs.length; i++) {
+    const { img, bg } = imgs[i]!
+    const x = PAD + i * (slideW + GAP)
+    const y = PAD
+    ctx.fillStyle = bg || '#ffffff'
+    ctx.fillRect(x, y, slideW, slideH)
+    if (img) ctx.drawImage(img, x, y, slideW, slideH)
+  }
+
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/png')
+  })
 }

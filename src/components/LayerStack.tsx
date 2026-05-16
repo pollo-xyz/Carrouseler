@@ -13,7 +13,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCarouselStore, type PlacedMedia } from '../store/useCarouselStore'
+import { useTiovivoStore, type PlacedMedia } from '../store/useTiovivoStore'
 
 function LayerRow({
   item,
@@ -127,12 +127,12 @@ export default function LayerStack({
   slideHeight: number
   slideAbsoluteXBySlideId: Map<string, number>
 }) {
-  const items = useCarouselStore((s) => s.items)
-  const reorderSlideLayers = useCarouselStore((s) => s.reorderSlideLayers)
-  const setSelected = useCarouselStore((s) => s.setSelected)
-  const toggleSelected = useCarouselStore((s) => s.toggleSelected)
-  const setActiveSlide = useCarouselStore((s) => s.setActiveSlide)
-  const selectedIds = useCarouselStore((s) => s.selectedIds)
+  const items = useTiovivoStore((s) => s.items)
+  const reorderSlideLayers = useTiovivoStore((s) => s.reorderSlideLayers)
+  const setSelected = useTiovivoStore((s) => s.setSelected)
+  const toggleSelected = useTiovivoStore((s) => s.toggleSelected)
+  const setActiveSlide = useTiovivoStore((s) => s.setActiveSlide)
+  const selectedIds = useTiovivoStore((s) => s.selectedIds)
 
   // Items that visually overlap this slide's region (both X and Y).
   // All slides share the same Y range, so Y overlap is: item.y..item.y+h vs 0..slideHeight.

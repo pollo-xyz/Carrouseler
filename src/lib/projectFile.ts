@@ -5,7 +5,7 @@ import type {
   PlacedMedia,
   Slide,
   TextStyleDefaults,
-} from '../store/useCarouselStore'
+} from '../store/useTiovivoStore'
 import { createZip, readZip } from './zip'
 
 export const VPOST_FORMAT = 'vpost'

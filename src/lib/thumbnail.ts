@@ -1,5 +1,5 @@
 import Konva from 'konva'
-import type { PlacedMedia, Slide } from '../store/useCarouselStore'
+import type { PlacedMedia, Slide } from '../store/useTiovivoStore'
 import type { Size } from './presets'
 
 /**

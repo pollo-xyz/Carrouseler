@@ -104,7 +104,7 @@ function repositionItems(
   }))
 }
 
-interface CarouselState {
+interface TiovivoState {
   slides: Slide[]
   activeSlideId: string
   dimensions: Size
@@ -246,7 +246,7 @@ const HISTORY_COALESCE_MS = 500
 const initialSlideId = newId()
 
 /* Undo/redo helpers — snapshot content-bearing fields only (not UI toggles). */
-function snapshotOf(s: CarouselState): HistorySnapshot {
+function snapshotOf(s: TiovivoState): HistorySnapshot {
   return {
     slides: s.slides,
     items: s.items,
@@ -284,17 +284,17 @@ function revokeBlobUrlsForSnapshots(snapshots: HistorySnapshot[]) {
 }
 
 function pushHistory(key: string) {
-  const s = useCarouselStore.getState()
+  const s = useTiovivoStore.getState()
   const now = Date.now()
   // Coalesce: if the same "kind" of change fires within HISTORY_COALESCE_MS,
   // treat as a single logical edit (e.g. a drag streams many updateItem calls).
   if (s._historyKey === key && now - s._historyTime < HISTORY_COALESCE_MS) {
-    useCarouselStore.setState({ _historyTime: now, _future: [], isDirty: true })
+    useTiovivoStore.setState({ _historyTime: now, _future: [], isDirty: true })
     return
   }
   const past = s._past.concat([snapshotOf(s)])
   if (past.length > HISTORY_LIMIT) past.shift()
-  useCarouselStore.setState({
+  useTiovivoStore.setState({
     _past: past,
     _future: [],
     _historyKey: key,
@@ -311,17 +311,17 @@ const thumbTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 function debouncedThumbRefresh(slideId: string, delay = 300) {
   if (thumbTimers[slideId]) clearTimeout(thumbTimers[slideId])
   thumbTimers[slideId] = setTimeout(() => {
-    const st = useCarouselStore.getState()
+    const st = useTiovivoStore.getState()
     const slideItems = st.items.filter((i) => i.slideId === slideId)
     generateThumbnail(slideItems, st.dimensions).then((url) => {
-      useCarouselStore.setState((prev) => ({
+      useTiovivoStore.setState((prev) => ({
         thumbnails: { ...prev.thumbnails, [slideId]: url },
       }))
     })
   }, delay)
 }
 
-export const useCarouselStore = create<CarouselState>((set, get) => ({
+export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   slides: [{ id: initialSlideId, bgColor: '#ffffff', exportEnabled: true }],
   activeSlideId: initialSlideId,
   dimensions: { ...PRESETS['3:4'] },

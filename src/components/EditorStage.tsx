@@ -10,7 +10,7 @@ import {
 import { Arc, Circle, Group, Layer, Line, Rect, Stage, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { Image as KonvaImage, Text as KonvaText } from 'react-konva'
-import { useCarouselStore, type PlacedMedia } from '../store/useCarouselStore'
+import { useTiovivoStore, type PlacedMedia } from '../store/useTiovivoStore'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
 import LayerStack from './LayerStack'
@@ -368,7 +368,7 @@ function TextItemView({
   onDragEnd: (node: Konva.Text) => void
 }) {
   const shapeRef = useRef<Konva.Text>(null)
-  const updateItem = useCarouselStore((s) => s.updateItem)
+  const updateItem = useTiovivoStore((s) => s.updateItem)
   const fillMode = !!item.fillMode
 
   const fontStyle = fontStyleString(item.bold, item.italic)
@@ -501,8 +501,8 @@ function CropOverlay({
   zoom: number
   onRegisterApply: (fn: (() => void) | null) => void
 }) {
-  const applyCropAction = useCarouselStore((s) => s.applyCrop)
-  const setCropMode = useCarouselStore((s) => s.setCropMode)
+  const applyCropAction = useTiovivoStore((s) => s.applyCrop)
+  const setCropMode = useTiovivoStore((s) => s.setCropMode)
 
   const cropRectRef = useRef<Konva.Rect>(null)
   const cropTrRef = useRef<Konva.Transformer>(null)
@@ -689,7 +689,7 @@ function sliderFill(value: number, min: number, max: number) {
 }
 
 function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
-  const updateItem = useCarouselStore((s) => s.updateItem)
+  const updateItem = useTiovivoStore((s) => s.updateItem)
   const b = item.brightness ?? 0
   const c = item.contrast ?? 0
   const sat = item.saturation ?? 1
@@ -880,7 +880,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
 }
 
 function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
-  const updateItem = useCarouselStore((s) => s.updateItem)
+  const updateItem = useTiovivoStore((s) => s.updateItem)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1044,7 +1044,7 @@ const TRIM_THUMB_COUNT = 14
 const TRIM_HANDLE_W = 14
 
 function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
-  const updateItem = useCarouselStore((s) => s.updateItem)
+  const updateItem = useTiovivoStore((s) => s.updateItem)
   const [duration, setDuration] = useState(0)
   const [start, setStart] = useState(item.trimStart || 0)
   const [end, setEnd] = useState(item.trimEnd || 0)
@@ -1435,43 +1435,43 @@ const EditorStage = forwardRef<
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
 
   /* ---- store ---- */
-  const dimensions = useCarouselStore((s) => s.dimensions)
-  const slides = useCarouselStore((s) => s.slides)
-  const items = useCarouselStore((s) => s.items)
-  const selectedIds = useCarouselStore((s) => s.selectedIds)
+  const dimensions = useTiovivoStore((s) => s.dimensions)
+  const slides = useTiovivoStore((s) => s.slides)
+  const items = useTiovivoStore((s) => s.items)
+  const selectedIds = useTiovivoStore((s) => s.selectedIds)
   const selectedId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1]! : null
   const isMultiSelect = selectedIds.length > 1
-  const setSelected = useCarouselStore((s) => s.setSelected)
-  const setSelectedIds = useCarouselStore((s) => s.setSelectedIds)
-  const toggleSelected = useCarouselStore((s) => s.toggleSelected)
-  const updateItem = useCarouselStore((s) => s.updateItem)
-  const updateItems = useCarouselStore((s) => s.updateItems)
-  const moveItemToSlide = useCarouselStore((s) => s.moveItemToSlide)
-  const addSlide = useCarouselStore((s) => s.addSlide)
-  const duplicateSlide = useCarouselStore((s) => s.duplicateSlide)
-  const removeSlide = useCarouselStore((s) => s.removeSlide)
-  const reorderSlides = useCarouselStore((s) => s.reorderSlides)
-  const setSlideBgColor = useCarouselStore((s) => s.setSlideBgColor)
-  const toggleSlideExport = useCarouselStore((s) => s.toggleSlideExport)
-  const workspaceBgColor = useCarouselStore((s) => s.workspaceBgColor)
-  const fitItemToSlide = useCarouselStore((s) => s.fitItemToSlide)
-  const fillItemToSlide = useCarouselStore((s) => s.fillItemToSlide)
-  const resetItemScale = useCarouselStore((s) => s.resetItemScale)
-  const cropItemId = useCarouselStore((s) => s.cropItemId)
-  const setCropMode = useCarouselStore((s) => s.setCropMode)
-  const resetCropAction = useCarouselStore((s) => s.resetCrop)
+  const setSelected = useTiovivoStore((s) => s.setSelected)
+  const setSelectedIds = useTiovivoStore((s) => s.setSelectedIds)
+  const toggleSelected = useTiovivoStore((s) => s.toggleSelected)
+  const updateItem = useTiovivoStore((s) => s.updateItem)
+  const updateItems = useTiovivoStore((s) => s.updateItems)
+  const moveItemToSlide = useTiovivoStore((s) => s.moveItemToSlide)
+  const addSlide = useTiovivoStore((s) => s.addSlide)
+  const duplicateSlide = useTiovivoStore((s) => s.duplicateSlide)
+  const removeSlide = useTiovivoStore((s) => s.removeSlide)
+  const reorderSlides = useTiovivoStore((s) => s.reorderSlides)
+  const setSlideBgColor = useTiovivoStore((s) => s.setSlideBgColor)
+  const toggleSlideExport = useTiovivoStore((s) => s.toggleSlideExport)
+  const workspaceBgColor = useTiovivoStore((s) => s.workspaceBgColor)
+  const fitItemToSlide = useTiovivoStore((s) => s.fitItemToSlide)
+  const fillItemToSlide = useTiovivoStore((s) => s.fillItemToSlide)
+  const resetItemScale = useTiovivoStore((s) => s.resetItemScale)
+  const cropItemId = useTiovivoStore((s) => s.cropItemId)
+  const setCropMode = useTiovivoStore((s) => s.setCropMode)
+  const resetCropAction = useTiovivoStore((s) => s.resetCrop)
 
-  const showGrid = useCarouselStore((s) => s.showGrid)
-  const gridSize = useCarouselStore((s) => s.gridSize)
-  const gridOpacity = useCarouselStore((s) => s.gridOpacity)
-  const marginPct = useCarouselStore((s) => s.marginPct)
-  const showCenterGuides = useCarouselStore((s) => s.showCenterGuides)
-  const seamlessSlides = useCarouselStore((s) => s.seamlessSlides)
-  const showHiddenZone = useCarouselStore((s) => s.showHiddenZone)
-  const snapGrid = useCarouselStore((s) => s.snapGrid)
-  const snapCenter = useCarouselStore((s) => s.snapCenter)
-  const snapItems = useCarouselStore((s) => s.snapItems)
-  const snapMargins = useCarouselStore((s) => s.snapMargins)
+  const showGrid = useTiovivoStore((s) => s.showGrid)
+  const gridSize = useTiovivoStore((s) => s.gridSize)
+  const gridOpacity = useTiovivoStore((s) => s.gridOpacity)
+  const marginPct = useTiovivoStore((s) => s.marginPct)
+  const showCenterGuides = useTiovivoStore((s) => s.showCenterGuides)
+  const seamlessSlides = useTiovivoStore((s) => s.seamlessSlides)
+  const showHiddenZone = useTiovivoStore((s) => s.showHiddenZone)
+  const snapGrid = useTiovivoStore((s) => s.snapGrid)
+  const snapCenter = useTiovivoStore((s) => s.snapCenter)
+  const snapItems = useTiovivoStore((s) => s.snapItems)
+  const snapMargins = useTiovivoStore((s) => s.snapMargins)
 
   const W = dimensions.width
   const H = dimensions.height
@@ -1677,7 +1677,7 @@ const EditorStage = forwardRef<
         dragMultiRef.current = null
         return
       }
-      const snap = useCarouselStore.getState()
+      const snap = useTiovivoStore.getState()
       const all = snap.items
       const captured: { id: string; slideId: string; initialLocalX: number; initialLocalY: number }[] = []
       for (const id of selectedIds) {
@@ -1978,7 +1978,7 @@ const EditorStage = forwardRef<
       if (!window.electronAPI) return null
       const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current
       if (!stage) return null
-      const st = useCarouselStore.getState()
+      const st = useTiovivoStore.getState()
       const idx = st.slides.findIndex((s) => s.id === slideId)
       if (idx < 0) return null
       const ap = artboardPositions[idx]!
@@ -3188,7 +3188,7 @@ const EditorStage = forwardRef<
                 <Group key={slide.id} x={ap.x} y={ap.y}>
                   <Rect
                     x={0} y={0} width={W} height={H} fill="transparent"
-                    onClick={(e) => { e.cancelBubble = true; setSelected(null); useCarouselStore.getState().setActiveSlide(slide.id) }}
+                    onClick={(e) => { e.cancelBubble = true; setSelected(null); useTiovivoStore.getState().setActiveSlide(slide.id) }}
                   />
                   {slideItems.map((item) => (
                     item.type === 'text' ? (
@@ -3196,13 +3196,13 @@ const EditorStage = forwardRef<
                         key={item.id} item={item}
                         isEditing={editingTextId === item.id}
                         onSelect={(additive) => {
-                          useCarouselStore.getState().setActiveSlide(slide.id)
+                          useTiovivoStore.getState().setActiveSlide(slide.id)
                           if (additive) toggleSelected(item.id)
                           else setSelected(item.id)
                         }}
                         onChange={(patch) => updateItem(item.id, patch)}
                         onRequestEdit={() => {
-                          useCarouselStore.getState().setActiveSlide(slide.id)
+                          useTiovivoStore.getState().setActiveSlide(slide.id)
                           setSelected(item.id)
                           setEditingTextId(item.id)
                         }}
@@ -3215,7 +3215,7 @@ const EditorStage = forwardRef<
                         key={item.id} item={item}
                         isCropping={item.id === cropItemId}
                         onSelect={(additive) => {
-                          useCarouselStore.getState().setActiveSlide(slide.id)
+                          useTiovivoStore.getState().setActiveSlide(slide.id)
                           if (additive) toggleSelected(item.id)
                           else setSelected(item.id)
                         }}

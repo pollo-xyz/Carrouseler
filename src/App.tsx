@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import NumberField from './components/NumberField'
 import MenuBar from './components/MenuBar'
-import { useCarouselStore, type PlacedMedia, type TextAlign } from './store/useCarouselStore'
+import { useTiovivoStore, type PlacedMedia, type TextAlign } from './store/useTiovivoStore'
 import { PRESETS } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
 import { generateProjectPreview } from './lib/thumbnail'
@@ -152,44 +152,44 @@ export default function App() {
   }, [])
   useEffect(() => { void refreshRecents() }, [refreshRecents])
 
-  const dimensions = useCarouselStore((s) => s.dimensions)
-  const presetId = useCarouselStore((s) => s.presetId)
-  const customWidth = useCarouselStore((s) => s.customWidth)
-  const customHeight = useCarouselStore((s) => s.customHeight)
-  const setPreset = useCarouselStore((s) => s.setPreset)
-  const setCustomDimensions = useCarouselStore((s) => s.setCustomDimensions)
+  const dimensions = useTiovivoStore((s) => s.dimensions)
+  const presetId = useTiovivoStore((s) => s.presetId)
+  const customWidth = useTiovivoStore((s) => s.customWidth)
+  const customHeight = useTiovivoStore((s) => s.customHeight)
+  const setPreset = useTiovivoStore((s) => s.setPreset)
+  const setCustomDimensions = useTiovivoStore((s) => s.setCustomDimensions)
 
-  const slides = useCarouselStore((s) => s.slides)
-  const activeSlideId = useCarouselStore((s) => s.activeSlideId)
-  const selectedIds = useCarouselStore((s) => s.selectedIds)
-  const items = useCarouselStore((s) => s.items)
-  const removeItem = useCarouselStore((s) => s.removeItem)
-  const removeItems = useCarouselStore((s) => s.removeItems)
-  const addMedia = useCarouselStore((s) => s.addMedia)
-  const addText = useCarouselStore((s) => s.addText)
-  const updateItem = useCarouselStore((s) => s.updateItem)
+  const slides = useTiovivoStore((s) => s.slides)
+  const activeSlideId = useTiovivoStore((s) => s.activeSlideId)
+  const selectedIds = useTiovivoStore((s) => s.selectedIds)
+  const items = useTiovivoStore((s) => s.items)
+  const removeItem = useTiovivoStore((s) => s.removeItem)
+  const removeItems = useTiovivoStore((s) => s.removeItems)
+  const addMedia = useTiovivoStore((s) => s.addMedia)
+  const addText = useTiovivoStore((s) => s.addText)
+  const updateItem = useTiovivoStore((s) => s.updateItem)
 
-  const showGrid = useCarouselStore((s) => s.showGrid)
-  const gridSize = useCarouselStore((s) => s.gridSize)
-  const gridOpacity = useCarouselStore((s) => s.gridOpacity)
-  const setGridOpacity = useCarouselStore((s) => s.setGridOpacity)
-  const showCenterGuides = useCarouselStore((s) => s.showCenterGuides)
-  const snapGrid = useCarouselStore((s) => s.snapGrid)
-  const snapCenter = useCarouselStore((s) => s.snapCenter)
-  const snapItems = useCarouselStore((s) => s.snapItems)
-  const snapMargins = useCarouselStore((s) => s.snapMargins)
-  const seamlessSlides = useCarouselStore((s) => s.seamlessSlides)
-  const setSeamlessSlides = useCarouselStore((s) => s.setSeamlessSlides)
-  const showHiddenZone = useCarouselStore((s) => s.showHiddenZone)
-  const setShowHiddenZone = useCarouselStore((s) => s.setShowHiddenZone)
-  const setShowGrid = useCarouselStore((s) => s.setShowGrid)
-  const setGridSize = useCarouselStore((s) => s.setGridSize)
-  const setShowCenterGuides = useCarouselStore((s) => s.setShowCenterGuides)
-  const setSnapGrid = useCarouselStore((s) => s.setSnapGrid)
-  const setSnapCenter = useCarouselStore((s) => s.setSnapCenter)
-  const setSnapItems = useCarouselStore((s) => s.setSnapItems)
-  const setSnapMargins = useCarouselStore((s) => s.setSnapMargins)
-  const setAllSlidesBgColor = useCarouselStore((s) => s.setAllSlidesBgColor)
+  const showGrid = useTiovivoStore((s) => s.showGrid)
+  const gridSize = useTiovivoStore((s) => s.gridSize)
+  const gridOpacity = useTiovivoStore((s) => s.gridOpacity)
+  const setGridOpacity = useTiovivoStore((s) => s.setGridOpacity)
+  const showCenterGuides = useTiovivoStore((s) => s.showCenterGuides)
+  const snapGrid = useTiovivoStore((s) => s.snapGrid)
+  const snapCenter = useTiovivoStore((s) => s.snapCenter)
+  const snapItems = useTiovivoStore((s) => s.snapItems)
+  const snapMargins = useTiovivoStore((s) => s.snapMargins)
+  const seamlessSlides = useTiovivoStore((s) => s.seamlessSlides)
+  const setSeamlessSlides = useTiovivoStore((s) => s.setSeamlessSlides)
+  const showHiddenZone = useTiovivoStore((s) => s.showHiddenZone)
+  const setShowHiddenZone = useTiovivoStore((s) => s.setShowHiddenZone)
+  const setShowGrid = useTiovivoStore((s) => s.setShowGrid)
+  const setGridSize = useTiovivoStore((s) => s.setGridSize)
+  const setShowCenterGuides = useTiovivoStore((s) => s.setShowCenterGuides)
+  const setSnapGrid = useTiovivoStore((s) => s.setSnapGrid)
+  const setSnapCenter = useTiovivoStore((s) => s.setSnapCenter)
+  const setSnapItems = useTiovivoStore((s) => s.setSnapItems)
+  const setSnapMargins = useTiovivoStore((s) => s.setSnapMargins)
+  const setAllSlidesBgColor = useTiovivoStore((s) => s.setAllSlidesBgColor)
 
   // Global background color — shared across slides. Reflects the shared color
   // when all slides match, else shows the first slide's color.
@@ -201,8 +201,8 @@ export default function App() {
 
   const layoutRef = useRef<HTMLDivElement>(null)
   const addMediaInputRef = useRef<HTMLInputElement>(null)
-  const workspaceBgColor = useCarouselStore((s) => s.workspaceBgColor)
-  const setWorkspaceBgColor = useCarouselStore((s) => s.setWorkspaceBgColor)
+  const workspaceBgColor = useTiovivoStore((s) => s.workspaceBgColor)
+  const setWorkspaceBgColor = useTiovivoStore((s) => s.setWorkspaceBgColor)
 
   useEffect(() => {
     const el = layoutRef.current
@@ -297,7 +297,7 @@ export default function App() {
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 
-      const st = useCarouselStore.getState()
+      const st = useTiovivoStore.getState()
 
       // Undo / redo (allowed even in crop mode so user can escape).
       if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')) {
@@ -388,8 +388,8 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown)
     // In Electron, the Edit menu's Cmd/Ctrl+Z accelerator fires before the
     // renderer sees the keydown — so also listen for IPC events from main.
-    const offUndo = window.electronAPI?.onUndo(() => useCarouselStore.getState().undo())
-    const offRedo = window.electronAPI?.onRedo(() => useCarouselStore.getState().redo())
+    const offUndo = window.electronAPI?.onUndo(() => useTiovivoStore.getState().undo())
+    const offRedo = window.electronAPI?.onRedo(() => useTiovivoStore.getState().redo())
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       offUndo?.()
@@ -399,7 +399,7 @@ export default function App() {
 
   /* ---- Export all slides ---- */
   const exportAll = useCallback(async () => {
-    const st = useCarouselStore.getState()
+    const st = useTiovivoStore.getState()
     if (!st.slides.length || !stageRef.current) return
     if (!window.electronAPI) {
       console.error('[export] window.electronAPI is undefined — run inside the Electron app')
@@ -409,7 +409,7 @@ export default function App() {
     setExporting(true)
     setExportProgress('')
     st.setSelectedIds([])
-    const prefix = sanitizeFilename(exportPrefix.trim()) || 'carousel'
+    const prefix = sanitizeFilename(exportPrefix.trim()) || 'tiovivo'
     const written: string[] = []
     let videoErrors = 0
     try {
@@ -574,7 +574,7 @@ export default function App() {
 
   /* ---- Export a single slide on demand (per-slide export button) ---- */
   const exportSingleSlide = useCallback(async (slideId: string) => {
-    const st = useCarouselStore.getState()
+    const st = useTiovivoStore.getState()
     if (!stageRef.current) return
     if (!window.electronAPI) {
       alert('Export only works in the desktop app, not the browser.')
@@ -582,7 +582,7 @@ export default function App() {
     }
     const idx = st.slides.findIndex((s) => s.id === slideId)
     if (idx < 0) return
-    const prefix = sanitizeFilename(exportPrefix.trim()) || 'carousel'
+    const prefix = sanitizeFilename(exportPrefix.trim()) || 'tiovivo'
     const n = String(idx + 1).padStart(2, '0')
     const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
     setExporting(true)
@@ -656,7 +656,7 @@ export default function App() {
       alert('Saving projects only works in the desktop app, not the browser.')
       return false
     }
-    const st = useCarouselStore.getState()
+    const st = useTiovivoStore.getState()
     try {
       // Render the Fit-view snapshot (all slides side-by-side) so the .vpost
       // carries its own preview image. Failure here is non-fatal — we still
@@ -703,7 +703,7 @@ export default function App() {
       const existing = projectPathRef.current
       if (existing && !forcePrompt) {
         await window.electronAPI.writeFile({ path: existing, buffer })
-        useCarouselStore.getState().setDirty(false)
+        useTiovivoStore.getState().setDirty(false)
         void refreshRecents()
         return true
       }
@@ -718,7 +718,7 @@ export default function App() {
       })
       if (path) {
         setProjectPath(path)
-        useCarouselStore.getState().setDirty(false)
+        useTiovivoStore.getState().setDirty(false)
         void refreshRecents()
         return true
       }
@@ -740,7 +740,7 @@ export default function App() {
         assetUrls.set(id, URL.createObjectURL(blob))
       }
       const items = hydrateItems(manifest, assetUrls)
-      useCarouselStore.getState().loadProjectState({
+      useTiovivoStore.getState().loadProjectState({
         slides: manifest.slides,
         items,
         dimensions: manifest.dimensions,
@@ -776,7 +776,7 @@ export default function App() {
 
   const handleNew = useCallback(() => {
     if (!window.confirm('Discard current project and start fresh?')) return
-    useCarouselStore.getState().resetProject()
+    useTiovivoStore.getState().resetProject()
     setProjectPath(null)
   }, [])
 
@@ -817,7 +817,7 @@ export default function App() {
     // Save-on-quit orchestration. Main asks if we're dirty (with a 1.5s
     // timeout on its side, so respond synchronously from the store snapshot).
     const offQueryDirty = api.onQueryDirty?.(() => {
-      api.sendDirtyResponse(useCarouselStore.getState().isDirty)
+      api.sendDirtyResponse(useTiovivoStore.getState().isDirty)
     })
     // Main asked us to save and report whether the save actually happened.
     // handleSave returns false on file-picker cancel or write failure — in
@@ -893,8 +893,8 @@ export default function App() {
         }}
         onSave={() => { void handleSave(false) }}
         onSaveAs={() => { void handleSave(true) }}
-        onUndo={() => useCarouselStore.getState().undo()}
-        onRedo={() => useCarouselStore.getState().redo()}
+        onUndo={() => useTiovivoStore.getState().undo()}
+        onRedo={() => useTiovivoStore.getState().redo()}
         onReload={() => location.reload()}
         onToggleDevTools={() => {
           // No IPC for this yet; rely on the F12 / Ctrl+Shift+I native
@@ -994,7 +994,7 @@ export default function App() {
             type="text"
             value={exportPrefix}
             onChange={(e) => setExportPrefix(e.target.value)}
-            placeholder="carousel"
+            placeholder="tiovivo"
             spellCheck={false}
             style={{
               width: 120,

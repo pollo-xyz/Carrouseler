@@ -12,7 +12,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCarouselStore } from '../store/useCarouselStore'
+import { useTiovivoStore } from '../store/useTiovivoStore'
 
 function SortableThumb({
   id,
@@ -68,13 +68,13 @@ function SortableThumb({
 }
 
 export default function SlideStrip() {
-  const slides = useCarouselStore((s) => s.slides)
-  const activeSlideId = useCarouselStore((s) => s.activeSlideId)
-  const setActiveSlide = useCarouselStore((s) => s.setActiveSlide)
-  const addSlide = useCarouselStore((s) => s.addSlide)
-  const removeSlide = useCarouselStore((s) => s.removeSlide)
-  const reorderSlides = useCarouselStore((s) => s.reorderSlides)
-  const thumbnails = useCarouselStore((s) => s.thumbnails)
+  const slides = useTiovivoStore((s) => s.slides)
+  const activeSlideId = useTiovivoStore((s) => s.activeSlideId)
+  const setActiveSlide = useTiovivoStore((s) => s.setActiveSlide)
+  const addSlide = useTiovivoStore((s) => s.addSlide)
+  const removeSlide = useTiovivoStore((s) => s.removeSlide)
+  const reorderSlides = useTiovivoStore((s) => s.reorderSlides)
+  const thumbnails = useTiovivoStore((s) => s.thumbnails)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),

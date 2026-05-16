@@ -35,8 +35,19 @@ jobs:
 
       - run: npm ci
 
+      # Compose a unique build identifier per CI run. Local builds (no
+      # CI variable) still produce `Tiovivo Setup ${version}.exe`; CI builds
+      # produce `Tiovivo Setup ${version}-build.${run}.exe` so we can trace
+      # any installer back to a specific workflow run + commit.
+      - name: Compute build version
+        shell: bash
+        run: |
+          BASE=$(node -p "require('./package.json').version")
+          echo "BUILD_VERSION=${BASE}-build.${{ github.run_number }}" >> "$GITHUB_ENV"
+
       - name: Build
-        run: npm run dist
+        shell: bash
+        run: npm run dist -- --config.extraMetadata.version=${{ env.BUILD_VERSION }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS code signing + notarization — electron-builder picks these

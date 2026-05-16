@@ -24,3 +24,6 @@ dist-ssr
 *.sln
 *.sw?
 release
+
+# Personal scratch file (never committed)
+NOTES.txt

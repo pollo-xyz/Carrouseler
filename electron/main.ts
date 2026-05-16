@@ -293,10 +293,10 @@ function queueOpenPath(filePath: string) {
 }
 
 function createWindow() {
-  // icon.png lives at the project root. In dev __dirname is `dist-electron/`;
-  // in the packaged app it's `app.asar/dist-electron/`. Both resolve to the
-  // root via `..` because the build config includes icon.png in `files`.
-  const iconPath = path.join(__dirname, '..', 'icon.png')
+  // App icon lives in resources/. In dev __dirname is `dist-electron/`; in the
+  // packaged app it's `app.asar/dist-electron/`. Both resolve via `..` because
+  // build.files includes `resources/**`.
+  const iconPath = path.join(__dirname, '..', 'resources', 'tiovivo_appicon.png')
   win = new BrowserWindow({
     width: 1400,
     height: 900,

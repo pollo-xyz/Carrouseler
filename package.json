@@ -17,11 +17,11 @@
     "directories": {
       "output": "release"
     },
-    "icon": "icon.png",
+    "icon": "resources/tiovivo_appicon.png",
     "files": [
       "dist/**",
       "dist-electron/**",
-      "icon.png"
+      "resources/tiovivo_appicon.png"
     ],
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**"
@@ -30,7 +30,8 @@
       {
         "ext": "vpost",
         "name": "Tiovivo Project",
-        "role": "Editor"
+        "role": "Editor",
+        "icon": "resources/tiovivo_fileicon.png"
       }
     ],
     "mac": {

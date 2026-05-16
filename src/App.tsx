@@ -1001,20 +1001,6 @@ export default function App() {
           />
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)' }}>_NN</span>
         </label>
-        {/* Status text lives outside the button so the button keeps a fixed
-            width — long ffmpeg progress strings used to jitter the entire
-            header layout as each new slide encoded. */}
-        {exporting && (
-          <span
-            className="app__export-status"
-            aria-live="polite"
-            title={exportProgress}
-          >
-            {exportProgress || 'Working'}
-            {exportElapsed ? ` · ${exportElapsed}` : ''}
-            {'.'.repeat(exportPulse)}
-          </span>
-        )}
         <button
           type="button"
           className="btn btn--export"
@@ -1442,6 +1428,24 @@ export default function App() {
               maxViewHeight={viewport.h}
               onExportSingleSlide={exportSingleSlide}
             />
+
+            {/* Export status toast — pinned to the top-right of the canvas
+                area so it can grow as long as ffmpeg's progress string
+                wants without disturbing the header layout. */}
+            {exporting && (
+              <div
+                className="app__export-toast"
+                aria-live="polite"
+                title={exportProgress}
+              >
+                <span className="app__export-toast-dot" aria-hidden />
+                <span className="app__export-toast-text">
+                  {exportProgress || 'Working'}
+                  {exportElapsed ? ` · ${exportElapsed}` : ''}
+                  {'.'.repeat(exportPulse)}
+                </span>
+              </div>
+            )}
           </div>
         </main>
       </div>

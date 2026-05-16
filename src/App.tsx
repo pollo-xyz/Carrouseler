@@ -416,12 +416,6 @@ export default function App() {
       const dir = await window.electronAPI.pickDirectory()
       if (!dir) return
 
-      // Snapshot whatever the user is currently looking at so the export
-      // veil has a meaningful backdrop right away. Gets replaced by live
-      // capture frames once encoding starts.
-      const snap = stageRef.current?.captureViewportSnapshot?.()
-      if (snap) setExportPreview(snap)
-
       // One-shot diagnostic dump so the user can see which encoder was
       // chosen and (importantly) why the GPU candidates were rejected.
       // Open View → Toggle Developer Tools to view. Also surface the
@@ -618,10 +612,6 @@ export default function App() {
           slideFps = roundToCommonFps(sorted[Math.floor(sorted.length / 2)]!)
         }
         setExportProgress(`Encoding slide ${idx + 1}: 0%`)
-        // For the single-slide export, also seed the snapshot so the veil
-        // has content before the first frame ack lands.
-        const snap = stageRef.current?.captureViewportSnapshot?.()
-        if (snap) setExportPreview(snap)
         const result = await stageRef.current.exportSlideVideo(
           slideId,
           outputPath,

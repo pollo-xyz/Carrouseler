@@ -1417,10 +1417,6 @@ export interface EditorStageHandle {
   ) => Promise<string | null>
   fitToScreen: () => void
   applyCrop: () => void
-  /** Snapshot of the current viewport (current zoom/pan) as a data URL.
-   *  Used by the export flow so the user sees their editor frozen during
-   *  export instead of a blank workspace. */
-  captureViewportSnapshot: () => string | null
 }
 
 const EditorStage = forwardRef<
@@ -2281,27 +2277,12 @@ const EditorStage = forwardRef<
     [artboardPositions, W, H],
   )
 
-  // Take a snapshot of the current viewport at its current zoom/pan, used
-  // by App.tsx to show a frozen image during export instead of an empty
-  // workspace while the stage transform is reset for capture.
-  const captureViewportSnapshot = useCallback((): string | null => {
-    const stage = stageRef.current
-    if (!stage) return null
-    try {
-      return stage.toDataURL({ pixelRatio: 1 })
-    } catch (err) {
-      console.warn('[captureViewportSnapshot] failed:', err)
-      return null
-    }
-  }, [])
-
   useImperativeHandle(ref, () => ({
     exportSlidePng,
     exportSlideVideo,
     fitToScreen,
     applyCrop: () => { cropApplyRef.current?.() },
-    captureViewportSnapshot,
-  }), [exportSlidePng, exportSlideVideo, fitToScreen, captureViewportSnapshot])
+  }), [exportSlidePng, exportSlideVideo, fitToScreen])
 
   /* ---- render ---- */
   return (

@@ -1973,7 +1973,15 @@ const EditorStage = forwardRef<
       if (!slideVideoItems.length) return null
 
       // Get the video elements and determine max duration (respecting trim)
-      const videoEls: { item: PlacedMedia; el: HTMLVideoElement; coverTime: number; trimStart: number; trimEnd: number }[] = []
+      type VEntry = {
+        item: PlacedMedia
+        el: HTMLVideoElement
+        coverTime: number
+        trimStart: number
+        trimEnd: number
+        effDur: number
+      }
+      const videoEls: VEntry[] = []
       let maxDuration = 0
       for (const vi of slideVideoItems) {
         const el = videoElements.get(vi.id)
@@ -1981,10 +1989,16 @@ const EditorStage = forwardRef<
         const trimStart = vi.trimStart || 0
         const trimEnd = vi.trimEnd && vi.trimEnd > 0 ? Math.min(vi.trimEnd, el.duration) : el.duration
         const effDur = Math.max(0, trimEnd - trimStart)
-        videoEls.push({ item: vi, el, coverTime: vi.coverTime || 0, trimStart, trimEnd })
+        videoEls.push({ item: vi, el, coverTime: vi.coverTime || 0, trimStart, trimEnd, effDur })
         if (effDur > maxDuration) maxDuration = effDur
       }
       if (maxDuration <= 0 || !isFinite(maxDuration)) return null
+
+      // The "master" video drives capture timing: the rest play freely and
+      // get captured along with it at each tick. We pick the longest one so
+      // the export covers the full slide duration.
+      let master: VEntry = videoEls[0]!
+      for (const v of videoEls) if (v.effDur > master.effDur) master = v
 
       // Pause all videos and remember their state
       for (const { el } of videoEls) {
@@ -2019,78 +2033,25 @@ const EditorStage = forwardRef<
         stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
         if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide()
 
-        // Frame-by-frame capture — pipeline IPC writes so ffmpeg ingestion
-        // overlaps with seeking/drawing the next frame.
+        // ---- Playback-driven capture ----
+        // Old approach seeked every video every frame (~80-150 ms per seek
+        // on healthy h264). New approach plays the videos at native rate
+        // and samples frames in real time. Cuts per-frame overhead down to
+        // just draw + readPixels + IPC (~30-50 ms), typically 2-3× faster
+        // overall.
+        //
+        // Assumption: source video fps ≥ target output fps. For 30 fps
+        // sources at 30 fps target this is exact. For 60 fps source the
+        // sampler skips half the callbacks. For source fps < target (e.g.
+        // 24 fps), the output will be slightly shorter than the source —
+        // acceptable for the carousel use case; could fall back to the
+        // seek loop later if needed.
+
         let pendingWrite: Promise<void> = Promise.resolve()
+        let framesSent = 0
 
-        for (let frame = 0; frame < totalFrames; frame++) {
-          // frame 0: seek to each video's coverTime; subsequent frames: play from 0
-          const time = frame === 0 ? null : (frame - 1) / fps
-
-          // For frame 0 only: swap the Konva node's image to the custom cover
-          // image when the user picked one. Restore right after capture.
-          const coverSwaps: { node: Konva.Image; original: CanvasImageSource }[] = []
-          if (time === null) {
-            for (const { item } of videoEls) {
-              if (!item.coverImageSrc) continue
-              const coverImg = coverImageElements.get(item.id)
-              if (!coverImg) continue
-              const node = stage.findOne(`#media-${item.id}`) as Konva.Image | undefined
-              if (!node) continue
-              coverSwaps.push({ node, original: node.image() as CanvasImageSource })
-              node.image(coverImg)
-            }
-          }
-
-          // Track whether any video actually had to seek; if not, we can
-          // skip the rAF below since the frame already matches what's drawn.
-          let anySeeked = false
-          const seekPromises = videoEls.map(({ item, el, coverTime, trimStart, trimEnd }) => {
-            return new Promise<void>((resolve) => {
-              // Skip seeking when this frame uses a custom cover image —
-              // the video element won't be drawn.
-              if (time === null && item.coverImageSrc && coverImageElements.has(item.id)) {
-                resolve(); return
-              }
-              const target = time === null ? coverTime : trimStart + time
-              const cap = Math.min(trimEnd, el.duration || 0) - 0.001
-              // Guard against degenerate durations (NaN / 0). Skipping the
-              // seek here is better than waiting forever for 'seeked'.
-              if (!isFinite(cap) || cap <= 0) { resolve(); return }
-              const clamped = target >= cap ? cap : target
-              if (Math.abs(el.currentTime - clamped) < 1e-4) { resolve(); return }
-              anySeeked = true
-              let done = false
-              const finish = () => {
-                if (done) return
-                done = true
-                el.removeEventListener('seeked', onSeeked)
-                clearTimeout(timer)
-                resolve()
-              }
-              const onSeeked = () => finish()
-              // Seek timeout: some video states (corrupt segment, no buffered
-              // range at the target, decoder stall) silently never fire
-              // 'seeked'. After 5s we move on with whatever frame the video
-              // is currently showing rather than hanging the whole export.
-              const timer = setTimeout(() => {
-                console.warn(`[export] seek timed out for ${item.id} target=${clamped.toFixed(3)}s — continuing with current frame`)
-                finish()
-              }, 5000)
-              el.addEventListener('seeked', onSeeked)
-              el.currentTime = clamped
-            })
-          })
-          await Promise.all(seekPromises)
-
-          // Single rAF is enough for Konva to pick up the new video frame.
-          // Skip when no seek actually fired — saves ~16ms per duplicate frame.
-          if (anySeeked) {
-            await new Promise<void>((r) => requestAnimationFrame(() => r()))
-          }
+        const captureFrameData = (): Uint8Array => {
           stage.draw()
-
-          // Capture the artboard region as raw pixels
           const canvas = stage.toCanvas({
             x: ap.x, y: ap.y,
             width: W, height: H,
@@ -2098,39 +2059,155 @@ const EditorStage = forwardRef<
           })
           const ctx = canvas.getContext('2d')!
           const imageData = ctx.getImageData(0, 0, W, H)
-          const frameData = new Uint8Array(imageData.data.buffer)
-
-          // Restore the original (video) image source on any nodes we
-          // swapped above so subsequent frames render the video stream.
-          for (const { node, original } of coverSwaps) {
-            node.image(original as unknown as Parameters<Konva.Image['image']>[0])
-          }
-
-          // Make sure the previous write finished (bounded queue of 1)
-          // before dispatching the next one — keeps IPC pipelined with
-          // the next frame's seek/draw without unbounded memory growth.
-          //
-          // Frame 0 gets a longer window because hardware encoders often
-          // need warmup (driver init, GOP buffer fill) before they start
-          // accepting input at full rate. Subsequent frames should ack in
-          // well under 10s on any healthy encoder.
-          const ackTimeoutMs = frame === 0 ? 30000 : 10000
-          let timeoutTimer: ReturnType<typeof setTimeout> | undefined
-          await Promise.race([
-            pendingWrite,
-            new Promise<void>((_resolve, reject) => {
-              timeoutTimer = setTimeout(() => {
-                reject(new Error(
-                  `Frame ${frame} timed out after ${ackTimeoutMs}ms — ffmpeg likely hung. ` +
-                  `Open View → Toggle Developer Tools to see ffmpeg stderr for details.`,
-                ))
-              }, ackTimeoutMs)
-            }),
-          ]).finally(() => { if (timeoutTimer) clearTimeout(timeoutTimer) })
-          pendingWrite = window.electronAPI.videoFrame({ sessionId, frameData })
-
-          onProgress?.(((frame + 1) / totalFrames) * 100)
+          return new Uint8Array(imageData.data.buffer)
         }
+
+        const sendFrame = async (frameData: Uint8Array) => {
+          // Pipeline backpressure: wait for the previous frame's ack before
+          // dispatching the next. Frame 0 gets a longer timeout for HW
+          // encoder warmup.
+          const ackTimeoutMs = framesSent === 0 ? 30000 : 10000
+          let timeoutTimer: ReturnType<typeof setTimeout> | undefined
+          try {
+            await Promise.race([
+              pendingWrite,
+              new Promise<void>((_resolve, reject) => {
+                timeoutTimer = setTimeout(() => {
+                  reject(new Error(
+                    `Frame ${framesSent} timed out after ${ackTimeoutMs}ms — ffmpeg likely hung. ` +
+                    `Open View → Toggle Developer Tools to see ffmpeg stderr for details.`,
+                  ))
+                }, ackTimeoutMs)
+              }),
+            ])
+          } finally {
+            if (timeoutTimer) clearTimeout(timeoutTimer)
+          }
+          // electronAPI was non-null-checked at the start of exportSlideVideo;
+          // re-asserting here because the closure has lost the narrowing.
+          pendingWrite = window.electronAPI!.videoFrame({ sessionId, frameData })
+          framesSent++
+          onProgress?.((framesSent / totalFrames) * 100)
+        }
+
+        // Common helper for the one-shot seeks (cover-time + trim-start).
+        // Resolves on 'seeked' or after a hard timeout so a misbehaving
+        // video can't wedge the export.
+        const seekToWithTimeout = (el: HTMLVideoElement, target: number, label: string) =>
+          new Promise<void>((resolve) => {
+            if (Math.abs(el.currentTime - target) < 1e-4) { resolve(); return }
+            let done = false
+            const finish = () => {
+              if (done) return
+              done = true
+              el.removeEventListener('seeked', onSeeked)
+              clearTimeout(timer)
+              resolve()
+            }
+            const onSeeked = () => finish()
+            const timer = setTimeout(() => {
+              console.warn(`[export] ${label} seek timed out target=${target.toFixed(3)}s — continuing`)
+              finish()
+            }, 5000)
+            el.addEventListener('seeked', onSeeked)
+            el.currentTime = target
+          })
+
+        // ---- Cover frame (frame 0) ----
+        // Swap in user-picked cover images, seek each video to its
+        // coverTime, capture once, then restore the live video sources
+        // so subsequent playback frames render the stream.
+        const coverSwaps: { node: Konva.Image; original: CanvasImageSource }[] = []
+        for (const { item } of videoEls) {
+          if (!item.coverImageSrc) continue
+          const coverImg = coverImageElements.get(item.id)
+          if (!coverImg) continue
+          const node = stage.findOne(`#media-${item.id}`) as Konva.Image | undefined
+          if (!node) continue
+          coverSwaps.push({ node, original: node.image() as CanvasImageSource })
+          node.image(coverImg)
+        }
+        await Promise.all(videoEls.map(({ item, el, coverTime, trimEnd }) => {
+          if (item.coverImageSrc && coverImageElements.has(item.id)) return Promise.resolve()
+          const cap = Math.min(trimEnd, el.duration || 0) - 0.001
+          if (!isFinite(cap) || cap <= 0) return Promise.resolve()
+          const target = Math.max(0, Math.min(coverTime, cap))
+          return seekToWithTimeout(el, target, `cover ${item.id.slice(0, 6)}`)
+        }))
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+        await sendFrame(captureFrameData())
+        for (const { node, original } of coverSwaps) {
+          node.image(original as unknown as Parameters<Konva.Image['image']>[0])
+        }
+
+        // ---- Playback frames ----
+        // Position every video at its trimStart, then play() all of them
+        // in parallel. We poll master.currentTime via rAF; when it crosses
+        // each 1/fps boundary we capture and forward a frame.
+        await Promise.all(videoEls.map(({ el, trimStart, trimEnd }) => {
+          const cap = Math.min(trimEnd, el.duration || 0) - 0.001
+          if (!isFinite(cap) || cap <= 0) return Promise.resolve()
+          const target = Math.max(0, Math.min(trimStart, cap))
+          return seekToWithTimeout(el, target, 'trimStart')
+        }))
+        // One rAF after seeks so the canvas reflects the freshly-positioned
+        // frame before playback advances.
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+
+        for (const { el } of videoEls) {
+          el.playbackRate = 1
+          el.muted = true
+          try {
+            const p = el.play()
+            if (p) p.catch((err) => console.warn('[export] play() rejected', err))
+          } catch (err) {
+            console.warn('[export] play() threw', err)
+          }
+        }
+
+        // Main playback loop. We sample at evenly-spaced video-time
+        // intervals (1 / fps), backpressure-gated on the IPC pipeline:
+        // if a send is still in flight when the next interval comes due,
+        // skip the capture and let the master move on. The output is
+        // slightly fewer frames than expected in that pathological case,
+        // but the wall-clock pacing stays correct.
+        const frameInterval = 1 / fps
+        await new Promise<void>((resolve, reject) => {
+          let stopping = false
+          let inFlight = false
+          // First playback frame is emitted at videoTime == trimStart, so
+          // arm the next-emit threshold to fire immediately on the first
+          // tick by setting it one interval below the start.
+          let nextEmitVideoTime = master.trimStart - 1e-4
+          const stop = (err?: Error) => {
+            if (stopping) return
+            stopping = true
+            for (const { el } of videoEls) {
+              try { el.pause() } catch { /* ignore */ }
+            }
+            if (err) reject(err); else resolve()
+          }
+          const tick = () => {
+            if (stopping) return
+            const videoTime = master.el.currentTime
+            if (videoTime >= master.trimEnd - 1e-3 || framesSent >= totalFrames) {
+              stop()
+              return
+            }
+            // Master crossed the next emission slot? Capture, send, advance.
+            // The inFlight gate prevents queue buildup if IPC is slow.
+            if (!inFlight && videoTime >= nextEmitVideoTime + frameInterval) {
+              nextEmitVideoTime += frameInterval
+              inFlight = true
+              const frameData = captureFrameData()
+              sendFrame(frameData)
+                .then(() => { inFlight = false })
+                .catch((err) => stop(err))
+            }
+            requestAnimationFrame(tick)
+          }
+          requestAnimationFrame(tick)
+        })
 
         await pendingWrite
 

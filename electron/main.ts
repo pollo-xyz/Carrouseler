@@ -281,6 +281,9 @@ function deliverPendingOpen() {
       path: pendingOpenPath,
       buffer: new Uint8Array(buffer),
     })
+    if (pendingOpenPath.toLowerCase().endsWith('.vpost')) {
+      pushRecent(pendingOpenPath)
+    }
     pendingOpenPath = null
   } catch (err) {
     console.error('[open-file] read failed:', err)
@@ -407,6 +410,62 @@ function createWindow() {
  *  close — lets the next 'close' event fall through without re-prompting. */
 let allowClose = false
 
+/* ------------------------------------------------------------------ */
+/*  Recent files                                                      */
+/* ------------------------------------------------------------------ */
+
+const RECENTS_MAX = 5
+const recentsPath = () => path.join(app.getPath('userData'), 'recents.json')
+
+function readRecents(): string[] {
+  try {
+    const raw = fs.readFileSync(recentsPath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((p): p is string => typeof p === 'string').slice(0, RECENTS_MAX)
+    }
+  } catch {
+    // Missing file or corrupt JSON — silently start fresh.
+  }
+  return []
+}
+
+function writeRecents(list: string[]) {
+  try {
+    fs.writeFileSync(recentsPath(), JSON.stringify(list.slice(0, RECENTS_MAX)))
+  } catch (err) {
+    console.warn('[recents] failed to write:', err)
+  }
+}
+
+function pushRecent(filePath: string) {
+  if (!filePath) return
+  const list = readRecents().filter((p) => p !== filePath)
+  list.unshift(filePath)
+  writeRecents(list)
+  buildMenu()
+}
+
+function openRecent(filePath: string) {
+  if (!fs.existsSync(filePath)) {
+    // File moved / deleted since it was opened. Drop from the list and
+    // tell the user; don't try to read a buffer from a path that's gone.
+    const list = readRecents().filter((p) => p !== filePath)
+    writeRecents(list)
+    buildMenu()
+    dialog.showMessageBox(win!, {
+      type: 'warning',
+      title: 'File not found',
+      message: 'That project file could not be opened.',
+      detail: `It may have been moved, renamed, or deleted:\n${filePath}\n\nIt has been removed from Recent.`,
+      buttons: ['OK'],
+      defaultId: 0,
+    })
+    return
+  }
+  queueOpenPath(filePath)
+}
+
 // Build a custom app menu so Cmd/Ctrl+Z reaches our renderer instead of being
 // swallowed by the default Edit → Undo role (which only undoes text input).
 function buildMenu() {
@@ -444,6 +503,28 @@ function buildMenu() {
           label: 'Open Project…',
           accelerator: 'CmdOrCtrl+O',
           click: () => sendToFocused('app:open-project'),
+        },
+        {
+          label: 'Open Recent',
+          submenu: (() => {
+            const recents = readRecents()
+            if (recents.length === 0) {
+              return [{ label: 'No recent projects', enabled: false }]
+            }
+            const items: Electron.MenuItemConstructorOptions[] = recents.map((p) => ({
+              // Show the basename (foo.vpost) but tooltip the full path so
+              // the user can disambiguate same-name files in different folders.
+              label: path.basename(p),
+              toolTip: p,
+              click: () => openRecent(p),
+            }))
+            items.push({ type: 'separator' })
+            items.push({
+              label: 'Clear Recent',
+              click: () => { writeRecents([]); buildMenu() },
+            })
+            return items
+          })(),
         },
         { type: 'separator' },
         {
@@ -564,6 +645,9 @@ ipcMain.handle('save-file', async (_event, options: {
   })
   if (result.canceled || !result.filePath) return null
   if (options.buffer) fs.writeFileSync(result.filePath, Buffer.from(options.buffer))
+  // Treat .vpost saves as recent. PNG/MP4 exports aren't projects so they
+  // shouldn't pollute the list.
+  if (result.filePath.toLowerCase().endsWith('.vpost')) pushRecent(result.filePath)
   return result.filePath
 })
 
@@ -599,6 +683,7 @@ ipcMain.handle('open-file', async (_event, options: {
   if (result.canceled || !result.filePaths.length) return null
   const filePath = result.filePaths[0]!
   const buffer = fs.readFileSync(filePath)
+  if (filePath.toLowerCase().endsWith('.vpost')) pushRecent(filePath)
   return { path: filePath, buffer: new Uint8Array(buffer) }
 })
 
@@ -608,6 +693,7 @@ ipcMain.handle('write-file', async (_event, options: {
   buffer: Uint8Array
 }) => {
   fs.writeFileSync(options.path, Buffer.from(options.buffer))
+  if (options.path.toLowerCase().endsWith('.vpost')) pushRecent(options.path)
   return options.path
 })
 

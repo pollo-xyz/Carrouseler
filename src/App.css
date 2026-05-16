@@ -20,7 +20,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 14px;
-  padding: 9px 18px 9px 82px;
+  /* Default header padding for non-Mac platforms. macOS overrides the
+     left side to leave room for the traffic-light buttons (see below). */
+  padding: 9px 18px 9px 18px;
   min-height: 54px;
   flex-shrink: 0;
   background: linear-gradient(
@@ -67,22 +69,16 @@
   margin-right: 2px;
 }
 .app__brand-mark {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: #3b82f6;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+  display: block;
+  /* Subtle frame so the icon doesn't look like it's hovering on the
+     dark glass. */
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 4px 14px rgba(59, 130, 246, 0.55),
-    0 1px 3px rgba(0, 0, 0, 0.4);
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 800;
-  font-size: 12.5px;
-  letter-spacing: -0.04em;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+    0 1px 3px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 .app__brand-title {
   font-size: 0.82rem;
@@ -95,6 +91,28 @@
   height: 18px;
   background: var(--border-strong);
   margin: 0 4px;
+}
+
+/* macOS: leave room for the traffic-light buttons that sit on top of the
+   window chrome. Windows / Linux don't have them on the left so the
+   default 18px is fine. */
+.platform-mac .app__header {
+  padding-left: 82px;
+}
+
+/* Live export status text — sits to the left of the Export button so the
+   button itself keeps a fixed width while ffmpeg progress jitters update. */
+.app__export-status {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
 }
 
 /* ── Preset segmented group (pill) ── */

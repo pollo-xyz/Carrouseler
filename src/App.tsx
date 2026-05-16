@@ -8,6 +8,10 @@ import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
 import { detectVideoFps, fpsRoughlyEqual, roundToCommonFps } from './lib/detectVideoFps'
 import { videoElements } from './lib/videoRegistry'
+// Vite emits this as a hashed asset and resolves the URL at build time.
+// Works the same in dev (served from project root) and in the packaged app
+// (bundled into dist/assets/).
+import appIconUrl from '../resources/tiovivo_appicon.png'
 import './App.css'
 
 const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]
@@ -821,7 +825,7 @@ export default function App() {
     <div className="app">
       <header className="app__header">
         <div className="app__brand">
-          <div className="app__brand-mark" aria-hidden>T</div>
+          <img className="app__brand-mark" src={appIconUrl} alt="" aria-hidden />
           <span className="app__brand-title">Tiovivo</span>
         </div>
         <div className="app__brand-sep" aria-hidden />
@@ -925,6 +929,20 @@ export default function App() {
           />
           <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)' }}>_NN</span>
         </label>
+        {/* Status text lives outside the button so the button keeps a fixed
+            width — long ffmpeg progress strings used to jitter the entire
+            header layout as each new slide encoded. */}
+        {exporting && (
+          <span
+            className="app__export-status"
+            aria-live="polite"
+            title={exportProgress}
+          >
+            {exportProgress || 'Working'}
+            {exportElapsed ? ` · ${exportElapsed}` : ''}
+            {'.'.repeat(exportPulse)}
+          </span>
+        )}
         <button
           type="button"
           className="btn btn--export"
@@ -932,9 +950,7 @@ export default function App() {
           onClick={exportAll}
         >
           <Icon.Export />
-          {exporting
-            ? `${exportProgress || 'Exporting'}${exportElapsed ? ` · ${exportElapsed}` : ''}${'.'.repeat(exportPulse)}`
-            : 'Export all'}
+          {exporting ? 'Exporting…' : 'Export all'}
         </button>
       </header>
 

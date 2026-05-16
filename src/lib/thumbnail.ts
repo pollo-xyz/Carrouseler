@@ -190,17 +190,21 @@ export async function generateProjectPreview(
     return null
   }
 
-  const MAX_TOTAL_W = 2400 // cap PNG size for large projects
+  // Tuned for typical preview consumers: macOS Quick Look (≤1024), Windows
+  // Explorer extra-large icons (≤256), and our future Open Recent UI
+  // (~300–400). 1600 leaves headroom for upscaling without ballooning file
+  // size (preview.png typically lands at 20–100 KB at this scale).
+  const MAX_TOTAL_W = 1600
   const PAD = 12
   const GAP = 12
 
   // Start with a generous per-slide width, then shrink if the total would
   // exceed our cap so a 20-slide project still produces a usable preview.
-  let slideW = 240
+  let slideW = 200
   const overhead = PAD * 2 + GAP * Math.max(0, slides.length - 1)
   const idealTotal = overhead + slides.length * slideW
   if (idealTotal > MAX_TOTAL_W) {
-    slideW = Math.max(80, Math.floor((MAX_TOTAL_W - overhead) / slides.length))
+    slideW = Math.max(60, Math.floor((MAX_TOTAL_W - overhead) / slides.length))
   }
   const slideH = Math.round((slideW / dimensions.width) * dimensions.height)
 

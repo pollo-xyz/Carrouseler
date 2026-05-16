@@ -9,10 +9,11 @@ import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
 import { detectVideoFps, fpsRoughlyEqual, roundToCommonFps } from './lib/detectVideoFps'
 import { videoElements } from './lib/videoRegistry'
-// Vite emits this as a hashed asset and resolves the URL at build time.
-// Works the same in dev (served from project root) and in the packaged app
-// (bundled into dist/assets/).
-import appIconUrl from '../resources/tiovivo_appicon.png'
+// 256×256 sibling of the main app icon, exported specifically for the
+// in-app brand mark / future small UI uses. Avoids bundling the full
+// 2400×2400 5.7 MB original into the renderer build just to render at
+// 22 px. Vite hashes and resolves the URL at build time.
+import appIconUrl from '../resources/tiovivo_appicon_small.png'
 import './App.css'
 
 const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]

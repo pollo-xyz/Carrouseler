@@ -322,10 +322,12 @@ function queueOpenPath(filePath: string) {
 }
 
 function createWindow() {
-  // App icon lives in resources/. In dev __dirname is `dist-electron/`; in the
-  // packaged app it's `app.asar/dist-electron/`. Both resolve via `..` because
-  // build.files includes `resources/**`.
-  const iconPath = path.join(__dirname, '..', 'resources', 'tiovivo_appicon.png')
+  // Runtime BrowserWindow icon — 256×256 is plenty for Windows taskbar and
+  // title bar; bundling the 2400×2400 source would waste ~5.7 MB of asar
+  // space for no visible quality gain. The high-res original is still used
+  // at build time by electron-builder (see package.json build.icon) to
+  // generate the multi-resolution .ico / .icns.
+  const iconPath = path.join(__dirname, '..', 'resources', 'tiovivo_appicon_small.png')
   const isMac = process.platform === 'darwin'
   win = new BrowserWindow({
     width: 1400,

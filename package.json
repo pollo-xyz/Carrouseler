@@ -21,7 +21,7 @@
     "files": [
       "dist/**",
       "dist-electron/**",
-      "resources/tiovivo_appicon.png"
+      "resources/tiovivo_appicon_small.png"
     ],
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**"

@@ -193,6 +193,32 @@ async function probeEncoder(): Promise<EncoderName> {
 
 /** Expose probe diagnostics to the renderer so the user can see them via
  *  View → Toggle Developer Tools without needing to launch from a terminal. */
+// Renderer (the in-app MenuBar on Windows/Linux) reads the recent-files
+// list, asks main to open one, or clears the list. macOS uses its native
+// menu bar so these are no-ops on that platform.
+ipcMain.handle('get-recents', async (): Promise<string[]> => readRecents())
+ipcMain.handle('open-recent', async (_event, filePath: string) => {
+  openRecent(filePath)
+})
+ipcMain.handle('clear-recents', async () => {
+  writeRecents([])
+  buildMenu()
+})
+
+// Window control IPC for the in-app title bar (Windows / Linux).
+ipcMain.handle('window-minimize', async () => {
+  BrowserWindow.getFocusedWindow()?.minimize()
+})
+ipcMain.handle('window-maximize-toggle', async () => {
+  const w = BrowserWindow.getFocusedWindow()
+  if (!w) return
+  if (w.isMaximized()) w.unmaximize()
+  else w.maximize()
+})
+ipcMain.handle('window-close', async () => {
+  BrowserWindow.getFocusedWindow()?.close()
+})
+
 ipcMain.handle('get-encoder-diagnostics', async (): Promise<EncoderDiagnostics | null> => {
   // Ensure the probe has completed (or run it now if it somehow hasn't).
   await probeEncoder()
@@ -300,13 +326,25 @@ function createWindow() {
   // packaged app it's `app.asar/dist-electron/`. Both resolve via `..` because
   // build.files includes `resources/**`.
   const iconPath = path.join(__dirname, '..', 'resources', 'tiovivo_appicon.png')
+  const isMac = process.platform === 'darwin'
   win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 16 },
+    // Mac: hiddenInset keeps the native traffic-lights but lets us draw
+    //      under them — already worked, leaving alone.
+    // Windows / Linux: 'hidden' removes the OS title bar entirely. We then
+    //      use titleBarOverlay to get themed close/min/max buttons in the
+    //      top-right; the rest of the bar is ours to paint (custom menus,
+    //      drag region).
+    titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    titleBarOverlay: isMac ? undefined : {
+      color: '#0a0a0e',
+      symbolColor: '#ffffff',
+      height: 34,
+    },
+    trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
     backgroundColor: '#0a0a0e',
     icon: iconPath,
     webPreferences: {
@@ -562,7 +600,15 @@ function buildMenu() {
     { role: 'viewMenu' },
     { role: 'windowMenu' },
   ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  // On Windows / Linux we draw our own menu bar inside the window chrome
+  // (in-app MenuBar component, see renderer). Hiding the native menu here
+  // avoids the duplicate strip. macOS keeps the system menu bar at the top
+  // of the screen — that's where Mac users expect it.
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  } else {
+    Menu.setApplicationMenu(null)
+  }
 }
 
 app.on('window-all-closed', () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import NumberField from './components/NumberField'
+import MenuBar from './components/MenuBar'
 import { useCarouselStore, type PlacedMedia, type TextAlign } from './store/useCarouselStore'
 import { PRESETS } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
@@ -126,6 +127,24 @@ export default function App() {
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
   const [fontList, setFontList] = useState<string[]>(FALLBACK_FONTS)
+  // Recently-opened .vpost paths for the in-app File menu (Windows / Linux).
+  // We don't pre-fetch on macOS because Mac shows them in the native menu
+  // and the in-app MenuBar isn't rendered there.
+  const [recents, setRecents] = useState<{ path: string; basename: string }[]>([])
+  const refreshRecents = useCallback(async () => {
+    try {
+      const paths = await window.electronAPI?.getRecents?.()
+      if (paths) {
+        setRecents(paths.map((p) => ({
+          path: p,
+          basename: p.split(/[/\\]/).pop() || p,
+        })))
+      }
+    } catch (err) {
+      console.warn('[recents] fetch failed:', err)
+    }
+  }, [])
+  useEffect(() => { void refreshRecents() }, [refreshRecents])
 
   const dimensions = useCarouselStore((s) => s.dimensions)
   const presetId = useCarouselStore((s) => s.presetId)
@@ -677,6 +696,7 @@ export default function App() {
       if (existing && !forcePrompt) {
         await window.electronAPI.writeFile({ path: existing, buffer })
         useCarouselStore.getState().setDirty(false)
+        void refreshRecents()
         return true
       }
 
@@ -691,6 +711,7 @@ export default function App() {
       if (path) {
         setProjectPath(path)
         useCarouselStore.getState().setDirty(false)
+        void refreshRecents()
         return true
       }
       // User cancelled the file picker — leave isDirty alone, signal caller
@@ -701,7 +722,7 @@ export default function App() {
       alert(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
       return false
     }
-  }, [])
+  }, [refreshRecents])
 
   const loadFromBuffer = useCallback((buffer: Uint8Array, path: string) => {
     try {
@@ -738,17 +759,41 @@ export default function App() {
       const result = await window.electronAPI.openFile({ filters: VPOST_FILTER })
       if (!result) return
       loadFromBuffer(result.buffer, result.path)
+      void refreshRecents()
     } catch (err) {
       console.error('[open] failed:', err)
       alert(`Open failed: ${err instanceof Error ? err.message : String(err)}`)
     }
-  }, [loadFromBuffer])
+  }, [loadFromBuffer, refreshRecents])
 
   const handleNew = useCallback(() => {
     if (!window.confirm('Discard current project and start fresh?')) return
     useCarouselStore.getState().resetProject()
     setProjectPath(null)
   }, [])
+
+  /* ---- File-menu keyboard shortcuts ---- */
+  // On macOS the native menu's accelerators (Cmd+N / O / S / Shift+S) fire
+  // these flows via IPC. On Windows / Linux we removed the native menu in
+  // favour of the in-app MenuBar, so we wire the same shortcuts manually
+  // here. Skip on Mac to avoid double-firing.
+  useEffect(() => {
+    if (/Mac/.test(navigator.userAgent)) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault(); handleNew()
+      } else if (e.key === 'o' || e.key === 'O') {
+        e.preventDefault(); handleOpen()
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault(); handleSave(e.shiftKey)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handleNew, handleOpen, handleSave])
 
   /* ---- Wire File menu IPC + window title ---- */
   useEffect(() => {
@@ -823,6 +868,32 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* In-app menu bar for Windows / Linux. CSS hides it on macOS — Mac
+          uses the native menu strip at the top of the screen instead. */}
+      <MenuBar
+        recents={recents}
+        onNew={handleNew}
+        onOpen={handleOpen}
+        onOpenRecent={(p) => {
+          // Main reads the file and sends app:open-project-file back to us;
+          // loadFromBuffer is wired to that channel via the existing useEffect.
+          window.electronAPI?.openRecent(p)
+        }}
+        onClearRecents={() => {
+          void window.electronAPI?.clearRecents()
+          setRecents([])
+        }}
+        onSave={() => { void handleSave(false) }}
+        onSaveAs={() => { void handleSave(true) }}
+        onUndo={() => useCarouselStore.getState().undo()}
+        onRedo={() => useCarouselStore.getState().redo()}
+        onReload={() => location.reload()}
+        onToggleDevTools={() => {
+          // No IPC for this yet; rely on the F12 / Ctrl+Shift+I native
+          // accelerator Chromium still honours. The menu item exists as a
+          // discoverability hint.
+        }}
+      />
       <header className="app__header">
         <div className="app__brand">
           <img className="app__brand-mark" src={appIconUrl} alt="" aria-hidden />

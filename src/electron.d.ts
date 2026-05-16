@@ -11,6 +11,14 @@ export interface ElectronAPI {
     filters: { name: string; extensions: string[] }[]
   }) => Promise<{ path: string; buffer: Uint8Array } | null>
 
+  getRecents: () => Promise<string[]>
+  openRecent: (filePath: string) => Promise<void>
+  clearRecents: () => Promise<void>
+
+  windowMinimize: () => Promise<void>
+  windowMaximizeToggle: () => Promise<void>
+  windowClose: () => Promise<void>
+
   writeFile: (options: {
     path: string
     buffer: Uint8Array

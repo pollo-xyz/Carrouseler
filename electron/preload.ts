@@ -39,6 +39,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     buffer: Uint8Array
   } | null>,
 
+  /** Recently-opened .vpost project paths, newest first. Used by the
+   *  in-app File menu on Windows/Linux (macOS uses the native menu). */
+  getRecents: () => ipcRenderer.invoke('get-recents') as Promise<string[]>,
+  openRecent: (filePath: string) => ipcRenderer.invoke('open-recent', filePath),
+  clearRecents: () => ipcRenderer.invoke('clear-recents'),
+
+  /** Custom title-bar window controls (Windows / Linux only). On macOS
+   *  the native traffic-light buttons handle these. */
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowMaximizeToggle: () => ipcRenderer.invoke('window-maximize-toggle'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
+
   /** Write a buffer to a known path (no dialog) */
   writeFile: (options: {
     path: string

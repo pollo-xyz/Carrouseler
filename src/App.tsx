@@ -6,6 +6,8 @@ import { PRESETS } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
 import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
+import { detectVideoFps, fpsRoughlyEqual, roundToCommonFps } from './lib/detectVideoFps'
+import { videoElements } from './lib/videoRegistry'
 import './App.css'
 
 const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]
@@ -412,6 +414,66 @@ export default function App() {
       }
       const encoderSuffix = chosenEncoder ? ` (${chosenEncoder})` : ''
 
+      // ---- Detect source FPS for every video item ----
+      // The export framerate dictates ffmpeg's input rate; if it doesn't
+      // match the source, the output will be sped up / slowed down / get
+      // duplicated frames. We measure each video's native rate via rVFC,
+      // pick the most common as the project fps, and warn on mismatches.
+      setExportProgress('Detecting video frame rates…')
+      const videoFpsByItemId = new Map<string, number>()
+      const videoItems = st.items.filter((it) => it.type === 'video')
+      for (const it of videoItems) {
+        const el = videoElements.get(it.id)
+        if (!el) continue
+        const fps = await detectVideoFps(el)
+        if (fps && isFinite(fps)) videoFpsByItemId.set(it.id, fps)
+      }
+
+      // Decide a project-wide fps: median of detected rates, snapped to a
+      // common standard rate. Falls back to 30 when nothing was detected
+      // (e.g. videos still loading) so behaviour matches the previous build.
+      const detectedRates = Array.from(videoFpsByItemId.values())
+      let projectFps = 30
+      if (detectedRates.length > 0) {
+        const sorted = [...detectedRates].sort((a, b) => a - b)
+        const median = sorted[Math.floor(sorted.length / 2)]!
+        projectFps = roundToCommonFps(median)
+      }
+      console.log(`[export] project fps = ${projectFps} (detected: ${detectedRates.map(r => r.toFixed(2)).join(', ') || 'none'})`)
+
+      // Collect any slides whose videos disagree among themselves OR with
+      // the project fps. We surface these to the user as a single combined
+      // warning so they can cancel before we burn 90 s on bad output.
+      const mixedReports: string[] = []
+      for (let si = 0; si < st.slides.length; si++) {
+        const slide = st.slides[si]!
+        if (slide.exportEnabled === false) continue
+        const slideVideos = videoItems.filter((it) => it.slideId === slide.id)
+        const slideRates = slideVideos
+          .map((it) => videoFpsByItemId.get(it.id))
+          .filter((r): r is number => typeof r === 'number')
+        if (slideRates.length === 0) continue
+        const allMatch = slideRates.every((r) => fpsRoughlyEqual(r, projectFps))
+        if (!allMatch) {
+          const rounded = slideRates.map(roundToCommonFps)
+          const unique = Array.from(new Set(rounded)).sort((a, b) => a - b)
+          mixedReports.push(`  • Slide ${si + 1}: ${unique.join(' / ')} fps`)
+        }
+      }
+
+      if (mixedReports.length > 0) {
+        const proceed = window.confirm(
+          `Mixed video frame rates detected.\n\n` +
+          mixedReports.join('\n') +
+          `\n\nExport will use ${projectFps} fps. Sources at other rates may appear ` +
+          `slowed down, sped up, or have repeated frames.\n\nContinue?`,
+        )
+        if (!proceed) {
+          setExportProgress('')
+          return
+        }
+      }
+
       const pngFiles: { name: string; buffer: Uint8Array }[] = []
 
       for (let i = 0; i < st.slides.length; i++) {
@@ -430,7 +492,7 @@ export default function App() {
             const result = await stageRef.current!.exportSlideVideo(
               slideId,
               outputPath,
-              30,
+              projectFps,
               (pct) => setExportProgress(`Encoding slide ${i + 1}: ${Math.round(pct)}%${encoderSuffix}`),
             )
             if (result) written.push(filename)
@@ -504,11 +566,26 @@ export default function App() {
           filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
         })
         if (!outputPath) return
+        // Detect fps for the videos on this slide so the single-slide
+        // export honours the same fps-from-source heuristic as Export all.
+        const slideVideoItems = st.items.filter((it) => it.slideId === slideId && it.type === 'video')
+        const detectedRates: number[] = []
+        for (const it of slideVideoItems) {
+          const el = videoElements.get(it.id)
+          if (!el) continue
+          const fps = await detectVideoFps(el)
+          if (fps && isFinite(fps)) detectedRates.push(fps)
+        }
+        let slideFps = 30
+        if (detectedRates.length > 0) {
+          const sorted = [...detectedRates].sort((a, b) => a - b)
+          slideFps = roundToCommonFps(sorted[Math.floor(sorted.length / 2)]!)
+        }
         setExportProgress(`Encoding slide ${idx + 1}: 0%`)
         const result = await stageRef.current.exportSlideVideo(
           slideId,
           outputPath,
-          30,
+          slideFps,
           (pct) => setExportProgress(`Encoding slide ${idx + 1}: ${Math.round(pct)}%`),
         )
         if (!result) alert('Video export failed. Check the dev console for details.')

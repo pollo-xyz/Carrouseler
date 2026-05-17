@@ -4438,10 +4438,10 @@ const EditorStage = forwardRef<
             })}
           </Layer>
 
-          {/* Grid + center guides overlay — drawn on top of media so they
-              behave as a visual reference tool rather than a backing texture.
-              listening={false} so they never absorb pointer events. */}
-          {(showGrid || showCenterGuides) && !previewMode && (
+          {/* Editor guide overlay — drawn on top of media so guides behave as
+              visual references rather than backing texture. Hidden in preview
+              and export; listening={false} so it never absorbs pointer events. */}
+          {(showGrid || showCenterGuides || (seamlessSlides && slides.length > 1)) && !previewMode && (
             <Layer ref={overlayLayerRef} listening={false}>
               {slides.map((slide, i) => {
                 const ap = artboardPositions[i]!
@@ -4464,6 +4464,26 @@ const EditorStage = forwardRef<
                       </>
                     )}
                   </Group>
+                )
+              })}
+              {seamlessSlides && slides.slice(1).map((slide, i) => {
+                const ap = artboardPositions[i + 1]!
+                // Values are divided by zoom so the marker reads as fixed
+                // screen pixels while the stage zoom changes.
+                const dash = [8 / zoom, 6 / zoom]
+                const overhang = 32 / zoom
+                const points = [ap.x, ap.y - overhang, ap.x, ap.y + H + overhang]
+                return (
+                  <Line
+                    key={`seam-guide-${slide.id}`}
+                    points={points}
+                    stroke="rgba(0,0,0,0.2)"
+                    strokeWidth={1.5}
+                    strokeScaleEnabled={false}
+                    dash={dash}
+                    lineCap="round"
+                    listening={false}
+                  />
                 )
               })}
             </Layer>
@@ -4674,8 +4694,17 @@ const EditorStage = forwardRef<
                   fillRadialGradientEndRadius={P2}
                   fillRadialGradientColorStops={stops}
                 />
-                {/* Slide-shaped holes */}
-                {slides.map((slide, i) => {
+                {/* Slide-shaped holes. In seamless mode, punch one continuous
+                    strip-shaped hole so adjacent destination-out edges don't
+                    anti-alias separately and leave a faint pasteboard seam. */}
+                {seamlessSlides ? (
+                  <Rect
+                    x={sx0} y={sy0}
+                    width={sx1 - sx0} height={H}
+                    fill="#000"
+                    globalCompositeOperation="destination-out"
+                  />
+                ) : slides.map((slide, i) => {
                   const ap = artboardPositions[i]!
                   return (
                     <Rect

@@ -9,6 +9,8 @@ import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
 import { detectVideoFps, fpsRoughlyEqual, roundToCommonFps } from './lib/detectVideoFps'
 import { videoElements } from './lib/videoRegistry'
+import { NAMED_PALETTES, defaultBgVibe, randomSeed, type BgVibe } from './lib/bgVibe'
+import { sampleMediaPalette } from './lib/sampleMediaPalette'
 // 256×256 sibling of the main app icon, exported specifically for the
 // in-app brand mark / future small UI uses. Avoids bundling the full
 // 2400×2400 5.7 MB original into the renderer build just to render at
@@ -22,6 +24,17 @@ const VPOST_FILTER = [{ name: 'Tiovivo Project', extensions: ['vpost'] }]
 // Windows, and Linux. Trim trailing dots/spaces too (Windows refuses them).
 function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').replace(/[. ]+$/g, '')
+}
+
+// Tighter sanitiser for filename *segments* (e.g. the slide name inserted
+// between prefix and number). Collapses whitespace to single underscores so
+// "Cover slide" → "Cover_slide" rather than producing filenames with spaces.
+function sanitizeFilenameSegment(name: string): string {
+  return name
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^[_.]+|[_.]+$/g, '')
 }
 
 /* ============================================================
@@ -87,6 +100,19 @@ const Icon = {
       <path d="M9 20h6" />
     </svg>
   ),
+  Link: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
+      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
+    </svg>
+  ),
+  LinkOff: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M10 13a5 5 0 0 0 7.07 0l1-1" />
+      <path d="M14 11a5 5 0 0 0-7.07 0l-1 1" />
+      <path d="M3 3l18 18" />
+    </svg>
+  ),
 }
 
 
@@ -96,6 +122,557 @@ function formatElapsed(ms: number): string {
   const m = Math.floor(total / 60)
   const s = total % 60
   return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
+}
+
+/** Drives the gradient-filled track on .slider-field range inputs. Mirrors the
+ *  helper in EditorStage.tsx; shared here so every panel slider can use the
+ *  same look without duplicating the math. */
+function sliderFill(value: number, min: number, max: number): React.CSSProperties {
+  const pct = ((value - min) / (max - min)) * 100
+  return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
+}
+
+/* ============================================================
+   BackgroundPanel — Solid/Vibe modes, palette, sliders, randomize
+   ============================================================ */
+
+type BackgroundPanelProps = {
+  slides: ReturnType<typeof useTiovivoStore.getState>['slides']
+  activeSlideId: string
+  /** Single-selection media item to sample colours from; null when the user
+   *  has nothing selected or has selected multiple / non-media items. */
+  selectedMediaItem: PlacedMedia | null
+  setAllSlidesBgVibe: (vibe: Omit<BgVibe, 'seed'> | null) => void
+  setSlideBgVibe: (slideId: string, vibe: BgVibe | null) => void
+  randomizeAllSlideVibes: () => void
+  randomizeSlideVibe: (slideId: string) => void
+}
+
+function BackgroundPanel({
+  slides,
+  activeSlideId,
+  selectedMediaItem,
+  setAllSlidesBgVibe,
+  setSlideBgVibe,
+  randomizeAllSlideVibes,
+  randomizeSlideVibe,
+}: BackgroundPanelProps) {
+  // "Mode" is derived from whether the active slide has a vibe — keeps the
+  // panel and the actual state in sync, no parallel UI state to drift.
+  const activeSlide = slides.find((s) => s.id === activeSlideId)
+  const mode: 'solid' | 'vibe' = activeSlide?.bgVibe ? 'vibe' : 'solid'
+
+  // Take the active slide's vibe as the source of truth for slider/palette
+  // values shown in the panel; falls back to a freshly-rolled default so
+  // turning the toggle on can start drawing immediately.
+  const vibe = activeSlide?.bgVibe
+  const config: Omit<BgVibe, 'seed'> = useMemo(
+    () =>
+      vibe
+        ? {
+            palette: vibe.palette,
+            pointCount: vibe.pointCount,
+            blur: vibe.blur,
+            grain: vibe.grain,
+            size: vibe.size ?? 1,
+            randomSize: vibe.randomSize ?? false,
+            randomLayer: vibe.randomLayer ?? false,
+          }
+        : (() => {
+            const d = defaultBgVibe()
+            return {
+              palette: d.palette,
+              pointCount: d.pointCount,
+              blur: d.blur,
+              grain: d.grain,
+              size: d.size ?? 1,
+              randomSize: d.randomSize ?? false,
+              randomLayer: d.randomLayer ?? false,
+            }
+          })(),
+    [vibe],
+  )
+
+  // Custom user palettes — persisted to localStorage so they outlive the
+  // current project. Each entry is { name, colors }, matching NAMED_PALETTES.
+  const [customPalettes, setCustomPalettes] = useState<{ name: string; colors: string[] }[]>(() => {
+    try {
+      const raw = localStorage.getItem('tiovivo.customPalettes')
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return []
+      return parsed.filter(
+        (p: unknown): p is { name: string; colors: string[] } =>
+          !!p &&
+          typeof (p as { name?: unknown }).name === 'string' &&
+          Array.isArray((p as { colors?: unknown }).colors) &&
+          (p as { colors: unknown[] }).colors.every((c) => typeof c === 'string'),
+      )
+    } catch {
+      return []
+    }
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('tiovivo.customPalettes', JSON.stringify(customPalettes))
+    } catch {
+      // localStorage may be unavailable / full — best-effort.
+    }
+  }, [customPalettes])
+
+  const savePaletteAsCustom = () => {
+    // Auto-name as CustomN — pick the lowest free integer so deleting and
+    // re-saving reuses gaps rather than creeping the counter forward forever.
+    // Double-click the preset row to rename afterwards.
+    setCustomPalettes((cur) => {
+      const taken = new Set(cur.map((p) => p.name))
+      let n = 1
+      while (taken.has(`Custom${n}`)) n++
+      return [...cur, { name: `Custom${n}`, colors: [...config.palette] }]
+    })
+  }
+
+  const deleteCustomPalette = (name: string) => {
+    if (!window.confirm(`Delete the "${name}" palette?`)) return
+    setCustomPalettes((cur) => cur.filter((p) => p.name !== name))
+  }
+
+  // Inline rename for a saved custom palette. Double-click its name to enter,
+  // Enter / blur commits, Escape cancels. Collisions get auto-suffixed so two
+  // entries never share a name (which would make them indistinguishable in
+  // the preset list).
+  const [renamingCustomName, setRenamingCustomName] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const commitRename = (oldName: string) => {
+    const trimmed = renameDraft.trim()
+    setRenamingCustomName(null)
+    if (!trimmed || trimmed === oldName) return
+    setCustomPalettes((cur) => {
+      // If another entry already uses this name, append " 2", " 3", … so the
+      // rename always succeeds rather than silently dropping the user's input.
+      let target = trimmed
+      if (cur.some((p) => p.name === target && p.name !== oldName)) {
+        let k = 2
+        while (cur.some((p) => p.name === `${trimmed} ${k}`)) k++
+        target = `${trimmed} ${k}`
+      }
+      return cur.map((p) => (p.name === oldName ? { ...p, name: target } : p))
+    })
+  }
+
+  // Each click on "Sample from Media" passes an incrementing seed so the
+  // helper takes a slightly different statistical view of the image. Reset
+  // when the selected media item changes so the first click on a new image
+  // is the canonical deterministic result, not a subsampled variation.
+  const sampleSeedRef = useRef(0)
+  useEffect(() => {
+    sampleSeedRef.current = 0
+  }, [selectedMediaItem?.id])
+
+  // Scope: 'all' propagates every panel edit to every slide (keeping each
+  // slide's existing seed so positions don't reshuffle on slider drag).
+  // 'selected' confines edits to the active slide only — switch into this
+  // mode when you want to make one slide diverge from the rest.
+  const [scope, setScope] = useState<'all' | 'selected'>('all')
+
+  const apply = useCallback(
+    (patch: Partial<Omit<BgVibe, 'seed'>>) => {
+      if (scope === 'all') {
+        setAllSlidesBgVibe({ ...config, ...patch })
+      } else {
+        // Preserve the active slide's existing seed when one is set, otherwise
+        // mint a fresh one (so first-touch in 'selected' mode immediately
+        // gives this slide a distinct composition).
+        const seed = activeSlide?.bgVibe?.seed ?? randomSeed()
+        setSlideBgVibe(activeSlideId, { ...config, ...patch, seed })
+      }
+    },
+    [config, scope, activeSlide, activeSlideId, setAllSlidesBgVibe, setSlideBgVibe],
+  )
+
+  const setPaletteColor = (i: number, color: string) => {
+    const next = config.palette.slice()
+    next[i] = color
+    apply({ palette: next })
+  }
+  const addPaletteColor = () => {
+    if (config.palette.length >= 8) return
+    const seed = config.palette[config.palette.length - 1] || '#888888'
+    apply({ palette: [...config.palette, seed] })
+  }
+  const removePaletteColor = (i: number) => {
+    if (config.palette.length <= 2) return
+    apply({ palette: config.palette.filter((_, idx) => idx !== i) })
+  }
+
+  // Solid/Vibe toggle and palette/slider edits all route through these so the
+  // scope-aware branching lives in one place.
+  const setMode = (next: 'solid' | 'vibe') => {
+    if (next === 'solid') {
+      if (scope === 'all') setAllSlidesBgVibe(null)
+      else setSlideBgVibe(activeSlideId, null)
+    } else {
+      if (scope === 'all') {
+        setAllSlidesBgVibe(config)
+      } else {
+        const seed = activeSlide?.bgVibe?.seed ?? randomSeed()
+        setSlideBgVibe(activeSlideId, { ...config, seed })
+      }
+    }
+  }
+
+  const hasMultipleSlides = slides.length > 1
+
+  return (
+    <>
+      {/* Mode selector — same segmented-pill structure as the header's
+          HD/1:1/4:5 preset row, but uses the quieter .btn--seg-active for
+          the in-panel context where the bright accent glow felt overbearing. */}
+      <div className="app__presets" style={{ marginBottom: 4 }}>
+        <button
+          type="button"
+          className={`btn ${mode === 'solid' ? 'btn--seg-active' : ''}`}
+          onClick={() => setMode('solid')}
+          style={{ flex: 1 }}
+        >
+          Solid
+        </button>
+        <button
+          type="button"
+          className={`btn ${mode === 'vibe' ? 'btn--seg-active' : ''}`}
+          onClick={() => setMode('vibe')}
+          style={{ flex: 1 }}
+        >
+          Vibe
+        </button>
+      </div>
+
+      {/* Scope — 'All slides' (default) or 'Selected slide'. Only meaningful
+          for Vibe (where multiple settings can diverge between slides) and
+          when there's more than one slide. */}
+      {hasMultipleSlides && mode === 'vibe' && (
+        <div className="app__presets" style={{ marginBottom: 6 }}>
+          <button
+            type="button"
+            className={`btn ${scope === 'all' ? 'btn--seg-active' : ''}`}
+            onClick={() => setScope('all')}
+            style={{ flex: 1 }}
+            title="Edits, randomize and Solid/Vibe affect every slide (default)"
+          >
+            All slides
+          </button>
+          <button
+            type="button"
+            className={`btn ${scope === 'selected' ? 'btn--seg-active' : ''}`}
+            onClick={() => setScope('selected')}
+            style={{ flex: 1 }}
+            title="Edits affect only the currently selected slide"
+          >
+            Selected slide
+          </button>
+        </div>
+      )}
+
+      {mode === 'vibe' && (
+        <>
+          {/* Palette swatches. palette[0] is the base wash — the "BG" badge
+              sits over its swatch (pointer-events: none so clicks fall through
+              to the colour input) and replaces the prior "First swatch is the
+              base" hint. */}
+          <div className="field">
+            <span>
+              Palette
+              <span className="hint hint--inline" style={{ marginLeft: 6 }}>
+                · Right-click to remove
+              </span>
+            </span>
+            <div className="palette-grid">
+              {config.palette.map((c, i) => {
+                if (i === 0) {
+                  return (
+                    <span key={i} className="palette-swatch-wrap">
+                      <input
+                        className="palette-swatch palette-swatch--base"
+                        type="color"
+                        value={c}
+                        onChange={(e) => setPaletteColor(0, e.target.value)}
+                        title="Base / background colour — always painted first"
+                        onContextMenu={(e) => { e.preventDefault(); removePaletteColor(0) }}
+                      />
+                      <span className="palette-swatch__badge" aria-hidden>BG</span>
+                    </span>
+                  )
+                }
+                return (
+                  <input
+                    key={i}
+                    className="palette-swatch"
+                    type="color"
+                    value={c}
+                    onChange={(e) => setPaletteColor(i, e.target.value)}
+                    title="Click to edit, right-click to remove"
+                    onContextMenu={(e) => { e.preventDefault(); removePaletteColor(i) }}
+                  />
+                )
+              })}
+              {config.palette.length < 8 && (
+                <button
+                  type="button"
+                  className="palette-swatch palette-swatch--add"
+                  onClick={addPaletteColor}
+                  title="Add a color"
+                >
+                  +
+                </button>
+              )}
+            </div>
+            {/* Palette actions — sit directly under the swatch grid so the
+                relationship between buttons and palette is obvious. Sample
+                button is disabled until a single media item is selected. */}
+            <div className="palette-actions">
+              <button
+                type="button"
+                className="btn btn--outline btn--sm"
+                onClick={savePaletteAsCustom}
+                title="Save the current palette so it's available in every project"
+              >
+                + Save preset
+              </button>
+              <button
+                type="button"
+                className="btn btn--outline btn--sm"
+                onClick={async () => {
+                  if (!selectedMediaItem) return
+                  // First click on this item = canonical (seed 0); each
+                  // subsequent click increments → seeded subsample for a
+                  // different palette take on the same image.
+                  const seed = sampleSeedRef.current
+                  sampleSeedRef.current = seed + 1
+                  try {
+                    const colors = await sampleMediaPalette(
+                      selectedMediaItem,
+                      Math.max(2, config.palette.length),
+                      seed,
+                    )
+                    if (colors.length) apply({ palette: colors })
+                  } catch (err) {
+                    console.error('[sample-from-media] failed:', err)
+                    alert(
+                      'Could not sample colours from the selected media. ' +
+                      'For videos make sure the frame is decoded; for images, check the file is still loaded.',
+                    )
+                  }
+                }}
+                disabled={!selectedMediaItem}
+                title={
+                  selectedMediaItem
+                    ? `Sample colours from "${selectedMediaItem.name}" — click again for variations`
+                    : 'Select a single image or video on the canvas to enable'
+                }
+              >
+                Sample from Media
+              </button>
+            </div>
+          </div>
+
+          {/* Preset palettes — quick-pick. Built-in palettes first, custom
+              (user-saved) entries pinned at the bottom under a small
+              divider. List is bounded and scrolls internally so a growing
+              custom collection doesn't push the sliders off-screen. */}
+          <div className="field">
+            <span>Presets</span>
+            <div className="preset-list">
+              {NAMED_PALETTES.map((preset) => (
+                <button
+                  key={preset.name}
+                  type="button"
+                  className="preset"
+                  onClick={() => apply({ palette: [...preset.colors] })}
+                  title={`Use the ${preset.name} palette`}
+                >
+                  <span className="preset__name">{preset.name}</span>
+                  <span className="preset__swatches">
+                    {preset.colors.map((c, j) => (
+                      <span key={j} style={{ background: c }} />
+                    ))}
+                  </span>
+                </button>
+              ))}
+              {customPalettes.length > 0 && (
+                <div className="preset-list__divider">Custom</div>
+              )}
+              {customPalettes.map((preset) => {
+                const isRenaming = renamingCustomName === preset.name
+                return (
+                  <div key={`custom-${preset.name}`} className="preset preset--custom">
+                    <button
+                      type="button"
+                      className="preset__pick"
+                      onClick={() => { if (!isRenaming) apply({ palette: [...preset.colors] }) }}
+                      title={isRenaming ? undefined : `Use the ${preset.name} palette · double-click name to rename`}
+                    >
+                      {isRenaming ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          className="preset__name preset__name-input"
+                          value={renameDraft}
+                          onChange={(e) => setRenameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); commitRename(preset.name) }
+                            else if (e.key === 'Escape') { e.preventDefault(); setRenamingCustomName(null) }
+                            e.stopPropagation()
+                          }}
+                          onBlur={() => commitRename(preset.name)}
+                          // Block parent button click while editing.
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onFocus={(e) => e.currentTarget.select()}
+                          spellCheck={false}
+                          maxLength={32}
+                        />
+                      ) : (
+                        <span
+                          className="preset__name"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation()
+                            setRenameDraft(preset.name)
+                            setRenamingCustomName(preset.name)
+                          }}
+                        >
+                          {preset.name}
+                        </span>
+                      )}
+                      <span className="preset__swatches">
+                        {preset.colors.map((c, j) => (
+                          <span key={j} style={{ background: c }} />
+                        ))}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="preset__delete"
+                      onClick={(e) => { e.stopPropagation(); deleteCustomPalette(preset.name) }}
+                      title="Delete this palette"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Sliders — same .slider-field pattern as the item Corrections popover. */}
+          <label className="slider-field">
+            <span className="slider-field__label">
+              Points<span className="slider-field__value">{config.pointCount}</span>
+            </span>
+            <input
+              type="range"
+              min={3}
+              max={8}
+              step={1}
+              value={config.pointCount}
+              style={sliderFill(config.pointCount, 3, 8)}
+              onChange={(e) => apply({ pointCount: Number(e.target.value) })}
+            />
+          </label>
+          {/* Size acts as the macro scale of every blob. Composes with the
+              Randomize size toggle below: that adds per-point jitter (0.55×
+              –1.45×) around whatever Size value is set, so Size=2 + Random
+              size gives points ~1.1×–2.9× of the original baseR. */}
+          <label className="slider-field">
+            <span className="slider-field__label">
+              Size<span className="slider-field__value">{Math.round((config.size ?? 1) * 100)}%</span>
+            </span>
+            <input
+              type="range"
+              min={0.4}
+              max={2.5}
+              step={0.05}
+              value={config.size ?? 1}
+              style={sliderFill(config.size ?? 1, 0.4, 2.5)}
+              onChange={(e) => apply({ size: Number(e.target.value) })}
+            />
+          </label>
+          <label className="slider-field">
+            <span className="slider-field__label">
+              Blur<span className="slider-field__value">{Math.round(config.blur)}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={1}
+              value={config.blur}
+              style={sliderFill(config.blur, 0, 200)}
+              onChange={(e) => apply({ blur: Number(e.target.value) })}
+            />
+          </label>
+          <label className="slider-field">
+            <span className="slider-field__label">
+              Grain<span className="slider-field__value">{Math.round(config.grain * 100)}%</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={config.grain}
+              style={sliderFill(config.grain, 0, 1)}
+              onChange={(e) => apply({ grain: Number(e.target.value) })}
+            />
+          </label>
+
+          {/* Per-seed variation toggles. Both are deterministic from the seed,
+              so rerolling (Randomize) varies the result; toggling them off
+              returns to a uniform / palette-order rendering. */}
+          <label className="check" title="Each blob gets a per-point seeded size multiplier (0.55×–1.45×) — some are smaller, some larger.">
+            <input
+              type="checkbox"
+              checked={!!config.randomSize}
+              onChange={(e) => apply({ randomSize: e.target.checked })}
+            />
+            Randomize size
+          </label>
+          <label className="check" title="Paint blobs in a seed-shuffled order instead of palette order — changes which colors land on top.">
+            <input
+              type="checkbox"
+              checked={!!config.randomLayer}
+              onChange={(e) => apply({ randomLayer: e.target.checked })}
+            />
+            Randomize layer
+          </label>
+
+          {/* Randomize buttons */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            <button
+              type="button"
+              className="btn btn--outline"
+              onClick={() => randomizeAllSlideVibes()}
+              title="Reroll point positions on every slide"
+              style={{ flex: 1, flexDirection: 'row', gap: 6, padding: '6px 10px', justifyContent: 'center' }}
+            >
+              <Icon.Reset style={{ width: 12, height: 12 }} />
+              Randomize all
+            </button>
+            <button
+              type="button"
+              className="btn btn--outline"
+              onClick={() => randomizeSlideVibe(activeSlideId)}
+              title="Reroll point positions on the active slide only"
+              style={{ flex: 1, flexDirection: 'row', gap: 6, padding: '6px 10px', justifyContent: 'center' }}
+            >
+              <Icon.Reset style={{ width: 12, height: 12 }} />
+              This slide
+            </button>
+          </div>
+        </>
+      )}
+
+    </>
+  )
 }
 
 export default function App() {
@@ -130,6 +707,17 @@ export default function App() {
   projectPathRef.current = projectPath
 
   const [exportPrefix, setExportPrefix] = useState<string>('')
+  // When on, export filenames become `${prefix}_${SLIDENAME}_${nn}` for any
+  // slide that has a custom name; slides without a custom name fall back to
+  // the plain `${prefix}_${nn}` form so the toggle never produces ugly
+  // `Slide_1` filler segments. Session-local, not persisted to .vpost.
+  const [includeSlideNameInFilename, setIncludeSlideNameInFilename] = useState(false)
+  // Aspect-ratio lock for the W × H inputs. When on, editing one dimension
+  // scales the other proportionally to the current aspect — same UX as
+  // Photoshop's "Constrain Proportions" chain. Locks at the moment of edit
+  // using the live dimensions, so toggling a preset and then editing
+  // honours the preset's aspect.
+  const [lockAspect, setLockAspect] = useState(false)
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
   const [fontList, setFontList] = useState<string[]>(FALLBACK_FONTS)
@@ -138,6 +726,7 @@ export default function App() {
   // and the in-app MenuBar isn't rendered there.
   const [recents, setRecents] = useState<{ path: string; basename: string }[]>([])
   const refreshRecents = useCallback(async () => {
+    if (/Mac/.test(navigator.userAgent)) return
     try {
       const paths = await window.electronAPI?.getRecents?.()
       if (paths) {
@@ -154,8 +743,6 @@ export default function App() {
 
   const dimensions = useTiovivoStore((s) => s.dimensions)
   const presetId = useTiovivoStore((s) => s.presetId)
-  const customWidth = useTiovivoStore((s) => s.customWidth)
-  const customHeight = useTiovivoStore((s) => s.customHeight)
   const setPreset = useTiovivoStore((s) => s.setPreset)
   const setCustomDimensions = useTiovivoStore((s) => s.setCustomDimensions)
 
@@ -189,15 +776,10 @@ export default function App() {
   const setSnapCenter = useTiovivoStore((s) => s.setSnapCenter)
   const setSnapItems = useTiovivoStore((s) => s.setSnapItems)
   const setSnapMargins = useTiovivoStore((s) => s.setSnapMargins)
-  const setAllSlidesBgColor = useTiovivoStore((s) => s.setAllSlidesBgColor)
-
-  // Global background color — shared across slides. Reflects the shared color
-  // when all slides match, else shows the first slide's color.
-  const allBgSameColor = (() => {
-    if (slides.length === 0) return '#ffffff'
-    const first = slides[0]!.bgColor || '#ffffff'
-    return slides.every((s) => (s.bgColor || '#ffffff') === first) ? first : ''
-  })()
+  const setAllSlidesBgVibe = useTiovivoStore((s) => s.setAllSlidesBgVibe)
+  const setSlideBgVibe = useTiovivoStore((s) => s.setSlideBgVibe)
+  const randomizeAllSlideVibes = useTiovivoStore((s) => s.randomizeAllSlideVibes)
+  const randomizeSlideVibe = useTiovivoStore((s) => s.randomizeSlideVibe)
 
   const layoutRef = useRef<HTMLDivElement>(null)
   const addMediaInputRef = useRef<HTMLInputElement>(null)
@@ -510,12 +1092,18 @@ export default function App() {
         if (slide.exportEnabled === false) continue
         const slideId = slide.id
         const n = String(i + 1).padStart(2, '0')
+        // Optional slide-name segment between prefix and number. Skipped
+        // silently when the toggle is off or the slide has no custom name
+        // → no `Slide_1` filler segments, no filename collisions.
+        const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
+          ? `_${sanitizeFilenameSegment(slide.name.trim())}`
+          : ''
         const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
 
         if (hasVideo) {
           // Video slide → export as MP4
           setExportProgress(`Encoding slide ${i + 1} video${encoderSuffix}...`)
-          const filename = `${prefix}_${n}.mp4`
+          const filename = `${prefix}${slideNameSeg}_${n}.mp4`
           const outputPath = `${dir}/${filename}`
           try {
             const result = await stageRef.current!.exportSlideVideo(
@@ -539,7 +1127,7 @@ export default function App() {
           )
           const blob = await stageRef.current!.exportSlidePng(slideId)
           if (blob) {
-            const filename = `${prefix}_${n}.png`
+            const filename = `${prefix}${slideNameSeg}_${n}.png`
             pngFiles.push({
               name: filename,
               buffer: new Uint8Array(await blob.arrayBuffer()),
@@ -570,7 +1158,7 @@ export default function App() {
       setExporting(false)
       setExportProgress('')
     }
-  }, [exportPrefix])
+  }, [exportPrefix, includeSlideNameInFilename])
 
   /* ---- Export a single slide on demand (per-slide export button) ---- */
   const exportSingleSlide = useCallback(async (slideId: string) => {
@@ -582,15 +1170,19 @@ export default function App() {
     }
     const idx = st.slides.findIndex((s) => s.id === slideId)
     if (idx < 0) return
+    const slide = st.slides[idx]!
     const prefix = sanitizeFilename(exportPrefix.trim()) || 'tiovivo'
     const n = String(idx + 1).padStart(2, '0')
+    const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
+      ? `_${sanitizeFilenameSegment(slide.name.trim())}`
+      : ''
     const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
     setExporting(true)
     setExportProgress(`Exporting slide ${idx + 1}...`)
     st.setSelectedIds([])
     try {
       if (hasVideo) {
-        const defaultName = `${prefix}_${n}.mp4`
+        const defaultName = `${prefix}${slideNameSeg}_${n}.mp4`
         const outputPath = await window.electronAPI.saveFile({
           defaultName,
           filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
@@ -629,7 +1221,7 @@ export default function App() {
           alert('Export failed.')
           return
         }
-        const defaultName = `${prefix}_${n}.png`
+        const defaultName = `${prefix}${slideNameSeg}_${n}.png`
         const buffer = new Uint8Array(await blob.arrayBuffer())
         const path = await window.electronAPI.saveFile({
           defaultName,
@@ -645,7 +1237,7 @@ export default function App() {
       setExporting(false)
       setExportProgress('')
     }
-  }, [exportPrefix])
+  }, [exportPrefix, includeSlideNameInFilename])
 
   /* ---- Save / Open project ---- */
   // Returns true when the project was actually written to disk, false if the
@@ -813,6 +1405,10 @@ export default function App() {
     const offSaveAs = api.onSaveProjectAs(() => handleSave(true))
     const offOpenFile = api.onOpenProjectFile(({ path, buffer }) => {
       loadFromBuffer(buffer, path)
+      // Main has already pushed this path onto the recents list; sync the
+      // in-app MenuBar so the next File → Open Recent reflects it (no-op on
+      // mac, where refreshRecents short-circuits).
+      void refreshRecents()
     })
     // Save-on-quit orchestration. Main asks if we're dirty (with a 1.5s
     // timeout on its side, so respond synchronously from the store snapshot).
@@ -834,7 +1430,7 @@ export default function App() {
       offQueryDirty?.()
       offSaveAndClose?.()
     }
-  }, [handleNew, handleOpen, handleSave, loadFromBuffer])
+  }, [handleNew, handleOpen, handleSave, loadFromBuffer, refreshRecents])
 
   useEffect(() => {
     // Cross-platform basename split: on Windows, paths use backslashes — splitting
@@ -856,6 +1452,16 @@ export default function App() {
     if (selectedIds.length !== 1) return null
     const it = items.find((x) => x.id === selectedIds[0])
     return it && it.type === 'text' ? it : null
+  }, [selectedIds, items])
+
+  /** Single media (image / video / gif) selection — enables the "Sample from
+   *  Media" button in the Background panel. Null when nothing or multiple
+   *  things are selected. */
+  const selectedMediaItem: PlacedMedia | null = useMemo(() => {
+    if (selectedIds.length !== 1) return null
+    const it = items.find((x) => x.id === selectedIds[0])
+    if (!it) return null
+    return (it.type === 'image' || it.type === 'video' || it.type === 'gif') ? it : null
   }, [selectedIds, items])
 
   const refreshFonts = useCallback(async () => {
@@ -911,10 +1517,10 @@ export default function App() {
         <div className="app__presets">
           {(
             [
-              ['hd', 'HD 16:9'],
-              ['1:1', '1 : 1'],
-              ['4:5', '4 : 5'],
-              ['3:4', '3 : 4'],
+              ['hd', '16:9'],
+              ['1:1', '1:1'],
+              ['4:5', '4:5'],
+              ['3:4', '3:4'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -922,11 +1528,9 @@ export default function App() {
               type="button"
               className={`btn ${presetId === id ? 'btn--accent' : ''}`}
               onClick={() => setPreset(id)}
+              title={`${PRESETS[id].width} × ${PRESETS[id].height}`}
             >
               {label}
-              <span className="btn__hint">
-                {PRESETS[id].width}x{PRESETS[id].height}
-              </span>
             </button>
           ))}
           <button
@@ -943,38 +1547,101 @@ export default function App() {
             <NumberField
               min={64}
               max={8192}
-              value={customWidth}
-              onCommit={(n) => setCustomDimensions(n, customHeight)}
+              // Bind to the live dimensions, not the cached customWidth — that
+              // field doesn't update when the user clicks a preset, so the
+              // input would stay stale. setCustomDimensions still flips the
+              // preset to "custom" as a side effect of typing here.
+              value={dimensions.width}
+              scrubStep={1}
+              onCommit={(w) => {
+                if (lockAspect) {
+                  const aspect = dimensions.width / Math.max(1, dimensions.height)
+                  const h = Math.max(64, Math.round(w / aspect))
+                  setCustomDimensions(w, h)
+                } else {
+                  setCustomDimensions(w, dimensions.height)
+                }
+              }}
             />
           </label>
-          <span>x</span>
+          {/* Aspect-lock toggle between W and H. When locked, editing one
+              dimension scales the other from the current aspect ratio. */}
+          <button
+            type="button"
+            className={`app__aspect-lock ${lockAspect ? 'app__aspect-lock--locked' : ''}`}
+            onClick={() => setLockAspect((v) => !v)}
+            title={lockAspect ? 'Aspect ratio locked — click to unlock' : 'Lock aspect ratio'}
+            aria-pressed={lockAspect}
+          >
+            {lockAspect
+              ? <Icon.Link style={{ width: 12, height: 12 }} />
+              : <Icon.LinkOff style={{ width: 12, height: 12 }} />}
+          </button>
           <label>
             H
             <NumberField
               min={64}
               max={8192}
-              value={customHeight}
-              onCommit={(n) => setCustomDimensions(customWidth, n)}
+              value={dimensions.height}
+              scrubStep={1}
+              onCommit={(h) => {
+                if (lockAspect) {
+                  const aspect = dimensions.width / Math.max(1, dimensions.height)
+                  const w = Math.max(64, Math.round(h * aspect))
+                  setCustomDimensions(w, h)
+                } else {
+                  setCustomDimensions(dimensions.width, h)
+                }
+              }}
             />
           </label>
         </div>
         <div className="app__spacer" />
-        <button
-          type="button"
-          className="btn"
-          onClick={handleOpen}
-          title="Open project (⌘O)"
-        >
-          Open
-        </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={() => handleSave(false)}
-          title="Save project (⌘S)"
-        >
-          Save
-        </button>
+        {/* Workspace pasteboard colour — lives in the header because it's a
+            global view setting, not per-slide. Same pill shape as the export
+            name input so it sits cleanly in the row. The reset button is
+            always rendered (hidden via visibility, not display) so the pill
+            keeps a stable width — changing the colour doesn't shift the
+            Name input next to it. */}
+        {(() => {
+          const isWorkspaceDefault =
+            !workspaceBgColor || workspaceBgColor.toLowerCase() === '#0a0a0e'
+          return (
+            <label
+              className="app__header-pill"
+              title="Workspace background — pasteboard colour around the slides"
+            >
+              <input
+                className="color-swatch"
+                type="color"
+                value={workspaceBgColor || '#0a0a0e'}
+                onChange={(e) => setWorkspaceBgColor(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={(e) => { e.preventDefault(); setWorkspaceBgColor('#0a0a0e') }}
+                title={isWorkspaceDefault ? 'Workspace already at default' : 'Reset workspace colour'}
+                style={{
+                  padding: '2px 6px',
+                  flexDirection: 'row',
+                  gap: 4,
+                  // Stay visible at all times so the pill width never shifts.
+                  // Idle (= already default) reads as a quiet placeholder
+                  // barely above the pill background; once a custom colour
+                  // is picked it brightens to the normal ghost-btn tone so
+                  // the affordance becomes obvious.
+                  color: isWorkspaceDefault
+                    ? 'rgba(255, 255, 255, 0.18)'
+                    : 'rgba(255, 255, 255, 0.55)',
+                  transition: 'color var(--dur-fast) var(--ease)',
+                }}
+              >
+                <Icon.Reset style={{ width: 10, height: 10 }} />
+              </button>
+            </label>
+          )
+        })()}
         <label
           className="app__export-name"
           title="Filename prefix used for exported PNGs/MP4s. Defaults to the project name."
@@ -1006,7 +1673,27 @@ export default function App() {
               fontFamily: 'inherit',
             }}
           />
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)' }}>_NN</span>
+          {/* Filename-format hint doubles as the Slide-names toggle. Always
+              renders with a visible border + chevron so it reads as a button
+              even when inactive; the active state takes the same blue tint
+              as our segmented toggles for consistency. */}
+          <button
+            type="button"
+            className={`app__filename-toggle ${includeSlideNameInFilename ? 'app__filename-toggle--on' : ''}`}
+            onClick={(e) => {
+              e.preventDefault()
+              setIncludeSlideNameInFilename((v) => !v)
+            }}
+            // Stop the parent <label> from re-focusing the input on click.
+            onMouseDown={(e) => e.preventDefault()}
+            title={
+              includeSlideNameInFilename
+                ? 'Slide names included in filename — click to remove'
+                : 'Click to include each slide\'s name in its export filename'
+            }
+          >
+            {includeSlideNameInFilename ? '_SLIDE_NN' : '_NN'}
+          </button>
         </label>
         <button
           type="button"
@@ -1073,56 +1760,15 @@ export default function App() {
           <details className="collapsible" open>
             <summary><h2><Icon.Sliders />Background</h2></summary>
             <div className="collapsible__body">
-              <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <span>All slides</span>
-                <input
-                  type="color"
-                  value={allBgSameColor || '#ffffff'}
-                  onChange={(e) => setAllSlidesBgColor(e.target.value)}
-                  title="Apply this background color to every slide"
-                  style={{ width: 32, height: 24, padding: 0, border: '1.5px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
-                />
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
-                  {allBgSameColor ? allBgSameColor : 'mixed'}
-                </span>
-              </label>
-              <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <span>Workspace</span>
-                <input
-                  type="color"
-                  value={workspaceBgColor || '#0a0a0e'}
-                  onChange={(e) => setWorkspaceBgColor(e.target.value)}
-                  title="Pasteboard color around the slides"
-                  style={{ width: 32, height: 24, padding: 0, border: '1.5px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
-                />
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
-                  {workspaceBgColor || '#0a0a0e'}
-                </span>
-                {workspaceBgColor && workspaceBgColor.toLowerCase() !== '#0a0a0e' && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.preventDefault(); setWorkspaceBgColor('#0a0a0e') }}
-                    title="Reset to default"
-                    style={{
-                      marginLeft: 'auto',
-                      background: 'transparent',
-                      border: '1px solid rgba(255,255,255,0.15)',
-                      borderRadius: 4,
-                      color: 'rgba(255,255,255,0.55)',
-                      cursor: 'pointer',
-                      padding: '2px 6px',
-                      fontSize: 10,
-                      lineHeight: 1.4,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    <Icon.Reset style={{ width: 10, height: 10 }} />
-                    Reset
-                  </button>
-                )}
-              </label>
+              <BackgroundPanel
+                slides={slides}
+                activeSlideId={activeSlideId}
+                selectedMediaItem={selectedMediaItem}
+                setAllSlidesBgVibe={setAllSlidesBgVibe}
+                setSlideBgVibe={setSlideBgVibe}
+                randomizeAllSlideVibes={randomizeAllSlideVibes}
+                randomizeSlideVibe={randomizeSlideVibe}
+              />
             </div>
           </details>
 
@@ -1152,22 +1798,19 @@ export default function App() {
                   style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
                 />
               </label>
-              <label className="field" title="Visibility of the grid overlay on top of media">
-                <span>Grid opacity</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={gridOpacity}
-                    onChange={(e) => setGridOpacity(Number(e.target.value))}
-                    style={{ flex: 1, minWidth: 0 }}
-                  />
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--mono)', minWidth: 32, textAlign: 'right' }}>
-                    {Math.round(gridOpacity * 100)}%
-                  </span>
-                </div>
+              <label className="slider-field" title="Visibility of the grid overlay on top of media">
+                <span className="slider-field__label">
+                  Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={gridOpacity}
+                  style={sliderFill(gridOpacity, 0, 1)}
+                  onChange={(e) => setGridOpacity(Number(e.target.value))}
+                />
               </label>
               <label className="check">
                 <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
@@ -1201,28 +1844,18 @@ export default function App() {
               <details className="collapsible" open>
                 <summary><h2><Icon.Text />Text</h2></summary>
                 <div className="collapsible__body">
-                  <label className="field" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                  <label className="field">
                     <span>Content</span>
                     <textarea
                       value={t.text || ''}
                       onChange={(e) => patch({ text: e.target.value })}
                       spellCheck={false}
                       rows={3}
-                      style={{
-                        width: '100%',
-                        padding: 6,
-                        borderRadius: 4,
-                        background: 'rgba(255,255,255,0.04)',
-                        color: '#fff',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        fontFamily: 'inherit',
-                        fontSize: 12,
-                        resize: 'vertical',
-                      }}
+                      style={{ resize: 'vertical', fontFamily: 'inherit' }}
                     />
                   </label>
 
-                  <label className="field" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+                  <label className="field">
                     <span>Font</span>
                     <input
                       type="text"
@@ -1232,15 +1865,6 @@ export default function App() {
                       onFocus={() => void refreshFonts()}
                       spellCheck={false}
                       placeholder="Inter"
-                      style={{
-                        width: '100%',
-                        padding: '5px 7px',
-                        borderRadius: 4,
-                        background: 'rgba(255,255,255,0.04)',
-                        color: '#fff',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        fontSize: 12,
-                      }}
                     />
                     <datalist id="app-system-fonts">
                       {fontList.map((f) => <option key={f} value={f} />)}
@@ -1334,7 +1958,7 @@ export default function App() {
                     <button
                       type="button"
                       className={`btn btn--sm ${t.bold ? 'btn--accent' : ''}`}
-                      style={{ fontWeight: 700, padding: '4px 10px' }}
+                      style={{ fontWeight: 700 }}
                       onClick={() => patch({ bold: !t.bold })}
                       title="Bold"
                     >
@@ -1343,7 +1967,7 @@ export default function App() {
                     <button
                       type="button"
                       className={`btn btn--sm ${t.italic ? 'btn--accent' : ''}`}
-                      style={{ fontStyle: 'italic', padding: '4px 10px' }}
+                      style={{ fontStyle: 'italic' }}
                       onClick={() => patch({ italic: !t.italic })}
                       title="Italic"
                     >
@@ -1355,7 +1979,6 @@ export default function App() {
                         key={a}
                         type="button"
                         className={`btn btn--sm ${align === a ? 'btn--accent' : ''}`}
-                        style={{ padding: '4px 8px', fontSize: 11 }}
                         onClick={() => patch({ textAlign: a })}
                         title={`Align ${a}`}
                       >
@@ -1367,12 +1990,12 @@ export default function App() {
                   <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                     <span>Color</span>
                     <input
+                      className="color-swatch"
                       type="color"
                       value={t.textColor || '#ffffff'}
                       onChange={(e) => patch({ textColor: e.target.value })}
-                      style={{ width: 32, height: 24, padding: 0, border: '1.5px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'transparent', cursor: 'pointer' }}
                     />
-                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--mono)' }}>
+                    <span className="field__value">
                       {t.textColor || '#ffffff'}
                     </span>
                   </label>

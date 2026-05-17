@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import type { PresetId, Size } from '../lib/presets'
 import { PRESETS, clampSize } from '../lib/presets'
 import { generateThumbnail } from '../lib/thumbnail'
+import type { BgVibe } from '../lib/bgVibe'
+import { randomSeed } from '../lib/bgVibe'
 
 export type MediaType = 'image' | 'video' | 'gif' | 'text'
 
@@ -81,6 +83,14 @@ export interface Slide {
   id: string
   bgColor: string
   exportEnabled: boolean
+  /** Optional generative background. When set, takes priority over bgColor;
+   *  bgColor is retained as a fallback so toggling back to solid mode keeps
+   *  the user's previous color. */
+  bgVibe?: BgVibe
+  /** Optional user-supplied name. Empty/missing → UI falls back to
+   *  "Slide {index+1}". Position-based numbering still drives export
+   *  filenames so reordering doesn't rename files on disk. */
+  name?: string
 }
 
 function newId() {
@@ -181,8 +191,20 @@ interface TiovivoState {
   setSnapItems: (v: boolean) => void
   setSnapMargins: (v: boolean) => void
   setSlideBgColor: (slideId: string, color: string) => void
+  /** Set the user-supplied name for a slide. Empty / whitespace clears it. */
+  setSlideName: (slideId: string, name: string) => void
   setAllSlidesBgColor: (color: string) => void
   setWorkspaceBgColor: (color: string) => void
+  /** Replace one slide's vibe (or clear it with null). */
+  setSlideBgVibe: (slideId: string, vibe: BgVibe | null) => void
+  /** Apply the same palette / count / blur / grain to every slide while
+   *  assigning each a fresh seed — so all slides share the look but show
+   *  distinct compositions. Passing null clears every slide's vibe. */
+  setAllSlidesBgVibe: (vibe: Omit<BgVibe, 'seed'> | null) => void
+  /** Reroll the seed for one slide. */
+  randomizeSlideVibe: (slideId: string) => void
+  /** Reroll the seed for every slide that has a vibe. */
+  randomizeAllSlideVibes: () => void
   toggleSlideExport: (slideId: string) => void
   setSlideExport: (slideId: string, enabled: boolean) => void
   fitItemToSlide: (id: string) => void
@@ -313,7 +335,8 @@ function debouncedThumbRefresh(slideId: string, delay = 300) {
   thumbTimers[slideId] = setTimeout(() => {
     const st = useTiovivoStore.getState()
     const slideItems = st.items.filter((i) => i.slideId === slideId)
-    generateThumbnail(slideItems, st.dimensions).then((url) => {
+    const slide = st.slides.find((s) => s.id === slideId)
+    generateThumbnail(slideItems, st.dimensions, undefined, undefined, slide).then((url) => {
       useTiovivoStore.setState((prev) => ({
         thumbnails: { ...prev.thumbnails, [slideId]: url },
       }))
@@ -416,9 +439,16 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     const sid = newId()
     const activeIdx = slides.findIndex((s) => s.id === activeSlideId)
     const idx = afterIndex !== undefined ? afterIndex + 1 : activeIdx + 1
-    const inheritedColor = slides[activeIdx]?.bgColor ?? '#ffffff'
+    const source = slides[activeIdx]
+    const inheritedColor = source?.bgColor ?? '#ffffff'
     const next = [...slides]
-    next.splice(Math.min(idx, next.length), 0, { id: sid, bgColor: inheritedColor, exportEnabled: true })
+    const newSlide: Slide = { id: sid, bgColor: inheritedColor, exportEnabled: true }
+    // Inherit the vibe config — but with a fresh seed so the new slide gets
+    // its own composition rather than visually duplicating the source.
+    if (source?.bgVibe) {
+      newSlide.bgVibe = { ...source.bgVibe, seed: randomSeed() }
+    }
+    next.splice(Math.min(idx, next.length), 0, newSlide)
     set({ slides: next, activeSlideId: sid, selectedIds: [] })
   },
 
@@ -433,6 +463,11 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       id: newSid,
       bgColor: src.bgColor,
       exportEnabled: src.exportEnabled,
+    }
+    // Duplicates should look identical to the source, so the vibe is copied
+    // verbatim (seed included). Use randomize to vary post-duplicate.
+    if (src.bgVibe) {
+      cloneSlide.bgVibe = { ...src.bgVibe }
     }
     const newSlides = [...slides]
     newSlides.splice(idx + 1, 0, cloneSlide)
@@ -736,6 +771,23 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
         s.id === slideId ? { ...s, bgColor: color } : s,
       ),
     })
+    debouncedThumbRefresh(slideId)
+  },
+
+  setSlideName: (slideId, name) => {
+    pushHistory('slideName:' + slideId)
+    const trimmed = name.trim()
+    set({
+      slides: get().slides.map((s) => {
+        if (s.id !== slideId) return s
+        if (trimmed) return { ...s, name: trimmed }
+        // Empty → drop the field entirely so the JSON stays clean and the
+        // UI falls back to the position-based "Slide N" default.
+        const { name: _drop, ...rest } = s
+        void _drop
+        return rest as Slide
+      }),
+    })
   },
 
   setAllSlidesBgColor: (color) => {
@@ -749,6 +801,72 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   setWorkspaceBgColor: (color) => {
     pushHistory('workspaceBg')
     set({ workspaceBgColor: color })
+  },
+
+  setSlideBgVibe: (slideId, vibe) => {
+    pushHistory('bgVibe:' + slideId)
+    set({
+      slides: get().slides.map((s) => {
+        if (s.id !== slideId) return s
+        if (vibe === null) {
+          const { bgVibe: _v, ...rest } = s
+          void _v
+          return rest as Slide
+        }
+        return { ...s, bgVibe: vibe }
+      }),
+    })
+    debouncedThumbRefresh(slideId)
+  },
+
+  setAllSlidesBgVibe: (vibe) => {
+    pushHistory('bgVibeAll')
+    if (vibe === null) {
+      set({
+        slides: get().slides.map((s) => {
+          const { bgVibe: _v, ...rest } = s
+          void _v
+          return rest as Slide
+        }),
+      })
+    } else {
+      set({
+        slides: get().slides.map((s) => ({
+          ...s,
+          // Preserve each slide's existing seed when one is set — this lets the
+          // panel sync slider values across slides without rerolling positions
+          // on every tick. Slides without a prior vibe get a fresh seed so
+          // each new entrant starts with a distinct composition.
+          bgVibe: { ...vibe, seed: s.bgVibe?.seed ?? randomSeed() },
+        })),
+      })
+    }
+    get().refreshAllThumbnails()
+  },
+
+  randomizeSlideVibe: (slideId) => {
+    const slide = get().slides.find((s) => s.id === slideId)
+    if (!slide?.bgVibe) return
+    pushHistory('bgVibeRandom:' + slideId)
+    set({
+      slides: get().slides.map((s) =>
+        s.id === slideId && s.bgVibe
+          ? { ...s, bgVibe: { ...s.bgVibe, seed: randomSeed() } }
+          : s,
+      ),
+    })
+    debouncedThumbRefresh(slideId)
+  },
+
+  randomizeAllSlideVibes: () => {
+    if (!get().slides.some((s) => s.bgVibe)) return
+    pushHistory('bgVibeRandomAll')
+    set({
+      slides: get().slides.map((s) =>
+        s.bgVibe ? { ...s, bgVibe: { ...s.bgVibe, seed: randomSeed() } } : s,
+      ),
+    })
+    get().refreshAllThumbnails()
   },
 
   toggleSlideExport: (slideId) => {

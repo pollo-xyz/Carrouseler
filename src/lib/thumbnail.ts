@@ -1,6 +1,7 @@
 import Konva from 'konva'
 import type { PlacedMedia, Slide } from '../store/useTiovivoStore'
 import type { Size } from './presets'
+import { renderBgVibe } from './bgVibe'
 
 /**
  * Generate a small thumbnail data-URL for a slide by rendering its items
@@ -13,6 +14,7 @@ export async function generateThumbnail(
   dimensions: Size,
   maxThumbWidth = 120,
   maxThumbHeight = 150,
+  slide?: Pick<Slide, 'bgColor' | 'bgVibe'>,
 ): Promise<string> {
   if (dimensions.width <= 0 || dimensions.height <= 0) return ''
 
@@ -40,16 +42,33 @@ export async function generateThumbnail(
   const layer = new Konva.Layer()
   stage.add(layer)
 
-  // Background
-  layer.add(
-    new Konva.Rect({
-      x: 0,
-      y: 0,
-      width: thumbW,
-      height: thumbH,
-      fill: '#1a1a1f',
-    }),
-  )
+  // Background — vibe canvas when present, otherwise the solid color.
+  // We render the vibe at thumbnail resolution directly; the canvas is tiny
+  // (<200 px on the short side) so cost is negligible and the result matches
+  // what the slide strip will display.
+  if (slide?.bgVibe) {
+    const bgCanvas = document.createElement('canvas')
+    renderBgVibe(bgCanvas, slide.bgVibe, thumbW, thumbH)
+    layer.add(
+      new Konva.Image({
+        x: 0,
+        y: 0,
+        image: bgCanvas,
+        width: thumbW,
+        height: thumbH,
+      }),
+    )
+  } else {
+    layer.add(
+      new Konva.Rect({
+        x: 0,
+        y: 0,
+        width: thumbW,
+        height: thumbH,
+        fill: slide?.bgColor || '#1a1a1f',
+      }),
+    )
+  }
 
   // Load and draw each media item
   const loadPromises = items.map(
@@ -214,8 +233,11 @@ export async function generateProjectPreview(
   const thumbs = await Promise.all(
     slides.map(async (s) => {
       const slideItems = items.filter((it) => it.slideId === s.id)
-      const dataUrl = await generateThumbnail(slideItems, dimensions, slideW, slideH * 2)
-      return { dataUrl, bgColor: s.bgColor }
+      const dataUrl = await generateThumbnail(slideItems, dimensions, slideW, slideH * 2, s)
+      // When the slide has a vibe, the thumbnail already includes it pixel-
+      // perfect, so we don't want the composite step to paint a flat color
+      // underneath (which would leak through transparent edges and look wrong).
+      return { dataUrl, bgColor: s.bgVibe ? null : s.bgColor }
     }),
   )
 
@@ -236,7 +258,7 @@ export async function generateProjectPreview(
   // so transparent thumbnail edges blend correctly.
   const imgs = await Promise.all(
     thumbs.map(({ dataUrl, bgColor }) =>
-      new Promise<{ img: HTMLImageElement | null; bg: string }>((resolve) => {
+      new Promise<{ img: HTMLImageElement | null; bg: string | null }>((resolve) => {
         if (!dataUrl) { resolve({ img: null, bg: bgColor }); return }
         const img = new Image()
         img.onload = () => resolve({ img, bg: bgColor })
@@ -250,8 +272,11 @@ export async function generateProjectPreview(
     const { img, bg } = imgs[i]!
     const x = PAD + i * (slideW + GAP)
     const y = PAD
-    ctx.fillStyle = bg || '#ffffff'
-    ctx.fillRect(x, y, slideW, slideH)
+    // Skip the underlay when the thumbnail already baked in a vibe (bg is null).
+    if (bg !== null) {
+      ctx.fillStyle = bg || '#ffffff'
+      ctx.fillRect(x, y, slideW, slideH)
+    }
     if (img) ctx.drawImage(img, x, y, slideW, slideH)
   }
 

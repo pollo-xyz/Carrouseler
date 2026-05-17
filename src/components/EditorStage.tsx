@@ -10,9 +10,10 @@ import {
 import { Arc, Circle, Group, Layer, Line, Rect, Stage, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { Image as KonvaImage, Text as KonvaText } from 'react-konva'
-import { useTiovivoStore, type PlacedMedia } from '../store/useTiovivoStore'
+import { useTiovivoStore, type PlacedMedia, type Slide } from '../store/useTiovivoStore'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
+import { bgVibeHash, renderBgVibe, type BgVibe } from '../lib/bgVibe'
 import LayerStack from './LayerStack'
 
 /* ------------------------------------------------------------------ */
@@ -75,6 +76,133 @@ function useHtmlMedia(
     return () => { setNode(null) }
   }, [src, type, itemId])
   return node
+}
+
+/* ------------------------------------------------------------------ */
+/*  SlideBackground — flat color or generative "vibe"                 */
+/* ------------------------------------------------------------------ */
+
+/* Module-level cache, keyed by slide id. We mutate the same canvas in place
+ * when the vibe hash changes — keeps the HTMLCanvasElement reference stable
+ * across re-renders so Konva's image binding doesn't churn, while still
+ * letting us recompute pixels when params change. Konva is told to redraw
+ * via an effect keyed on the hash. */
+const slideBgCanvases = new Map<string, HTMLCanvasElement>()
+
+function SlideBackground({
+  slide,
+  x,
+  y,
+  width,
+  height,
+}: {
+  slide: Slide
+  x: number
+  y: number
+  width: number
+  height: number
+}) {
+  const vibe = slide.bgVibe
+  const imageRef = useRef<Konva.Image>(null)
+  const lastHashRef = useRef<string>('')
+  // Pending params + rAF id for the throttled-render path. While the user
+  // drags a slider or scrubs in the colour picker, onChange can fire dozens
+  // of times per frame — collapsing them into a single rAF re-render means
+  // we do the expensive renderBgVibe pass once per frame at most.
+  const pendingRef = useRef<{ vibe: BgVibe; w: number; h: number } | null>(null)
+  const rafIdRef = useRef<number | null>(null)
+  // First mount uses a synchronous render so Konva sees a non-empty canvas
+  // on its first paint (avoids a one-frame flash of nothing). Subsequent
+  // updates are rAF-throttled.
+  const firstRef = useRef(true)
+
+  const w = Math.max(1, Math.round(width))
+  const h = Math.max(1, Math.round(height))
+  const hash = vibe ? bgVibeHash(vibe, w, h) : ''
+
+  if (vibe) {
+    let c = slideBgCanvases.get(slide.id)
+    if (!c) {
+      c = document.createElement('canvas')
+      slideBgCanvases.set(slide.id, c)
+    }
+
+    if (hash !== lastHashRef.current) {
+      if (firstRef.current) {
+        // First time we've seen a vibe on this slide — render synchronously
+        // so the Image isn't painted blank during React's commit phase.
+        renderBgVibe(c, vibe, w, h)
+        lastHashRef.current = hash
+        firstRef.current = false
+      } else {
+        // Stash the latest params; the rAF callback re-reads from the ref
+        // so multiple updates within one frame coalesce to the newest state.
+        pendingRef.current = { vibe, w, h }
+        if (rafIdRef.current === null) {
+          rafIdRef.current = requestAnimationFrame(() => {
+            rafIdRef.current = null
+            const latest = pendingRef.current
+            const cv = slideBgCanvases.get(slide.id)
+            if (!latest || !cv) return
+            renderBgVibe(cv, latest.vibe, latest.w, latest.h)
+            lastHashRef.current = bgVibeHash(latest.vibe, latest.w, latest.h)
+            imageRef.current?.getLayer()?.batchDraw()
+          })
+        }
+      }
+    }
+  } else {
+    // No vibe — reset the first-mount flag so a later switch back to Vibe
+    // mode gets the synchronous-render treatment again.
+    firstRef.current = true
+  }
+
+  // Cancel any pending rAF if the component unmounts mid-frame, otherwise we
+  // mutate a canvas that's about to be discarded (no visual issue, just waste).
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
+      }
+    }
+  }, [])
+
+  // batchDraw on first sync render so Konva picks up the freshly-painted
+  // pixels. Subsequent renders trigger batchDraw inside the rAF callback.
+  useEffect(() => {
+    if (vibe && imageRef.current) {
+      imageRef.current.getLayer()?.batchDraw()
+    }
+    // Only runs once per "vibe became truthy" — that's exactly when the
+    // synchronous first render happened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vibe ? 1 : 0])
+
+  if (vibe) {
+    const canvas = slideBgCanvases.get(slide.id)!
+    return (
+      <KonvaImage
+        ref={imageRef}
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        image={canvas}
+        listening={false}
+      />
+    )
+  }
+
+  return (
+    <Rect
+      x={x}
+      y={y}
+      width={width}
+      height={height}
+      fill={slide.bgColor || '#ffffff'}
+    />
+  )
 }
 
 /* ------------------------------------------------------------------ */
@@ -1452,7 +1580,9 @@ const EditorStage = forwardRef<
   const removeSlide = useTiovivoStore((s) => s.removeSlide)
   const reorderSlides = useTiovivoStore((s) => s.reorderSlides)
   const setSlideBgColor = useTiovivoStore((s) => s.setSlideBgColor)
+  const setSlideName = useTiovivoStore((s) => s.setSlideName)
   const toggleSlideExport = useTiovivoStore((s) => s.toggleSlideExport)
+  const activeSlideId = useTiovivoStore((s) => s.activeSlideId)
   const workspaceBgColor = useTiovivoStore((s) => s.workspaceBgColor)
   const fitItemToSlide = useTiovivoStore((s) => s.fitItemToSlide)
   const fillItemToSlide = useTiovivoStore((s) => s.fillItemToSlide)
@@ -1524,6 +1654,39 @@ const EditorStage = forwardRef<
   const spaceDownRef = useRef(false)
   const lastPointerRef = useRef({ x: 0, y: 0 })
 
+  /* ---- resize: keep the active slide visually centred ----
+   * Without this, changing W/H makes the slides grow outwards from their
+   * top-left anchor and the user perceives them "running away" from the
+   * viewport centre. We compensate panOffset by the world-space delta of
+   * the active slide's centre across the resize so the centre stays put on
+   * screen. useLayoutEffect runs after the dimension commit but before the
+   * browser paints, avoiding a one-frame jump. */
+  const prevDimsRef = useRef({ W, H })
+  useEffect(() => {
+    const prevW = prevDimsRef.current.W
+    const prevH = prevDimsRef.current.H
+    if (prevW === W && prevH === H) return
+    const idx = Math.max(0, slides.findIndex((s) => s.id === activeSlideId))
+
+    // Pasteboard padding (recomputed for both old and new dims because it
+    // scales with max(W, H) and shifts every slide's absolute X/Y).
+    const prevPad = Math.max(PASTEBOARD_PAD_BASE, Math.max(prevW, prevH) * PASTEBOARD_PAD_FACTOR)
+    const newPad = Math.max(PASTEBOARD_PAD_BASE, Math.max(W, H) * PASTEBOARD_PAD_FACTOR)
+    const oldCx = prevPad + idx * (prevW + artboardGap) + prevW / 2
+    const oldCy = prevPad + prevH / 2
+    const newCx = newPad + idx * (W + artboardGap) + W / 2
+    const newCy = newPad + H / 2
+
+    setPanOffset((p) => ({
+      x: p.x + (oldCx - newCx) * zoom,
+      y: p.y + (oldCy - newCy) * zoom,
+    }))
+    prevDimsRef.current = { W, H }
+    // Deliberately tied to W/H only — other deps are read at effect-time and
+    // shouldn't re-trigger the centre-on-resize logic.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [W, H])
+
   /* ---- snap guides ---- */
   const [activeGuides, setActiveGuides] = useState<{ slideIdx: number; guides: GuideLine[] } | null>(null)
 
@@ -1535,6 +1698,10 @@ const EditorStage = forwardRef<
   const reorderDragRef = useRef<string | null>(null)
   const [isReordering, setIsReordering] = useState(false)
   const [reorderDropTarget, setReorderDropTarget] = useState<string | null>(null)
+
+  /* ---- slide inline rename (double-click on the label) ---- */
+  const [renamingSlideId, setRenamingSlideId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
 
   /* ---- floating corrections / cover frame popover toggle ---- */
   const [showCorrections, setShowCorrections] = useState(false)
@@ -2285,11 +2452,38 @@ const EditorStage = forwardRef<
   }), [exportSlidePng, exportSlideVideo, fitToScreen])
 
   /* ---- render ---- */
+  // Chrome (slide labels, action buttons, zoom indicator) sits over the
+  // workspace pasteboard. Switch its tint from white→black when the workspace
+  // is too light for white text to read. CSS custom properties scoped to this
+  // wrapper let every descendant pick the right opacity without each having
+  // to compute luminance.
+  const chromeStyleVars = (() => {
+    const hex = (workspaceBgColor || '#0a0a0e').replace('#', '')
+    const r = parseInt(hex.slice(0, 2), 16) || 0
+    const g = parseInt(hex.slice(2, 4), 16) || 0
+    const b = parseInt(hex.slice(4, 6), 16) || 0
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    const dark = lum > 140
+    const fg = dark ? '0, 0, 0' : '255, 255, 255'
+    return {
+      ['--chrome-fg' as string]: `rgba(${fg}, 0.85)`,
+      ['--chrome-fg-med' as string]: `rgba(${fg}, 0.6)`,
+      ['--chrome-fg-dim' as string]: `rgba(${fg}, 0.45)`,
+      ['--chrome-fg-faint' as string]: `rgba(${fg}, 0.3)`,
+    } as React.CSSProperties
+  })()
+
   return (
     <div
       ref={wrapRef}
       className="editor-stage-wrap"
-      style={{ width: maxViewWidth, height: maxViewHeight, overflow: 'hidden', position: 'relative' }}
+      style={{
+        width: maxViewWidth,
+        height: maxViewHeight,
+        overflow: 'hidden',
+        position: 'relative',
+        ...chromeStyleVars,
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={(e) => { onPointerMove(e); handlePixelInspect(e) }}
       onPointerUp={onPointerUp}
@@ -2352,17 +2546,28 @@ const EditorStage = forwardRef<
         </div>
       )}
 
-      {/* Zoom controls */}
+      {/* Zoom controls — uses workspace-aware chrome colours so the text
+          stays legible whether the workspace is dark or light. */}
       <div style={{ position: 'absolute', bottom: 10, right: 12, zIndex: 10, display: 'flex', gap: 6, alignItems: 'center' }}>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={fitToScreen} title="Fit to screen" style={{ fontSize: '0.8rem', padding: '5px 10px' }}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          onClick={fitToScreen}
+          title="Fit to screen"
+          style={{ fontSize: '0.8rem', padding: '5px 10px', color: 'var(--chrome-fg)' }}
+        >
           Fit
         </button>
-        <span style={{ fontSize: '0.8rem', color: 'var(--text)', opacity: 0.6, fontFamily: 'var(--mono)', minWidth: 48, textAlign: 'right' }}>
+        <span style={{ fontSize: '0.8rem', color: 'var(--chrome-fg-med)', fontFamily: 'var(--mono)', minWidth: 48, textAlign: 'right' }}>
           {Math.round(zoom * 100)}%
         </span>
       </div>
 
-      {/* HTML overlay: slide labels, color pickers, + buttons — SCREEN space */}
+      {/* HTML overlay: slide labels, color pickers, + buttons — SCREEN space.
+          Chrome colours adapt to workspace luminance via --chrome-fg-* CSS
+          custom properties set on the outer .editor-stage-wrap. Children
+          reference them with var(--chrome-fg-...) instead of hard-coded
+          rgba(255,255,255,...) so white workspaces don't hide the chrome. */}
       <div
         style={{ position: 'absolute', inset: 0, zIndex: 5, pointerEvents: isReordering ? 'auto' : 'none' }}
         onMouseMove={(e) => {
@@ -2401,15 +2606,24 @@ const EditorStage = forwardRef<
           const screenH = H * zoom
           const isDropTarget = reorderDropTarget === slide.id
           const isDragged = isReordering && reorderDragRef.current === slide.id
+          const isActive = slide.id === activeSlideId
 
           return (
             <div key={slide.id}>
-              {/* Slide label — mousedown to start reorder */}
+              {/* Slide label — mousedown to start reorder. The currently-
+                  active slide gets a subtle accent pill so it's visible at
+                  a glance even when the artboards are far apart or zoomed
+                  out. */}
               <div
-                className="artboard-label"
+                className={`artboard-label ${isActive ? 'artboard-label--active' : ''}`}
                 onMouseDown={(e) => {
                   if (e.button !== 0) return
                   e.stopPropagation()
+                  // Clicking the label activates the slide. Fires on the
+                  // first mousedown so a click-without-drag still selects;
+                  // if the user proceeds to drag, the reorder logic below
+                  // takes over without losing the activation side-effect.
+                  useTiovivoStore.getState().setActiveSlide(slide.id)
                   reorderDragRef.current = slide.id
                   setIsReordering(true)
                   document.body.style.cursor = 'grabbing'
@@ -2421,7 +2635,7 @@ const EditorStage = forwardRef<
                   fontSize: 13,
                   fontWeight: 600,
                   fontFamily: 'system-ui, sans-serif',
-                  color: isDragged ? 'var(--accent)' : isDropTarget ? 'var(--accent)' : 'rgba(255,255,255,0.7)',
+                  color: isDragged ? 'var(--accent)' : isDropTarget ? 'var(--accent)' : 'var(--chrome-fg)',
                   whiteSpace: 'nowrap',
                   userSelect: 'none',
                   cursor: isReordering ? 'grabbing' : 'grab',
@@ -2431,12 +2645,93 @@ const EditorStage = forwardRef<
                   gap: 8,
                   padding: '2px 6px',
                   borderRadius: 4,
-                  background: isDragged ? 'rgba(124,108,240,0.2)' : 'transparent',
-                  transition: 'color 0.15s, background 0.15s',
+                  // Active slide gets a soft accent fill; dragged slide takes
+                  // over with the stronger violet to keep drag feedback clear.
+                  background: isDragged
+                    ? 'rgba(124,108,240,0.2)'
+                    : isActive
+                      ? 'rgba(59, 130, 246, 0.14)'
+                      : 'transparent',
+                  boxShadow: isActive && !isDragged
+                    ? 'inset 0 0 0 1px rgba(59, 130, 246, 0.32)'
+                    : 'none',
+                  transition: 'color 0.15s, background 0.15s, box-shadow 0.15s',
                   opacity: isDragged ? 0.7 : 1,
                 }}
               >
-                <span style={{ opacity: slide.exportEnabled ? 1 : 0.45 }}>Slide {i + 1}</span>
+                {(() => {
+                  const fallbackName = `Slide ${i + 1}`
+                  const displayName = slide.name?.trim() || fallbackName
+                  const isRenaming = renamingSlideId === slide.id
+
+                  const commit = () => {
+                    const trimmed = renameDraft.trim()
+                    // Treat "Slide N" as a clear of the custom name so users
+                    // can reset by typing the default back in.
+                    if (trimmed === '' || trimmed === fallbackName) {
+                      setSlideName(slide.id, '')
+                    } else if (trimmed !== displayName) {
+                      setSlideName(slide.id, trimmed)
+                    }
+                    setRenamingSlideId(null)
+                  }
+                  const cancel = () => setRenamingSlideId(null)
+
+                  if (isRenaming) {
+                    return (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); commit() }
+                          else if (e.key === 'Escape') { e.preventDefault(); cancel() }
+                          e.stopPropagation()
+                        }}
+                        onBlur={commit}
+                        // Block the parent label's mousedown so we don't start
+                        // a reorder drag when clicking inside the input.
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                        onFocus={(e) => e.currentTarget.select()}
+                        spellCheck={false}
+                        maxLength={80}
+                        style={{
+                          background: 'rgba(0, 0, 0, 0.4)',
+                          border: '1px solid rgba(59, 130, 246, 0.45)',
+                          borderRadius: 3,
+                          color: 'inherit',
+                          font: 'inherit',
+                          padding: '0 4px',
+                          outline: 'none',
+                          minWidth: 60,
+                          width: `${Math.max(60, renameDraft.length * 8 + 16)}px`,
+                          opacity: slide.exportEnabled ? 1 : 0.45,
+                        }}
+                      />
+                    )
+                  }
+                  return (
+                    <span
+                      title="Double-click to rename"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        // Cancel any in-progress reorder triggered by the
+                        // first half of the double-click — see the parent
+                        // onMouseDown above.
+                        reorderDragRef.current = null
+                        setIsReordering(false)
+                        document.body.style.cursor = ''
+                        setRenameDraft(displayName)
+                        setRenamingSlideId(slide.id)
+                      }}
+                      style={{ opacity: slide.exportEnabled ? 1 : 0.45 }}
+                    >
+                      {displayName}
+                    </span>
+                  )
+                })()}
                 <button
                   type="button"
                   title={slide.exportEnabled ? 'Included in export — click to skip' : 'Skipped in export — click to include'}
@@ -2444,8 +2739,8 @@ const EditorStage = forwardRef<
                   onClick={(e) => { e.stopPropagation(); toggleSlideExport(slide.id) }}
                   style={{
                     background: slide.exportEnabled ? 'rgba(124,108,240,0.25)' : 'transparent',
-                    border: `1px solid ${slide.exportEnabled ? 'rgba(124,108,240,0.5)' : 'rgba(255,255,255,0.18)'}`,
-                    color: slide.exportEnabled ? '#fff' : 'rgba(255,255,255,0.45)',
+                    border: `1px solid ${slide.exportEnabled ? 'rgba(124,108,240,0.5)' : 'var(--chrome-fg-faint)'}`,
+                    color: slide.exportEnabled ? '#fff' : 'var(--chrome-fg-dim)',
                     borderRadius: 3, cursor: 'pointer', fontSize: 10,
                     padding: '1px 5px', lineHeight: 1.3, fontWeight: 600,
                     fontFamily: 'system-ui, sans-serif',
@@ -2460,12 +2755,12 @@ const EditorStage = forwardRef<
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); onExportSingleSlide(slide.id) }}
                     style={{
-                      background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)',
+                      background: 'none', border: 'none', color: 'var(--chrome-fg-dim)',
                       cursor: 'pointer', padding: 2, lineHeight: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = '#fff' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--chrome-fg)' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--chrome-fg-dim)' }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 4v12" />
@@ -2480,12 +2775,12 @@ const EditorStage = forwardRef<
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); duplicateSlide(slide.id) }}
                   style={{
-                    background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)',
+                    background: 'none', border: 'none', color: 'var(--chrome-fg-dim)',
                     cursor: 'pointer', padding: 2, lineHeight: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = '#fff' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--chrome-fg)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--chrome-fg-dim)' }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="8" y="8" width="13" height="13" rx="2" />
@@ -2500,7 +2795,7 @@ const EditorStage = forwardRef<
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); removeSlide(slide.id) }}
                     style={{
-                      background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)',
+                      background: 'none', border: 'none', color: 'var(--chrome-fg-faint)',
                       cursor: 'pointer', fontSize: 13, padding: '0 4px', lineHeight: 1,
                     }}
                   >
@@ -2539,36 +2834,41 @@ const EditorStage = forwardRef<
                 }} />
               )}
 
-              {/* Background color picker — below artboard */}
-              <div
-                style={{
-                  position: 'absolute',
-                  left: screenX,
-                  top: screenY + screenH + 8,
-                  pointerEvents: 'auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <input
-                  type="color"
-                  value={slide.bgColor || '#ffffff'}
-                  onChange={(e) => setSlideBgColor(slide.id, e.target.value)}
-                  title="Slide background color"
+              {/* Background colour picker — below artboard. Hidden when the
+                  slide is in Vibe mode, since bgColor is unused and the
+                  picker would be misleading clutter; the Background panel's
+                  palette is the source of truth in that case. */}
+              {!slide.bgVibe && (
+                <div
                   style={{
-                    width: 22, height: 22,
-                    border: '1.5px solid rgba(255,255,255,0.2)',
-                    borderRadius: 4,
-                    padding: 0,
-                    cursor: 'pointer',
-                    background: 'transparent',
+                    position: 'absolute',
+                    left: screenX,
+                    top: screenY + screenH + 8,
+                    pointerEvents: 'auto',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
                   }}
-                />
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)' }}>
-                  {slide.bgColor || '#ffffff'}
-                </span>
-              </div>
+                >
+                  <input
+                    type="color"
+                    value={slide.bgColor || '#ffffff'}
+                    onChange={(e) => setSlideBgColor(slide.id, e.target.value)}
+                    title="Slide background color"
+                    style={{
+                      width: 22, height: 22,
+                      border: '1.5px solid var(--chrome-fg-faint)',
+                      borderRadius: 4,
+                      padding: 0,
+                      cursor: 'pointer',
+                      background: 'transparent',
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: 'var(--chrome-fg-dim)', fontFamily: 'var(--mono)' }}>
+                    {slide.bgColor || '#ffffff'}
+                  </span>
+                </div>
+              )}
 
               {/* Upscale warning badges — one per upscaled item, anchored to the
                   item's top-right corner. HTML overlay so it never lands in exports. */}
@@ -3125,11 +3425,11 @@ const EditorStage = forwardRef<
             {slides.map((slide, i) => {
               const ap = artboardPositions[i]!
               return (
-                <Rect
+                <SlideBackground
                   key={slide.id}
+                  slide={slide}
                   x={ap.x} y={ap.y}
                   width={W} height={H}
-                  fill={slide.bgColor || '#ffffff'}
                 />
               )
             })}

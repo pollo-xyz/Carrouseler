@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import NumberField from './components/NumberField'
 import MenuBar from './components/MenuBar'
-import { useTiovivoStore, type PlacedMedia, type TextAlign } from './store/useTiovivoStore'
+import FontPicker from './components/FontPicker'
+import GifPicker from './components/GifPicker'
+import { downloadGif, type GiphyItem } from './lib/giphy'
+import { removeBackground as runRemoveBackground } from './lib/removeBackground'
+import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
 import { PRESETS } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
 import { generateProjectPreview } from './lib/thumbnail'
@@ -98,6 +102,26 @@ const Icon = {
       <path d="M5 4h14" />
       <path d="M12 4v16" />
       <path d="M9 20h6" />
+    </svg>
+  ),
+  Shape: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <rect x="3" y="3" width="11" height="11" rx="2" />
+      <circle cx="16" cy="16" r="5" />
+    </svg>
+  ),
+  Gif: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M9 9.5h-2.5a1 1 0 0 0-1 1V13a1 1 0 0 0 1 1H9v-2H8.25" />
+      <path d="M12 9.5v5" />
+      <path d="M18.5 9.5H15v5M15 12h2.5" />
+    </svg>
+  ),
+  Eye: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   ),
   Link: (p: React.SVGProps<SVGSVGElement>) => (
@@ -576,6 +600,7 @@ function BackgroundPanel({
               value={config.pointCount}
               style={sliderFill(config.pointCount, 3, 8)}
               onChange={(e) => apply({ pointCount: Number(e.target.value) })}
+              onDoubleClick={() => apply({ pointCount: 5 })}
             />
           </label>
           {/* Size acts as the macro scale of every blob. Composes with the
@@ -594,6 +619,7 @@ function BackgroundPanel({
               value={config.size ?? 1}
               style={sliderFill(config.size ?? 1, 0.4, 2.5)}
               onChange={(e) => apply({ size: Number(e.target.value) })}
+              onDoubleClick={() => apply({ size: 1 })}
             />
           </label>
           <label className="slider-field">
@@ -608,6 +634,7 @@ function BackgroundPanel({
               value={config.blur}
               style={sliderFill(config.blur, 0, 200)}
               onChange={(e) => apply({ blur: Number(e.target.value) })}
+              onDoubleClick={() => apply({ blur: 80 })}
             />
           </label>
           <label className="slider-field">
@@ -622,6 +649,7 @@ function BackgroundPanel({
               value={config.grain}
               style={sliderFill(config.grain, 0, 1)}
               onChange={(e) => apply({ grain: Number(e.target.value) })}
+              onDoubleClick={() => apply({ grain: 0 })}
             />
           </label>
 
@@ -675,6 +703,86 @@ function BackgroundPanel({
   )
 }
 
+/* ============================================================
+   RemoveBgButton — runs @imgly/background-removal on the
+   selected image. First run downloads ~30 MB of model weights
+   to IndexedDB; subsequent runs are fully offline.
+   ============================================================ */
+function RemoveBgButton({
+  item,
+  onResult,
+}: {
+  item: PlacedMedia
+  onResult: (src: string, name: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = useCallback(async () => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    setProgress({ phase: 'fetch:model', pct: 0 })
+    try {
+      // Always use the highest-quality model + the illustration post-pass.
+      // Photos still look fine here; the hard alpha threshold sometimes
+      // chops a few stray semi-transparent pixels on hair / fur but the
+      // crisp edges win for the carousel use case more often than not.
+      const blob = await runRemoveBackground(item.src, {
+        mode: 'illustration',
+        onProgress: ({ phase, loaded, total }) => {
+          const pct = total > 0 ? loaded / total : 0
+          setProgress({ phase, pct })
+        },
+      })
+      const newSrc = URL.createObjectURL(blob)
+      const base = item.name.replace(/\.[a-z0-9]+$/i, '') || 'image'
+      onResult(newSrc, `${base} (no bg).png`)
+    } catch (err) {
+      console.error('[remove-bg] failed:', err)
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+      setProgress(null)
+    }
+  }, [busy, item.src, item.name, onResult])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+      <button
+        type="button"
+        className="btn btn--outline btn--sm"
+        onClick={() => void run()}
+        disabled={busy}
+        style={{ alignSelf: 'stretch', gap: 6, flexDirection: 'row', justifyContent: 'center' }}
+        title="Run a local AI model to make the image background transparent. First run downloads ~150 MB of model weights to the local IndexedDB cache; subsequent runs are fully offline and instant-loading."
+      >
+        {busy ? (
+          <>
+            <span className="remove-bg-spinner" aria-hidden />
+            {progress?.phase.startsWith('fetch:') ? 'Downloading model' : 'Removing background'}
+            {progress && progress.pct > 0 && progress.pct < 1 ? ` · ${Math.round(progress.pct * 100)}%` : '…'}
+          </>
+        ) : (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M4 4l16 16" />
+            </svg>
+            Remove background (beta)
+          </>
+        )}
+      </button>
+      {error && (
+        <span style={{ fontSize: 11, color: 'rgba(255, 120, 120, 0.85)' }}>
+          {error}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export default function App() {
   const stageRef = useRef<EditorStageHandle>(null)
   const [exporting, setExporting] = useState(false)
@@ -717,7 +825,11 @@ export default function App() {
   // Photoshop's "Constrain Proportions" chain. Locks at the moment of edit
   // using the live dimensions, so toggling a preset and then editing
   // honours the preset's aspect.
-  const [lockAspect, setLockAspect] = useState(false)
+  const [lockAspect, setLockAspect] = useState(true)
+  // Giphy picker state — anchored to the "Add GIF" button below. The actual
+  // pick handler is defined further down (after `addMedia` is in scope).
+  const [gifPickerOpen, setGifPickerOpen] = useState(false)
+  const gifPickerAnchorRef = useRef<HTMLButtonElement>(null)
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
   const [fontList, setFontList] = useState<string[]>(FALLBACK_FONTS)
@@ -754,10 +866,62 @@ export default function App() {
   const removeItems = useTiovivoStore((s) => s.removeItems)
   const addMedia = useTiovivoStore((s) => s.addMedia)
   const addText = useTiovivoStore((s) => s.addText)
+  const addShape = useTiovivoStore((s) => s.addShape)
   const updateItem = useTiovivoStore((s) => s.updateItem)
+
+  // Download the chosen Giphy result and drop it on the active slide. We
+  // embed the bytes (not the remote URL) so the .vpost stays portable.
+  const handleGifPick = useCallback(async (item: GiphyItem) => {
+    try {
+      const blob = await downloadGif(item)
+      const safeTitle = item.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || 'gif'
+      const file = new File([blob], `${safeTitle}.gif`, { type: 'image/gif' })
+      addMedia(file, item.width, item.height)
+    } catch (err) {
+      console.error('[giphy] download failed:', err)
+      alert(`Could not load that GIF: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [addMedia])
 
   const showGrid = useTiovivoStore((s) => s.showGrid)
   const gridSize = useTiovivoStore((s) => s.gridSize)
+  // Slider detents — every integer grid size where the cell evenly divides
+  // the current slide width OR height. These are the values that produce
+  // a whole number of grid cells across one (or both) axes, so the grid
+  // lands exactly on the edges. Recomputed whenever the slide dimensions
+  // change — switching presets immediately retargets the magnetic stops.
+  const gridDetents = useMemo(() => {
+    const out: number[] = []
+    for (let v = 4; v <= 400; v++) {
+      if (dimensions.width % v === 0 || dimensions.height % v === 0) out.push(v)
+    }
+    return out
+  }, [dimensions.width, dimensions.height])
+  // Hold Shift while dragging to bypass detent snapping and choose any
+  // exact px value. The ref is read inside onChange so the slider feels
+  // responsive without re-rendering on every key press.
+  const shiftHeldRef = useRef(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { shiftHeldRef.current = e.shiftKey }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+    }
+  }, [])
+  const snapGridToDetent = useCallback((raw: number) => {
+    if (shiftHeldRef.current || gridDetents.length === 0) return raw
+    // Tolerance in px of slider value, not viewport pixels — the detent feels
+    // "magnetic" when the user is within ±3 of it on the 4-400 scale.
+    let best = raw
+    let bestDist = 4
+    for (const d of gridDetents) {
+      const dist = Math.abs(raw - d)
+      if (dist < bestDist) { bestDist = dist; best = d }
+    }
+    return best
+  }, [gridDetents])
   const gridOpacity = useTiovivoStore((s) => s.gridOpacity)
   const setGridOpacity = useTiovivoStore((s) => s.setGridOpacity)
   const showCenterGuides = useTiovivoStore((s) => s.showCenterGuides)
@@ -769,6 +933,10 @@ export default function App() {
   const setSeamlessSlides = useTiovivoStore((s) => s.setSeamlessSlides)
   const showHiddenZone = useTiovivoStore((s) => s.showHiddenZone)
   const setShowHiddenZone = useTiovivoStore((s) => s.setShowHiddenZone)
+  const showIgSafeArea = useTiovivoStore((s) => s.showIgSafeArea)
+  const setShowIgSafeArea = useTiovivoStore((s) => s.setShowIgSafeArea)
+  const previewMode = useTiovivoStore((s) => s.previewMode)
+  const setPreviewMode = useTiovivoStore((s) => s.setPreviewMode)
   const setShowGrid = useTiovivoStore((s) => s.setShowGrid)
   const setGridSize = useTiovivoStore((s) => s.setGridSize)
   const setShowCenterGuides = useTiovivoStore((s) => s.setShowCenterGuides)
@@ -1098,7 +1266,7 @@ export default function App() {
         const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
           ? `_${sanitizeFilenameSegment(slide.name.trim())}`
           : ''
-        const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
+        const hasVideo = st.items.some((it) => it.slideId === slideId && (it.type === 'video' || it.type === 'gif'))
 
         if (hasVideo) {
           // Video slide → export as MP4
@@ -1176,7 +1344,7 @@ export default function App() {
     const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
       ? `_${sanitizeFilenameSegment(slide.name.trim())}`
       : ''
-    const hasVideo = st.items.some((it) => it.slideId === slideId && it.type === 'video')
+    const hasVideo = st.items.some((it) => it.slideId === slideId && (it.type === 'video' || it.type === 'gif'))
     setExporting(true)
     setExportProgress(`Exporting slide ${idx + 1}...`)
     st.setSelectedIds([])
@@ -1280,6 +1448,7 @@ export default function App() {
             showCenterGuides: st.showCenterGuides,
             seamlessSlides: st.seamlessSlides,
             showHiddenZone: st.showHiddenZone,
+            showIgSafeArea: st.showIgSafeArea,
             marginPct: st.marginPct,
             snapGrid: st.snapGrid,
             snapCenter: st.snapCenter,
@@ -1454,6 +1623,13 @@ export default function App() {
     return it && it.type === 'text' ? it : null
   }, [selectedIds, items])
 
+  /** Single shape selection — drives the Shape properties panel. */
+  const selectedShapeItem: PlacedMedia | null = useMemo(() => {
+    if (selectedIds.length !== 1) return null
+    const it = items.find((x) => x.id === selectedIds[0])
+    return it && it.type === 'shape' ? it : null
+  }, [selectedIds, items])
+
   /** Single media (image / video / gif) selection — enables the "Sample from
    *  Media" button in the Background panel. Null when nothing or multiple
    *  things are selected. */
@@ -1521,6 +1697,7 @@ export default function App() {
               ['1:1', '1:1'],
               ['4:5', '4:5'],
               ['3:4', '3:4'],
+              ['9:16', '9:16'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -1597,6 +1774,20 @@ export default function App() {
           </label>
         </div>
         <div className="app__spacer" />
+        {/* Preview toggle — when on, hide all editor chrome (grid, center
+            guides, IG safe area, seamless dividers, upscale warnings/ring)
+            so the canvas reads like a final export. Lives on the right
+            side of the header just before the workspace pill, away from
+            the canvas-sizing controls it doesn't affect. */}
+        <button
+          type="button"
+          className={`app__aspect-lock ${previewMode ? 'app__aspect-lock--locked' : ''}`}
+          onClick={() => setPreviewMode(!previewMode)}
+          title={previewMode ? 'Preview ON — click to show editor chrome' : 'Hide grids, guides, dividers and warnings to preview as it will export'}
+          aria-pressed={previewMode}
+        >
+          <Icon.Eye style={{ width: 14, height: 14 }} />
+        </button>
         {/* Workspace pasteboard colour — lives in the header because it's a
             global view setting, not per-slide. Same pill shape as the export
             name input so it sits cleanly in the row. The reset button is
@@ -1720,7 +1911,10 @@ export default function App() {
               if (e.target) e.target.value = ''
             }}
           />
-          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          {/* 2-column grid so narrow sidebars don't push the third button
+              off-screen. The grid auto-flows so a future fourth button just
+              fills the empty cell. */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
             <button
               type="button"
               className="btn btn--outline"
@@ -1732,7 +1926,6 @@ export default function App() {
                 padding: '7px 12px',
                 fontSize: '0.78rem',
                 justifyContent: 'center',
-                flex: 1,
               }}
             >
               <Icon.Plus style={{ width: 13, height: 13 }} />
@@ -1749,92 +1942,51 @@ export default function App() {
                 padding: '7px 12px',
                 fontSize: '0.78rem',
                 justifyContent: 'center',
-                flex: 1,
               }}
             >
               <Icon.Text style={{ width: 13, height: 13 }} />
               Add text
             </button>
+            <button
+              type="button"
+              className="btn btn--outline"
+              onClick={() => addShape('rect')}
+              title="Add a shape — rectangle by default. Switch to ellipse or line from the Shape panel after."
+              style={{
+                flexDirection: 'row',
+                gap: 8,
+                padding: '7px 12px',
+                fontSize: '0.78rem',
+                justifyContent: 'center',
+              }}
+            >
+              <Icon.Shape style={{ width: 13, height: 13 }} />
+              Add shape
+            </button>
+            <button
+              ref={gifPickerAnchorRef}
+              type="button"
+              className={`btn btn--outline ${gifPickerOpen ? 'btn--accent' : ''}`}
+              onClick={() => setGifPickerOpen((v) => !v)}
+              title="Search Giphy for GIFs and stickers"
+              style={{
+                flexDirection: 'row',
+                gap: 8,
+                padding: '7px 12px',
+                fontSize: '0.78rem',
+                justifyContent: 'center',
+              }}
+            >
+              <Icon.Gif style={{ width: 13, height: 13 }} />
+              Add GIF
+            </button>
           </div>
-
-          <details className="collapsible" open>
-            <summary><h2><Icon.Sliders />Background</h2></summary>
-            <div className="collapsible__body">
-              <BackgroundPanel
-                slides={slides}
-                activeSlideId={activeSlideId}
-                selectedMediaItem={selectedMediaItem}
-                setAllSlidesBgVibe={setAllSlidesBgVibe}
-                setSlideBgVibe={setSlideBgVibe}
-                randomizeAllSlideVibes={randomizeAllSlideVibes}
-                randomizeSlideVibe={randomizeSlideVibe}
-              />
-            </div>
-          </details>
-
-          <details className="collapsible" open>
-            <summary><h2><Icon.Grid />Guides & snap</h2></summary>
-            <div className="collapsible__body">
-              <label className="check">
-                <input type="checkbox" checked={seamlessSlides} onChange={(e) => setSeamlessSlides(e.target.checked)} />
-                Seamless slides
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
-                Hidden zone
-              </label>
-              <hr />
-              <label className="check">
-                <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-                Grid
-              </label>
-              <label className="field">
-                <span>Grid px</span>
-                <NumberField
-                  min={4}
-                  max={400}
-                  value={gridSize}
-                  onCommit={(n) => setGridSize(n)}
-                  style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
-                />
-              </label>
-              <label className="slider-field" title="Visibility of the grid overlay on top of media">
-                <span className="slider-field__label">
-                  Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
-                </span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={gridOpacity}
-                  style={sliderFill(gridOpacity, 0, 1)}
-                  onChange={(e) => setGridOpacity(Number(e.target.value))}
-                />
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
-                Center lines
-              </label>
-              <hr />
-              <label className="check">
-                <input type="checkbox" checked={snapGrid} onChange={(e) => setSnapGrid(e.target.checked)} />
-                Snap to grid
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={snapCenter} onChange={(e) => setSnapCenter(e.target.checked)} />
-                Snap to center
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={snapItems} onChange={(e) => setSnapItems(e.target.checked)} />
-                Snap to other media
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={snapMargins} onChange={(e) => setSnapMargins(e.target.checked)} />
-                Snap to margins
-              </label>
-            </div>
-          </details>
+          <GifPicker
+            open={gifPickerOpen}
+            onClose={() => setGifPickerOpen(false)}
+            onPick={handleGifPick}
+            anchorRef={gifPickerAnchorRef}
+          />
 
           {selectedTextItem && (() => {
             const t = selectedTextItem
@@ -1857,18 +2009,13 @@ export default function App() {
 
                   <label className="field">
                     <span>Font</span>
-                    <input
-                      type="text"
-                      list="app-system-fonts"
+                    <FontPicker
                       value={t.fontFamily ?? ''}
-                      onChange={(e) => patch({ fontFamily: e.target.value })}
-                      onFocus={() => void refreshFonts()}
-                      spellCheck={false}
-                      placeholder="Inter"
+                      fonts={fontList}
+                      onCommit={(font) => patch({ fontFamily: font })}
+                      onPreview={(font) => patch({ fontFamily: font })}
+                      onOpen={() => void refreshFonts()}
                     />
-                    <datalist id="app-system-fonts">
-                      {fontList.map((f) => <option key={f} value={f} />)}
-                    </datalist>
                   </label>
 
                   <label className="check" title="When on, font size grows or shrinks so the text fills the box width × height.">
@@ -1999,6 +2146,393 @@ export default function App() {
                       {t.textColor || '#ffffff'}
                     </span>
                   </label>
+
+                  <hr />
+
+                  {/* ── Outline ── */}
+                  <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <span>Outline</span>
+                    <input
+                      className="color-swatch"
+                      type="color"
+                      value={t.strokeColor || '#000000'}
+                      onChange={(e) => patch({ strokeColor: e.target.value })}
+                    />
+                    <span className="field__value" style={{ flex: 1 }}>
+                      {(t.strokeWidth ?? 0) > 0 ? (t.strokeColor || '#000000') : 'off'}
+                    </span>
+                  </label>
+                  <label className="slider-field" title="Outline thickness — set to 0 to turn off. Double-click the slider to reset.">
+                    <span className="slider-field__label">
+                      Outline width<span className="slider-field__value">{Math.round(t.strokeWidth ?? 0)} px</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      step={0.5}
+                      value={t.strokeWidth ?? 0}
+                      style={sliderFill((t.strokeWidth ?? 0) / 20, 0, 1)}
+                      onChange={(e) => patch({ strokeWidth: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ strokeWidth: 0 })}
+                    />
+                  </label>
+
+                  <hr />
+
+                  {/* ── Shadow ── */}
+                  <label className="check" title="Soft drop shadow rendered under the text">
+                    <input
+                      type="checkbox"
+                      checked={!!t.shadowEnabled}
+                      onChange={(e) => patch({ shadowEnabled: e.target.checked })}
+                    />
+                    Shadow
+                  </label>
+                  {t.shadowEnabled && (
+                    <>
+                      <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <span>Color</span>
+                        <input
+                          className="color-swatch"
+                          type="color"
+                          value={t.shadowColor || '#000000'}
+                          onChange={(e) => patch({ shadowColor: e.target.value })}
+                        />
+                        <span className="field__value">
+                          {t.shadowColor || '#000000'}
+                        </span>
+                      </label>
+                      <div className="field" style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                          <span>Blur</span>
+                          <NumberField
+                            min={0}
+                            max={200}
+                            value={Math.round(t.shadowBlur ?? 8)}
+                            onCommit={(n) => patch({ shadowBlur: n })}
+                            style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                          />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                          <span>Opacity</span>
+                          <NumberField
+                            step={0.05}
+                            min={0}
+                            max={1}
+                            decimals={2}
+                            value={t.shadowOpacity ?? 0.5}
+                            onCommit={(n) => patch({ shadowOpacity: n })}
+                            style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                          />
+                        </label>
+                      </div>
+                      <div className="field" style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                          <span>Offset X</span>
+                          <NumberField
+                            min={-200}
+                            max={200}
+                            value={Math.round(t.shadowOffsetX ?? 0)}
+                            onCommit={(n) => patch({ shadowOffsetX: n })}
+                            style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                          />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+                          <span>Offset Y</span>
+                          <NumberField
+                            min={-200}
+                            max={200}
+                            value={Math.round(t.shadowOffsetY ?? 4)}
+                            onCommit={(n) => patch({ shadowOffsetY: n })}
+                            style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+                          />
+                        </label>
+                      </div>
+                    </>
+                  )}
+
+                  <hr />
+
+                  {/* ── Background pill ── */}
+                  <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <span>Background</span>
+                    <input
+                      className="color-swatch"
+                      type="color"
+                      value={t.textBgColor || '#000000'}
+                      onChange={(e) => patch({ textBgColor: e.target.value, textBgPadding: t.textBgPadding ?? 16, textBgCornerRadius: t.textBgCornerRadius ?? 8, textBgOpacity: t.textBgOpacity ?? 1 })}
+                    />
+                    <span className="field__value" style={{ flex: 1 }}>
+                      {t.textBgColor || 'off'}
+                    </span>
+                    {t.textBgColor && (
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        title="Remove background"
+                        onClick={() => patch({ textBgColor: undefined })}
+                      >
+                        ⌀
+                      </button>
+                    )}
+                  </label>
+                  {t.textBgColor && (
+                    <>
+                      <label className="slider-field" title="How much the background extends past the text bounds. Double-click to reset.">
+                        <span className="slider-field__label">
+                          Padding<span className="slider-field__value">{Math.round(t.textBgPadding ?? 0)} px</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={120}
+                          step={1}
+                          value={t.textBgPadding ?? 0}
+                          style={sliderFill((t.textBgPadding ?? 0) / 120, 0, 1)}
+                          onChange={(e) => patch({ textBgPadding: Number(e.target.value) })}
+                          onDoubleClick={() => patch({ textBgPadding: 16 })}
+                        />
+                      </label>
+                      <label className="slider-field" title="Background corner rounding. Double-click to reset.">
+                        <span className="slider-field__label">
+                          Corner radius<span className="slider-field__value">{Math.round(t.textBgCornerRadius ?? 0)} px</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={200}
+                          step={1}
+                          value={t.textBgCornerRadius ?? 0}
+                          style={sliderFill((t.textBgCornerRadius ?? 0) / 200, 0, 1)}
+                          onChange={(e) => patch({ textBgCornerRadius: Number(e.target.value) })}
+                          onDoubleClick={() => patch({ textBgCornerRadius: 8 })}
+                        />
+                      </label>
+                      <label className="slider-field" title="Double-click to reset to fully opaque.">
+                        <span className="slider-field__label">
+                          Opacity<span className="slider-field__value">{Math.round((t.textBgOpacity ?? 1) * 100)}%</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={t.textBgOpacity ?? 1}
+                          style={sliderFill(t.textBgOpacity ?? 1, 0, 1)}
+                          onChange={(e) => patch({ textBgOpacity: Number(e.target.value) })}
+                          onDoubleClick={() => patch({ textBgOpacity: 1 })}
+                        />
+                      </label>
+                    </>
+                  )}
+                </div>
+              </details>
+            )
+          })()}
+
+          {selectedMediaItem && (() => {
+            const m = selectedMediaItem
+            const patch = (p: Partial<PlacedMedia>) => updateItem(m.id, p)
+            // One-click looks. Values are deltas applied to the canonical
+            // brightness/contrast/saturation/blur fields the rest of the app
+            // already understands — no new state, so undo/redo / .vpost
+            // serialisation just works.
+            type Preset = { name: string; patch: Partial<PlacedMedia> }
+            const presets: Preset[] = [
+              { name: 'Reset', patch: { brightness: 0, contrast: 0, saturation: 1, blur: 0 } },
+              { name: 'Warm',  patch: { brightness: 0.05, contrast: 5, saturation: 1.12, blur: 0 } },
+              { name: 'Cool',  patch: { brightness: 0,    contrast: 5, saturation: 0.92, blur: 0 } },
+              { name: 'Punch', patch: { brightness: 0.03, contrast: 18, saturation: 1.2, blur: 0 } },
+              { name: 'Fade',  patch: { brightness: 0.1,  contrast: -18, saturation: 0.85, blur: 0 } },
+              { name: 'Mono',  patch: { brightness: 0,    contrast: 8, saturation: 0, blur: 0 } },
+            ]
+            const presetIsActive = (p: Preset): boolean => {
+              const cb = m.brightness ?? 0
+              const cc = m.contrast ?? 0
+              const cs = m.saturation ?? 1
+              const cbl = m.blur ?? 0
+              return Math.abs(cb - (p.patch.brightness ?? 0)) < 0.005
+                && Math.abs(cc - (p.patch.contrast ?? 0)) < 0.5
+                && Math.abs(cs - (p.patch.saturation ?? 1)) < 0.01
+                && Math.abs(cbl - (p.patch.blur ?? 0)) < 0.5
+            }
+            return (
+              <details className="collapsible" open>
+                <summary><h2><Icon.Sliders />Image adjustments</h2></summary>
+                <div className="collapsible__body">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
+                    {presets.map((p) => (
+                      <button
+                        key={p.name}
+                        type="button"
+                        className={`btn btn--sm ${presetIsActive(p) ? 'btn--accent' : ''}`}
+                        onClick={() => patch(p.patch)}
+                        style={{ padding: '5px 4px', fontSize: '0.7rem' }}
+                        title={`Apply ${p.name} look — overwrites brightness / contrast / saturation`}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  <label className="slider-field" title="Exposure / brightness (-1 to +1). Double-click to reset.">
+                    <span className="slider-field__label">
+                      Brightness<span className="slider-field__value">{(m.brightness ?? 0).toFixed(2)}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={-1} max={1} step={0.01}
+                      value={m.brightness ?? 0}
+                      style={sliderFill(((m.brightness ?? 0) + 1) / 2, 0, 1)}
+                      onChange={(e) => patch({ brightness: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ brightness: 0 })}
+                    />
+                  </label>
+                  <label className="slider-field" title="Contrast (-100 to +100). Double-click to reset.">
+                    <span className="slider-field__label">
+                      Contrast<span className="slider-field__value">{Math.round(m.contrast ?? 0)}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={-100} max={100} step={1}
+                      value={m.contrast ?? 0}
+                      style={sliderFill(((m.contrast ?? 0) + 100) / 200, 0, 1)}
+                      onChange={(e) => patch({ contrast: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ contrast: 0 })}
+                    />
+                  </label>
+                  <label className="slider-field" title="Saturation (0 = greyscale, 1 = normal, 2 = punchy). Double-click to reset.">
+                    <span className="slider-field__label">
+                      Saturation<span className="slider-field__value">{(m.saturation ?? 1).toFixed(2)}</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0} max={2} step={0.01}
+                      value={m.saturation ?? 1}
+                      style={sliderFill((m.saturation ?? 1) / 2, 0, 1)}
+                      onChange={(e) => patch({ saturation: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ saturation: 1 })}
+                    />
+                  </label>
+                  <label className="slider-field" title="Gaussian blur radius in pixels. Double-click to reset.">
+                    <span className="slider-field__label">
+                      Blur<span className="slider-field__value">{Math.round(m.blur ?? 0)} px</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0} max={50} step={1}
+                      value={m.blur ?? 0}
+                      style={sliderFill((m.blur ?? 0) / 50, 0, 1)}
+                      onChange={(e) => patch({ blur: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ blur: 0 })}
+                    />
+                  </label>
+                </div>
+              </details>
+            )
+          })()}
+
+          {selectedShapeItem && (() => {
+            const s = selectedShapeItem
+            const patch = (p: Partial<PlacedMedia>) => updateItem(s.id, p)
+            const kind: ShapeKind = (s.shapeKind as ShapeKind) || 'rect'
+            const fillIsTransparent = (s.fillColor ?? '') === 'transparent'
+            return (
+              <details className="collapsible" open>
+                <summary><h2><Icon.Shape />Shape</h2></summary>
+                <div className="collapsible__body">
+                  <div className="field" style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+                    {(['rect', 'ellipse', 'line'] as const).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        className={`btn btn--sm ${kind === k ? 'btn--accent' : ''}`}
+                        onClick={() => patch({ shapeKind: k })}
+                        title={k === 'rect' ? 'Rectangle' : k === 'ellipse' ? 'Ellipse / circle' : 'Line / divider'}
+                        style={{ flex: 1, padding: '6px 4px' }}
+                      >
+                        {k === 'rect' ? '▭' : k === 'ellipse' ? '◯' : '─'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {kind !== 'line' && (
+                    <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <span>Fill</span>
+                      <input
+                        className="color-swatch"
+                        type="color"
+                        value={fillIsTransparent ? '#ffffff' : (s.fillColor || '#ffffff')}
+                        onChange={(e) => patch({ fillColor: e.target.value })}
+                        disabled={fillIsTransparent}
+                      />
+                      <span className="field__value" style={{ flex: 1 }}>
+                        {fillIsTransparent ? 'none' : (s.fillColor || '#ffffff')}
+                      </span>
+                      <button
+                        type="button"
+                        className={`btn btn--sm ${fillIsTransparent ? 'btn--accent' : ''}`}
+                        title="Toggle transparent fill (outline-only)"
+                        onClick={() => patch({
+                          fillColor: fillIsTransparent ? '#ffffff' : 'transparent',
+                          // Make sure the shape stays visible when fill goes to none
+                          strokeWidth: fillIsTransparent ? (s.strokeWidth ?? 0) : Math.max(2, s.strokeWidth ?? 0),
+                        })}
+                      >
+                        ⌀
+                      </button>
+                    </label>
+                  )}
+
+                  <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <span>Stroke</span>
+                    <input
+                      className="color-swatch"
+                      type="color"
+                      value={s.strokeColor || '#ffffff'}
+                      onChange={(e) => patch({ strokeColor: e.target.value })}
+                    />
+                    <span className="field__value" style={{ flex: 1 }}>
+                      {s.strokeColor || '#ffffff'}
+                    </span>
+                  </label>
+
+                  <label className="slider-field" title="Outline thickness in px (slide-space). Double-click to reset.">
+                    <span className="slider-field__label">
+                      {kind === 'line' ? 'Thickness' : 'Stroke width'}
+                      <span className="slider-field__value">{Math.round(s.strokeWidth ?? 0)} px</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={kind === 'line' ? 80 : 40}
+                      step={1}
+                      value={s.strokeWidth ?? 0}
+                      style={sliderFill((s.strokeWidth ?? 0) / (kind === 'line' ? 80 : 40), 0, 1)}
+                      onChange={(e) => patch({ strokeWidth: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ strokeWidth: kind === 'line' ? 6 : 0 })}
+                    />
+                  </label>
+
+                  {kind === 'rect' && (
+                    <label className="slider-field" title="Rounded-corner radius in px. Double-click to reset.">
+                      <span className="slider-field__label">
+                        Corner radius
+                        <span className="slider-field__value">{Math.round(s.cornerRadius ?? 0)} px</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={Math.round(Math.min(s.width, s.height) / 2)}
+                        step={1}
+                        value={s.cornerRadius ?? 0}
+                        style={sliderFill((s.cornerRadius ?? 0) / Math.max(1, Math.min(s.width, s.height) / 2), 0, 1)}
+                        onChange={(e) => patch({ cornerRadius: Number(e.target.value) })}
+                        onDoubleClick={() => patch({ cornerRadius: 12 })}
+                      />
+                    </label>
+                  )}
                 </div>
               </details>
             )
@@ -2009,9 +2543,45 @@ export default function App() {
             const singleId = count === 1 ? selectedIds[0]! : null
             const singleOk = singleId ? !!items.find((x) => x.id === singleId) : false
             if (singleId && !singleOk) return null
+            const singleItem = singleId ? items.find((x) => x.id === singleId) : null
+            const isImage = singleItem?.type === 'image'
+            const isGif = singleItem?.type === 'gif'
             return (
               <div className="selection-panel">
                 <h2><Icon.Target />{count > 1 ? `Selection (${count})` : 'Selection'}</h2>
+                {singleItem && (
+                  <label className="check" title="When on, this element shows on every slide. The home slide drives its position; other slides render a non-interactive copy at the same coordinates.">
+                    <input
+                      type="checkbox"
+                      checked={!!singleItem.appearsOnAllSlides}
+                      onChange={(e) => updateItem(singleItem.id, { appearsOnAllSlides: e.target.checked })}
+                    />
+                    Show on all slides
+                  </label>
+                )}
+                {isImage && singleItem && (
+                  <RemoveBgButton item={singleItem} onResult={(src, name) => updateItem(singleItem.id, { src, name })} />
+                )}
+                {isGif && singleItem && (() => {
+                  const dur = singleItem.gifDuration ?? 5
+                  return (
+                    <label className="slider-field" title="How long this GIF's slide should run when exported as MP4. The GIF loops within that window. Double-click to reset.">
+                      <span className="slider-field__label">
+                        Loop duration<span className="slider-field__value">{dur.toFixed(1)} s</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={30}
+                        step={0.5}
+                        value={dur}
+                        style={sliderFill((dur - 1) / 29, 0, 1)}
+                        onChange={(e) => updateItem(singleItem.id, { gifDuration: Number(e.target.value) })}
+                        onDoubleClick={() => updateItem(singleItem.id, { gifDuration: 5 })}
+                      />
+                    </label>
+                  )
+                })()}
                 <button
                   type="button"
                   className="btn btn--ghost btn--danger btn--sm"
@@ -2027,6 +2597,120 @@ export default function App() {
               </div>
             )
           })()}
+
+          <details className="collapsible" open>
+            <summary><h2><Icon.Sliders />Background</h2></summary>
+            <div className="collapsible__body">
+              <BackgroundPanel
+                slides={slides}
+                activeSlideId={activeSlideId}
+                selectedMediaItem={selectedMediaItem}
+                setAllSlidesBgVibe={setAllSlidesBgVibe}
+                setSlideBgVibe={setSlideBgVibe}
+                randomizeAllSlideVibes={randomizeAllSlideVibes}
+                randomizeSlideVibe={randomizeSlideVibe}
+              />
+            </div>
+          </details>
+
+          <details className="collapsible" open>
+            <summary><h2><Icon.Grid />Guides & snap</h2></summary>
+            <div className="collapsible__body">
+              <label className="check">
+                <input type="checkbox" checked={seamlessSlides} onChange={(e) => setSeamlessSlides(e.target.checked)} />
+                Seamless slides
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
+                Hidden zone
+              </label>
+              <hr />
+              <label className="check">
+                <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+                Grid
+              </label>
+              {showGrid && (() => {
+                // Detents snap to values that evenly divide the slide; show a
+                // tiny readout describing what the current size produces.
+                const dividesW = dimensions.width % gridSize === 0
+                const dividesH = dimensions.height % gridSize === 0
+                const cols = dividesW ? dimensions.width / gridSize : null
+                const rows = dividesH ? dimensions.height / gridSize : null
+                let badge: string
+                if (cols !== null && rows !== null) badge = `${cols} × ${rows}`
+                else if (cols !== null) badge = `${cols} cols`
+                else if (rows !== null) badge = `${rows} rows`
+                else badge = 'off-grid'
+                return (
+                  <>
+                    <label
+                      className="slider-field"
+                      title="Cell size in px. The slider snaps to values that produce a whole number of grid cells across the slide (the small ticks). Hold Shift while dragging to bypass snapping; double-click to reset."
+                    >
+                      <span className="slider-field__label">
+                        Grid size
+                        <span className="slider-field__value">{gridSize} px · {badge}</span>
+                      </span>
+                      <input
+                        type="range"
+                        list="tiovivo-grid-detents"
+                        min={4}
+                        max={400}
+                        step={1}
+                        value={gridSize}
+                        style={sliderFill((gridSize - 4) / (400 - 4), 0, 1)}
+                        onChange={(e) => setGridSize(snapGridToDetent(Number(e.target.value)))}
+                        onDoubleClick={() => setGridSize(40)}
+                      />
+                      <datalist id="tiovivo-grid-detents">
+                        {gridDetents.map((v) => <option key={v} value={v} />)}
+                      </datalist>
+                    </label>
+                    <label className="slider-field" title="Visibility of the grid overlay on top of media. Double-click to reset.">
+                      <span className="slider-field__label">
+                        Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={gridOpacity}
+                        style={sliderFill(gridOpacity, 0, 1)}
+                        onChange={(e) => setGridOpacity(Number(e.target.value))}
+                        onDoubleClick={() => setGridOpacity(0.1)}
+                      />
+                    </label>
+                  </>
+                )
+              })()}
+              <label className="check">
+                <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
+                Center lines
+              </label>
+              <label className="check" title="Dim the area where Instagram's carousel page-dot indicator and on-canvas chrome sit, so you don't put critical text under them.">
+                <input type="checkbox" checked={showIgSafeArea} onChange={(e) => setShowIgSafeArea(e.target.checked)} />
+                IG safe area
+              </label>
+              <hr />
+              <label className="check">
+                <input type="checkbox" checked={snapGrid} onChange={(e) => setSnapGrid(e.target.checked)} />
+                Snap to grid
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={snapCenter} onChange={(e) => setSnapCenter(e.target.checked)} />
+                Snap to center
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={snapItems} onChange={(e) => setSnapItems(e.target.checked)} />
+                Snap to other media
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={snapMargins} onChange={(e) => setSnapMargins(e.target.checked)} />
+                Snap to margins
+              </label>
+            </div>
+          </details>
         </aside>
 
         <main className="app__main">

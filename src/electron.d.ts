@@ -82,6 +82,18 @@ export interface ElectronAPI {
   onOpenProjectFile: (
     cb: (payload: { path: string; buffer: Uint8Array }) => void,
   ) => () => void
+
+  /** Park slide PNG/MP4 bytes in a temp file ahead of an OS drag. */
+  prepareSlideDrag: (options: {
+    filename: string
+    buffer: Uint8Array
+  }) => Promise<string>
+
+  /** Trigger an OS-level drag. Must be called inside the dragstart handler. */
+  startSlideDrag: (options: {
+    filePath: string
+    iconDataUrl: string
+  }) => void
 }
 
 declare global {

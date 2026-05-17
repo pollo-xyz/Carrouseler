@@ -5,7 +5,9 @@ import { generateThumbnail } from '../lib/thumbnail'
 import type { BgVibe } from '../lib/bgVibe'
 import { randomSeed } from '../lib/bgVibe'
 
-export type MediaType = 'image' | 'video' | 'gif' | 'text'
+export type MediaType = 'image' | 'video' | 'gif' | 'text' | 'shape'
+
+export type ShapeKind = 'rect' | 'ellipse' | 'line'
 
 export type TextAlign = 'left' | 'center' | 'right' | 'justify'
 
@@ -77,6 +79,36 @@ export interface PlacedMedia {
   lineHeight?: number    // multiplier, 1 = single
   letterSpacing?: number // px
   fillMode?: boolean     // when true, fontSize is derived to fill (width, height)
+  // Text effects — all optional, applied via Konva.Text props
+  shadowEnabled?: boolean
+  shadowColor?: string
+  shadowBlur?: number       // px
+  shadowOffsetX?: number    // px
+  shadowOffsetY?: number    // px
+  shadowOpacity?: number    // 0..1
+  // Background pill behind the text. 0 padding / no color = off.
+  textBgColor?: string
+  textBgPadding?: number    // px
+  textBgCornerRadius?: number // px
+  textBgOpacity?: number    // 0..1
+
+  // Shape-only fields (only populated when type === 'shape')
+  shapeKind?: ShapeKind
+  fillColor?: string     // shape fill — CSS color or 'transparent'
+  strokeColor?: string   // shape stroke — CSS color
+  strokeWidth?: number   // px in slide-space
+  cornerRadius?: number  // px in slide-space (rect only)
+
+  /** "Master" flag — when true the item is rendered on every slide, not
+   *  just the one named by slideId. Edits propagate everywhere (there's
+   *  still only one underlying record). The item's slideId tracks its
+   *  "home" slide so deleting other slides leaves it intact. */
+  appearsOnAllSlides?: boolean
+
+  /** How long a GIF slide's exported MP4 should run, in seconds. Only
+   *  meaningful when type === 'gif'. Default 5s. Slides containing
+   *  multiple GIFs use the longest of their gifDurations. */
+  gifDuration?: number
 }
 
 export interface Slide {
@@ -134,6 +166,14 @@ interface TiovivoState {
   showCenterGuides: boolean
   seamlessSlides: boolean
   showHiddenZone: boolean
+  /** Dim overlay marking where Instagram paints its chrome (page-dot indicator
+   *  at the bottom-center) so designers don't put critical text there. */
+  showIgSafeArea: boolean
+  /** Preview mode — when on, hide all editor chrome that wouldn't appear
+   *  in the export (grid, center guides, IG safe area, seamless-slide
+   *  dotted dividers, upscale-warning badges). Transient view state; not
+   *  persisted to .vpost. */
+  previewMode: boolean
   snapGrid: boolean
   snapCenter: boolean
   snapItems: boolean
@@ -162,6 +202,7 @@ interface TiovivoState {
 
   addMedia: (file: File, naturalW: number, naturalH: number) => void
   addText: (overrides?: Partial<PlacedMedia>) => string
+  addShape: (kind?: ShapeKind, overrides?: Partial<PlacedMedia>) => string
   /** Insert clones onto the active slide. Strips id/slideId from each template
    *  and assigns fresh ones; returns the new item ids. */
   pasteItems: (templates: Omit<PlacedMedia, 'id' | 'slideId'>[]) => string[]
@@ -181,6 +222,8 @@ interface TiovivoState {
 
   setSeamlessSlides: (v: boolean) => void
   setShowHiddenZone: (v: boolean) => void
+  setShowIgSafeArea: (v: boolean) => void
+  setPreviewMode: (v: boolean) => void
   setShowGrid: (v: boolean) => void
   setGridSize: (n: number) => void
   setGridOpacity: (n: number) => void
@@ -245,6 +288,7 @@ export interface GuideSettings {
   showCenterGuides: boolean
   seamlessSlides: boolean
   showHiddenZone: boolean
+  showIgSafeArea: boolean
   marginPct: number
   snapGrid: boolean
   snapCenter: boolean
@@ -359,11 +403,13 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
 
   showGrid: false,
   gridSize: 40,
-  gridOpacity: 0.45,
+  gridOpacity: 0.1,
   marginPct: 4,
   showCenterGuides: false,
   seamlessSlides: false,
   showHiddenZone: true,
+  showIgSafeArea: false,
+  previewMode: false,
   snapGrid: false,
   snapCenter: true,
   snapItems: true,
@@ -494,12 +540,18 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     pushHistory('removeSlide:' + id)
     const fallback = slides[idx + 1]?.id ?? slides[idx - 1]!.id
     const nextSlides = slides.filter((s) => s.id !== id)
-    const removedItems = items.filter((i) => i.slideId === id)
+    // Items native to the slide we're removing — these go. Items flagged as
+    // master ("appears on all slides") whose home slide is being removed
+    // get reparented to the fallback slide so the master content survives.
+    const removedItems = items.filter((i) => i.slideId === id && !i.appearsOnAllSlides)
+    const nextItems = items
+      .filter((i) => !removedItems.some((r) => r.id === i.id))
+      .map((i) => (i.slideId === id && i.appearsOnAllSlides ? { ...i, slideId: fallback } : i))
     // Note: don't revoke URLs so undo can still use them.
     set({
       slides: nextSlides,
       activeSlideId: activeSlideId === id ? fallback : activeSlideId,
-      items: items.filter((i) => i.slideId !== id),
+      items: nextItems,
       selectedIds: get().selectedIds.filter((sid) => !removedItems.some((r) => r.id === sid)),
     })
   },
@@ -622,6 +674,64 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       lineHeight: lastTextStyle.lineHeight,
       letterSpacing: lastTextStyle.letterSpacing,
       fillMode: lastTextStyle.fillMode,
+      ...overrides,
+    }
+    set({ items: [...items, item], selectedIds: [item.id] })
+    debouncedThumbRefresh(activeSlideId)
+    return item.id
+  },
+
+  addShape: (kind = 'rect', overrides) => {
+    pushHistory('addShape')
+    const { dimensions, activeSlideId, items, slides } = get()
+    const slide = slides.find((s) => s.id === activeSlideId)
+    // Default fill picks something that contrasts with the slide background
+    // so a freshly-added shape is visible without the user having to touch
+    // colour pickers first.
+    const bgHex = (slide?.bgColor || '#ffffff').replace('#', '')
+    const br = parseInt(bgHex.slice(0, 2), 16) || 0
+    const bg = parseInt(bgHex.slice(2, 4), 16) || 0
+    const bb = parseInt(bgHex.slice(4, 6), 16) || 0
+    const bgLum = 0.2126 * br + 0.7152 * bg + 0.0722 * bb
+    const defaultFill = bgLum > 140 ? '#111111' : '#ffffff'
+
+    // Roughly 35% of the smaller slide dimension feels right — big enough to
+    // grab a transformer handle, small enough not to dominate the slide.
+    const base = Math.min(dimensions.width, dimensions.height) * 0.35
+    const w = Math.round(kind === 'line' ? base * 1.4 : base)
+    const h = Math.round(kind === 'line' ? Math.max(6, base * 0.04) : base)
+
+    const item: PlacedMedia = {
+      id: newId(),
+      slideId: activeSlideId,
+      type: 'shape',
+      src: '',
+      name: kind === 'rect' ? 'Rectangle' : kind === 'ellipse' ? 'Ellipse' : 'Line',
+      x: Math.round((dimensions.width - w) / 2),
+      y: Math.round((dimensions.height - h) / 2),
+      width: w,
+      height: h,
+      rotation: 0,
+      naturalWidth: 0,
+      naturalHeight: 0,
+      brightness: 0,
+      contrast: 0,
+      saturation: 1,
+      blur: 0,
+      flipX: false,
+      flipY: false,
+      cropX: 0,
+      cropY: 0,
+      cropW: 0,
+      cropH: 0,
+      coverTime: 0,
+      trimStart: 0,
+      trimEnd: 0,
+      shapeKind: kind,
+      fillColor: kind === 'line' ? 'transparent' : defaultFill,
+      strokeColor: defaultFill,
+      strokeWidth: kind === 'line' ? Math.max(2, Math.round(h)) : 0,
+      cornerRadius: kind === 'rect' ? 12 : 0,
       ...overrides,
     }
     set({ items: [...items, item], selectedIds: [item.id] })
@@ -762,6 +872,10 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   setSnapItems: (v) => set({ snapItems: v, isDirty: true }),
   setSeamlessSlides: (v) => set({ seamlessSlides: v, isDirty: true }),
   setShowHiddenZone: (v) => set({ showHiddenZone: v, isDirty: true }),
+  setShowIgSafeArea: (v) => set({ showIgSafeArea: v, isDirty: true }),
+  // Preview mode is a transient view toggle — does NOT mark the document
+  // dirty since it doesn't change anything that's saved.
+  setPreviewMode: (v) => set({ previewMode: v }),
   setSnapMargins: (v) => set({ snapMargins: v, isDirty: true }),
 
   setSlideBgColor: (slideId, color) => {
@@ -1100,6 +1214,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       showCenterGuides: g.showCenterGuides ?? cur.showCenterGuides,
       seamlessSlides: g.seamlessSlides ?? cur.seamlessSlides,
       showHiddenZone: g.showHiddenZone ?? cur.showHiddenZone,
+      showIgSafeArea: g.showIgSafeArea ?? cur.showIgSafeArea,
       marginPct: g.marginPct ?? cur.marginPct,
       snapGrid: g.snapGrid ?? cur.snapGrid,
       snapCenter: g.snapCenter ?? cur.snapCenter,

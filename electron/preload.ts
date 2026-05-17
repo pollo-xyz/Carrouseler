@@ -177,4 +177,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:open-project-file', h)
     return () => ipcRenderer.off('app:open-project-file', h)
   },
+
+  /** Park slide bytes in a temp file so a native drag-out can hand them off
+   *  to Finder/Explorer/Slack/etc. Returns the absolute temp path. */
+  prepareSlideDrag: (options: {
+    filename: string
+    buffer: Uint8Array
+  }) => ipcRenderer.invoke('slide-drag:prepare', options) as Promise<string>,
+
+  /** Trigger the OS-level drag for a previously-prepared file. MUST be called
+   *  synchronously inside the renderer's `dragstart` handler. */
+  startSlideDrag: (options: {
+    filePath: string
+    iconDataUrl: string
+  }) => ipcRenderer.send('slide-drag:start', options),
 })

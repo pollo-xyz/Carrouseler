@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session as electronSession } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, session as electronSession } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -743,6 +743,68 @@ ipcMain.handle('write-file', async (_event, options: {
   fs.writeFileSync(options.path, Buffer.from(options.buffer))
   if (options.path.toLowerCase().endsWith('.vpost')) pushRecent(options.path)
   return options.path
+})
+
+/* ------------------------------------------------------------------ */
+/*  Drag-out export                                                    */
+/* ------------------------------------------------------------------ */
+/* Renderer renders the slide to PNG bytes and asks main to (a) park   */
+/* the bytes in a temp file and (b) invoke webContents.startDrag with  */
+/* that file. Two-step because webContents.startDrag must be called    */
+/* synchronously inside the renderer's dragstart event, but the bytes  */
+/* must already exist on disk before the OS-level drag begins.         */
+
+const dragTempDir = path.join(app.getPath('temp'), 'tiovivo-drag')
+try { fs.mkdirSync(dragTempDir, { recursive: true }) } catch { /* exists */ }
+
+// Drop any files in our drag temp dir on quit so we don't leave clutter
+// across sessions. Failures are best-effort.
+app.on('before-quit', () => {
+  try {
+    for (const f of fs.readdirSync(dragTempDir)) {
+      try { fs.unlinkSync(path.join(dragTempDir, f)) } catch { /* ignore */ }
+    }
+  } catch { /* dir missing */ }
+})
+
+// Sanitize a filename for cross-platform safety. Reused logic from the
+// renderer (kept here too so main never trusts a renderer-built path).
+function safeFilename(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '_').replace(/[. ]+$/g, '').slice(0, 120) || 'slide'
+}
+
+ipcMain.handle('slide-drag:prepare', async (_event, options: {
+  filename: string
+  buffer: Uint8Array
+}) => {
+  // Park the bytes in a unique per-call file so two quick drags don't clobber
+  // each other before either has reached its destination.
+  const safe = safeFilename(options.filename)
+  const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  const fp = path.join(dragTempDir, `${stamp}-${safe}`)
+  fs.writeFileSync(fp, Buffer.from(options.buffer))
+  return fp
+})
+
+ipcMain.on('slide-drag:start', (event, options: {
+  filePath: string
+  iconDataUrl: string
+}) => {
+  // Constrain the icon — Electron requires a NativeImage even for the same
+  // file you're dragging. Empty / undecodable data falls back to a
+  // 1×1 placeholder so the drag still works visually.
+  let icon = nativeImage.createFromDataURL(options.iconDataUrl)
+  if (icon.isEmpty()) {
+    icon = nativeImage.createEmpty()
+  }
+  try {
+    event.sender.startDrag({
+      file: options.filePath,
+      icon,
+    })
+  } catch (err) {
+    console.error('[slide-drag] startDrag failed:', err)
+  }
 })
 
 /* ------------------------------------------------------------------ */

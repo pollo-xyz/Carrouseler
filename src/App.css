@@ -116,7 +116,7 @@
    window chrome. Windows / Linux don't have them on the left so the
    default 18px is fine. */
 .platform-mac .app__header {
-  padding-left: 82px;
+  padding-left: 110px;
 }
 
 /* ── In-app menu bar (Windows / Linux only) ─────────────────────────── */
@@ -359,30 +359,42 @@
   padding: 0 4px;
 }
 
+/* Each W/H block is a single visual chip: small-caps label + numeric input.
+   align-items: stretch makes the label fill the full chip height so its
+   capital letter is vertically centred against the digits; line-height: 1
+   on the label gets rid of the extra baseline padding that pushed the
+   letter visibly upward of the input numbers. */
 .app__custom-size label {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  align-items: stretch;
+  gap: 6px;
+  height: 30px;
   cursor: default;
   font-variant-caps: all-small-caps;
   letter-spacing: 0.08em;
   color: var(--text-dim);
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 30px;
 }
 
 .app__custom-size input {
-  width: 5.2rem;
-  padding: 6px 9px;
+  /* Wide enough for 4 digits in tabular numerals + small breathing room.
+     We never realistically exceed 9999 px on either axis (the upper limit
+     in the store is 8192) so anything more is wasted header real estate. */
+  width: 3.6rem;
+  height: 30px;
+  padding: 0 9px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.4);
   color: var(--text-bright);
   text-align: right;
-  font-size: 1.15rem;
+  font-size: 0.98rem;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+  line-height: 30px;
   transition: border-color var(--dur) var(--ease),
     background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
@@ -421,8 +433,8 @@ input.scrubbable:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 30px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--r-xs);
@@ -1195,7 +1207,8 @@ input[type='color']::-moz-color-swatch {
    would otherwise inherit text-input padding that shrinks the visible swatch. */
 .field input:not([type='color']),
 .field select,
-.field textarea {
+.field textarea,
+.field .font-picker__input {
   padding: 6px 9px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
@@ -1210,17 +1223,201 @@ input[type='color']::-moz-color-swatch {
 
 .field input:not([type='color']):hover,
 .field select:hover,
-.field textarea:hover {
+.field textarea:hover,
+.field .font-picker__input:hover {
   border-color: var(--border-strong);
 }
 
 .field input:not([type='color']):focus,
 .field select:focus,
-.field textarea:focus {
+.field textarea:focus,
+.field .font-picker__input:focus {
   outline: none;
   border-color: var(--accent-strong);
   background: rgba(59, 130, 246, 0.04);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+/* ── Font picker (custom combobox with rendered-in-font previews) ── */
+.font-picker {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.font-picker__input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.font-picker__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: rgba(18, 18, 26, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.font-picker__item {
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--text-bright);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Each row's `font-family` is set inline so the row renders in its own font. */
+}
+.font-picker__item--active {
+  background: rgba(59, 130, 246, 0.22);
+}
+.font-picker__item--current {
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+.font-picker__empty {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ── Remove-bg spinner (matches the button's currentColor) ── */
+.remove-bg-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  border-top-color: currentColor;
+  animation: remove-bg-spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes remove-bg-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Giphy picker popover ── */
+.gif-picker {
+  position: fixed;
+  width: 380px;
+  max-height: 480px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 18, 26, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.gif-picker__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.gif-picker__tab {
+  flex: 1;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.gif-picker__tab:hover { color: rgba(255, 255, 255, 0.85); }
+.gif-picker__tab--active {
+  background: rgba(59, 130, 246, 0.18);
+  color: rgba(180, 210, 255, 0.95);
+}
+.gif-picker__search {
+  margin: 0 8px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 0.85rem;
+  outline: none;
+}
+.gif-picker__search:focus {
+  border-color: var(--accent-strong);
+  background: rgba(59, 130, 246, 0.04);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+.gif-picker__grid {
+  /* Flexbox over CSS Grid — when the grid was given `flex: 1` height the
+     auto-row tracks shrank below the cells' aspect-ratio height, leaving
+     each row top only ~45 px from the previous one (cells were 117 px
+     tall, so each row overlapped two-thirds into the next). Flex-wrap
+     respects per-item explicit height/aspect cleanly. */
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 220px;
+}
+.gif-picker__cell {
+  position: relative;
+  padding: 0;
+  /* Three uniform 1:1 cells per row. width = (100% - 2 × gap) / 3 */
+  width: calc((100% - 12px) / 3);
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.gif-picker__cell:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: scale(1.03);
+}
+.gif-picker__cell-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.gif-picker__empty {
+  flex: 1 1 100%;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+.gif-picker__footer {
+  padding: 6px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: right;
 }
 
 /* Select arrow */

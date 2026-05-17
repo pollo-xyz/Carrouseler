@@ -50,6 +50,9 @@ jobs:
         run: npm run dist -- --config.extraMetadata.version=${{ env.BUILD_VERSION }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Vite only exposes variables prefixed with VITE_ to the renderer.
+          # This is baked into desktop artifacts at build time.
+          VITE_GIPHY_API_KEY: ${{ secrets.VITE_GIPHY_API_KEY }}
           # macOS code signing + notarization — electron-builder picks these
           # up automatically. On the windows-latest runner they're inert.
           # CSC_LINK accepts either a file path or a base64 blob; we use the

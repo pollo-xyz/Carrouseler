@@ -2130,6 +2130,7 @@ const EditorStage = forwardRef<
   const snapGuidesLayerRef = useRef<Konva.Layer>(null)
   const veilLayerRef = useRef<Konva.Layer>(null)
   const overlayLayerRef = useRef<Konva.Layer>(null)
+  const igSafeAreaLayerRef = useRef<Konva.Layer>(null)
   const trRef = useRef<Konva.Transformer>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const cropApplyRef = useRef<(() => void) | null>(null)
@@ -2647,7 +2648,7 @@ const EditorStage = forwardRef<
         // Also temporarily reset the stage transform so toCanvas's x/y/width/height
         // are interpreted in artboard (world) coords at 1:1, independent of zoom.
         const stage = stageRef.current
-        const overlays = [veilLayerRef.current, guidesLayerRef.current, snapGuidesLayerRef.current, overlayLayerRef.current]
+        const overlays = [veilLayerRef.current, guidesLayerRef.current, snapGuidesLayerRef.current, overlayLayerRef.current, igSafeAreaLayerRef.current]
         const wasVisible = overlays.map((l) => l?.visible() ?? true)
         const prevX = stage.x(), prevY = stage.y()
         const prevSX = stage.scaleX(), prevSY = stage.scaleY()
@@ -2710,17 +2711,17 @@ const EditorStage = forwardRef<
   /* ---- export ---- */
   const exportSlidePng = useCallback(
     async (slideId: string) => {
-      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current
+      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current, igl = igSafeAreaLayerRef.current
       if (!stage) return null
       const idx = slides.findIndex((s) => s.id === slideId)
       if (idx < 0) return null
       const ap = artboardPositions[idx]!
       const ps = stage.scaleX(), pp = stage.position()
       stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-      if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide()
+      if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide(); if (igl) igl.hide()
       stage.draw()
       const blob = (await stage.toBlob({ x: ap.x, y: ap.y, width: W, height: H, pixelRatio: 1, mimeType: 'image/png', quality: 1 })) as Blob | null
-      if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show()
+      if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show(); if (igl) igl.show()
       stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
       return blob
     },
@@ -2798,18 +2799,20 @@ const EditorStage = forwardRef<
       onPreviewFrame?: (dataUrl: string) => void,
     ): Promise<string | null> => {
       if (!window.electronAPI) return null
-      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current
+      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current, igl = igSafeAreaLayerRef.current
       if (!stage) return null
       const st = useTiovivoStore.getState()
       const idx = st.slides.findIndex((s) => s.id === slideId)
       if (idx < 0) return null
       const ap = artboardPositions[idx]!
 
-      // Find all animated items on this slide. Videos drive seek-based
-      // capture; GIFs animate themselves inside their HTMLImageElement so we
-      // only need their target loop length to size the output.
+      // Find all animated items visible on this slide. GIF masters are rendered
+      // as real animated ghosts on every slide, so any slide showing one must
+      // export as MP4 even though the source item's home slideId differs.
       const slideVideoItems = st.items.filter((i) => i.slideId === slideId && i.type === 'video')
-      const slideGifItems = st.items.filter((i) => i.slideId === slideId && i.type === 'gif')
+      const slideGifItems = st.items.filter((i) =>
+        i.type === 'gif' && (i.slideId === slideId || (i.appearsOnAllSlides && i.slideId !== slideId)),
+      )
       if (!slideVideoItems.length && !slideGifItems.length) return null
 
       // Get the video elements and determine max duration (respecting trim)
@@ -2858,7 +2861,7 @@ const EditorStage = forwardRef<
           })
           const ps = stage.scaleX(), pp = stage.position()
           stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-          if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide()
+          if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide(); if (igl) igl.hide()
           try {
             const startMs = performance.now()
             let pendingWrite: Promise<void> = Promise.resolve()
@@ -2885,7 +2888,7 @@ const EditorStage = forwardRef<
             const result = await window.electronAPI.endVideoEncode({ sessionId })
             return result
           } finally {
-            if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show()
+            if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show(); if (igl) igl.show()
             stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
           }
         } catch (err) {
@@ -2931,7 +2934,7 @@ const EditorStage = forwardRef<
         // Save & reset stage transform
         const ps = stage.scaleX(), pp = stage.position()
         stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-        if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide()
+        if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide(); if (igl) igl.hide()
 
         // ---- Playback-driven capture ----
         // Old approach seeked every video every frame (~80-150 ms per seek
@@ -3142,7 +3145,7 @@ const EditorStage = forwardRef<
         await pendingWrite
 
         // Restore stage
-        if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show()
+        if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show(); if (igl) igl.show()
         stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
 
         // Finish encoding
@@ -3269,28 +3272,25 @@ const EditorStage = forwardRef<
           them. Otherwise --chrome-fg (white-on-dark) would disappear
           against a white slide bg. The pill plus z-index sits above all
           Konva canvases via standard stacking-context rules. */}
-      <div style={{
-        position: 'absolute',
-        bottom: 10,
-        right: 12,
-        zIndex: 10,
-        display: 'flex',
-        gap: 2,
-        alignItems: 'center',
-        background: 'rgba(15, 15, 22, 0.82)',
-        backdropFilter: 'blur(10px) saturate(1.2)',
-        WebkitBackdropFilter: 'blur(10px) saturate(1.2)',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
-        borderRadius: 8,
-        padding: 2,
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.35)',
-      }}>
+      <div
+        className="zoom-pill"
+        style={{
+          position: 'absolute',
+          bottom: 10,
+          right: 12,
+          zIndex: 10,
+          display: 'flex',
+          gap: 2,
+          alignItems: 'center',
+          padding: 2,
+        }}
+      >
         <button
           type="button"
           className="btn btn--ghost btn--sm"
           onClick={fitToScreen}
           title="Fit to screen"
-          style={{ fontSize: '0.8rem', padding: '5px 10px', color: 'rgba(255,255,255,0.85)' }}
+          style={{ fontSize: '0.76rem', padding: '5px 10px', color: 'rgba(255,255,255,0.78)' }}
         >
           Fit
         </button>
@@ -3300,9 +3300,9 @@ const EditorStage = forwardRef<
           onClick={zoomTo100}
           title="Reset zoom to 100%"
           style={{
-            fontSize: '0.8rem',
+            fontSize: '0.76rem',
             padding: '5px 6px',
-            color: 'rgba(255,255,255,0.7)',
+            color: 'rgba(255,255,255,0.58)',
             fontFamily: 'var(--mono)',
             minWidth: 48,
             textAlign: 'right',
@@ -3365,7 +3365,12 @@ const EditorStage = forwardRef<
                   a glance even when the artboards are far apart or zoomed
                   out. */}
               <div
-                className={`artboard-label ${isActive ? 'artboard-label--active' : ''}`}
+                className={[
+                  'artboard-label',
+                  isActive ? 'artboard-label--active' : '',
+                  isDropTarget ? 'artboard-label--drop-target' : '',
+                  isDragged ? 'artboard-label--dragged' : '',
+                ].filter(Boolean).join(' ')}
                 onMouseDown={(e) => {
                   if (e.button !== 0) return
                   e.stopPropagation()
@@ -3382,30 +3387,8 @@ const EditorStage = forwardRef<
                   position: 'absolute',
                   left: screenX,
                   top: screenY - 26,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  fontFamily: 'system-ui, sans-serif',
-                  color: isDragged ? 'var(--accent)' : isDropTarget ? 'var(--accent)' : 'var(--chrome-fg)',
-                  whiteSpace: 'nowrap',
-                  userSelect: 'none',
                   cursor: isReordering ? 'grabbing' : 'grab',
                   pointerEvents: 'auto',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '2px 6px',
-                  borderRadius: 4,
-                  // Active slide gets a soft accent fill; dragged slide takes
-                  // over with the stronger violet to keep drag feedback clear.
-                  background: isDragged
-                    ? 'rgba(124,108,240,0.2)'
-                    : isActive
-                      ? 'rgba(59, 130, 246, 0.14)'
-                      : 'transparent',
-                  boxShadow: isActive && !isDragged
-                    ? 'inset 0 0 0 1px rgba(59, 130, 246, 0.32)'
-                    : 'none',
-                  transition: 'color 0.15s, background 0.15s, box-shadow 0.15s',
                   opacity: isDragged ? 0.7 : 1,
                 }}
               >
@@ -3464,6 +3447,7 @@ const EditorStage = forwardRef<
                   }
                   return (
                     <span
+                      className="artboard-label__name"
                       title="Double-click to rename"
                       onDoubleClick={(e) => {
                         e.stopPropagation()
@@ -3484,33 +3468,20 @@ const EditorStage = forwardRef<
                 })()}
                 <button
                   type="button"
+                  className={`artboard-label__export ${slide.exportEnabled ? 'artboard-label__export--on' : ''}`}
                   title={slide.exportEnabled ? 'Included in export — click to skip' : 'Skipped in export — click to include'}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); toggleSlideExport(slide.id) }}
-                  style={{
-                    background: slide.exportEnabled ? 'rgba(124,108,240,0.25)' : 'transparent',
-                    border: `1px solid ${slide.exportEnabled ? 'rgba(124,108,240,0.5)' : 'var(--chrome-fg-faint)'}`,
-                    color: slide.exportEnabled ? '#fff' : 'var(--chrome-fg-dim)',
-                    borderRadius: 3, cursor: 'pointer', fontSize: 10,
-                    padding: '1px 5px', lineHeight: 1.3, fontWeight: 600,
-                    fontFamily: 'system-ui, sans-serif',
-                  }}
                 >
                   {slide.exportEnabled ? '✓ export' : '⌀ skip'}
                 </button>
                 {onExportSingleSlide && (
                   <button
                     type="button"
+                    className="artboard-label__icon"
                     title="Export only this slide"
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); onExportSingleSlide(slide.id) }}
-                    style={{
-                      background: 'none', border: 'none', color: 'var(--chrome-fg-dim)',
-                      cursor: 'pointer', padding: 2, lineHeight: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--chrome-fg)' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--chrome-fg-dim)' }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 4v12" />
@@ -3521,6 +3492,7 @@ const EditorStage = forwardRef<
                 )}
                 {window.electronAPI?.prepareSlideDrag && (
                   <div
+                    className="artboard-label__icon"
                     draggable
                     title="Drag to Finder / Slack / a browser tab to export this slide as a PNG"
                     onMouseDown={(e) => {
@@ -3531,17 +3503,7 @@ const EditorStage = forwardRef<
                       e.stopPropagation()
                       onSlideDragStart(e, slide.id)
                     }}
-                    style={{
-                      color: 'var(--chrome-fg-dim)',
-                      cursor: 'grab',
-                      padding: 2,
-                      lineHeight: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--chrome-fg)' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--chrome-fg-dim)' }}
+                    style={{ cursor: 'grab' }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                       <circle cx="9" cy="6" r="1.2" fill="currentColor" stroke="none" />
@@ -3555,16 +3517,10 @@ const EditorStage = forwardRef<
                 )}
                 <button
                   type="button"
+                  className="artboard-label__icon"
                   title="Duplicate slide"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); duplicateSlide(slide.id) }}
-                  style={{
-                    background: 'none', border: 'none', color: 'var(--chrome-fg-dim)',
-                    cursor: 'pointer', padding: 2, lineHeight: 0,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--chrome-fg)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--chrome-fg-dim)' }}
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="8" y="8" width="13" height="13" rx="2" />
@@ -3574,14 +3530,10 @@ const EditorStage = forwardRef<
                 {slides.length > 1 && (
                   <button
                     type="button"
-                    className="artboard-remove-btn"
+                    className="artboard-label__icon artboard-label__icon--danger"
                     title="Remove slide"
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); removeSlide(slide.id) }}
-                    style={{
-                      background: 'none', border: 'none', color: 'var(--chrome-fg-faint)',
-                      cursor: 'pointer', fontSize: 13, padding: '0 4px', lineHeight: 1,
-                    }}
                   >
                     ✕
                   </button>
@@ -3624,14 +3576,12 @@ const EditorStage = forwardRef<
                   palette is the source of truth in that case. */}
               {!slide.bgVibe && (
                 <div
+                  className="artboard-bg-chip"
                   style={{
                     position: 'absolute',
                     left: screenX,
                     top: screenY + screenH + 8,
                     pointerEvents: 'auto',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
                   }}
                 >
                   <input
@@ -3639,16 +3589,8 @@ const EditorStage = forwardRef<
                     value={slide.bgColor || '#ffffff'}
                     onChange={(e) => setSlideBgColor(slide.id, e.target.value)}
                     title="Slide background color"
-                    style={{
-                      width: 22, height: 22,
-                      border: '1.5px solid var(--chrome-fg-faint)',
-                      borderRadius: 4,
-                      padding: 0,
-                      cursor: 'pointer',
-                      background: 'transparent',
-                    }}
                   />
-                  <span style={{ fontSize: 11, color: 'var(--chrome-fg-dim)', fontFamily: 'var(--mono)' }}>
+                  <span className="artboard-bg-chip__value">
                     {slide.bgColor || '#ffffff'}
                   </span>
                 </div>
@@ -3815,6 +3757,7 @@ const EditorStage = forwardRef<
           return (
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             <div
+              className="floating-toolbar"
               style={{
                 position: 'absolute',
                 left: stx,
@@ -3822,16 +3765,6 @@ const EditorStage = forwardRef<
                 transform: 'translateX(-50%)',
                 pointerEvents: 'auto',
                 zIndex: 2,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2,
-                padding: '3px 4px',
-                background: 'rgba(30,30,40,0.95)',
-                borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.1)',
-                boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
-                backdropFilter: 'blur(12px)',
-                whiteSpace: 'nowrap',
               }}
             >
               {!cropItemId ? (
@@ -4497,7 +4430,7 @@ const EditorStage = forwardRef<
               (9:16), so we branch on aspect ratio. listening={false} so
               the overlay never absorbs pointer events. */}
           {showIgSafeArea && !previewMode && (
-            <Layer listening={false}>
+            <Layer ref={igSafeAreaLayerRef} listening={false}>
               {slides.map((slide, i) => {
                 const ap = artboardPositions[i]!
                 const aspect = W / H

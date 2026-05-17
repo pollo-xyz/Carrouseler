@@ -17,9 +17,29 @@ Drop in images and videos, arrange them across slides, tune crops and filters, d
 [![Konva](https://img.shields.io/badge/Konva-10-0D83CD)](https://konvajs.org/)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-static-007808?logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
 
-<img src="src/assets/hero.png" alt="Tiovivo layered card illustration" width="320" />
+<img src="docs/screenshots/editor-overview.png" alt="Tiovivo editor showing a portrait carousel artboard, slide controls, and export tools" width="880" />
+
+The desktop editor for building multi-slide social posts with static images, text, GIFs, and video.
 
 </div>
+
+---
+
+## Product tour
+
+Tiovivo keeps the full carousel in view while still giving each slide its own export controls, background settings, layer stack, and design guides.
+
+![Text editing controls with the selected text box on the canvas](docs/screenshots/text-tools.png)
+
+**Text and layer editing:** add text, style it, align it, resize it, and manage selected items directly from the side panel and floating canvas toolbar.
+
+![Two seamless slides with grid, center guides, and seam markers visible](docs/screenshots/guides-seamless.png)
+
+**Guides for layout:** toggle seamless mode, grid, center guides, hidden-zone masking, snap controls, and Instagram safe-area overlays while composing.
+
+![Preview mode showing the same two-slide carousel with guide overlays hidden](docs/screenshots/preview-mode.png)
+
+**Preview mode:** hide editor-only guides, seams, warnings, and safe areas so the canvas matches what final exports should include.
 
 ---
 

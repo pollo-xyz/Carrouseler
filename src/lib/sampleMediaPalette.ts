@@ -1,58 +1,55 @@
 /**
  * Sample a colour palette from a media item (image, GIF, or video frame).
  *
- * Uses a small offscreen canvas (96×96) and a classic median-cut quantisation.
- * Median cut is the same algorithm GIMP, ImageMagick and color-thief use for
- * palette extraction — fast (no iterations), deterministic, and produces
- * visually distinct buckets without any tuning knobs.
+ * Uses a small offscreen canvas (96×96), quantises pixels into 5-bit colour
+ * bins, then runs weighted median-cut over those bins. The important bit is
+ * "weighted": common colours keep more votes, so the palette reflects how much
+ * of each colour is actually present in the selected media.
  */
 
 import type { PlacedMedia } from '../store/useTiovivoStore'
 import { videoElements } from './videoRegistry'
 
 type RGB = [number, number, number]
+type Swatch = { r: number; g: number; b: number; count: number }
 
-/** Range of the bucket along its widest channel. Used to pick which bucket
- *  to split next so minority-but-distinct colours (e.g. red accents on a
- *  dark blue background) survive — naïve depth-then-slice would discard
- *  those buckets in the population-weighted half. */
-function bucketRange(b: RGB[]): { range: number; channel: 0 | 1 | 2 } {
-  if (b.length < 2) return { range: 0, channel: 0 }
+/** Range and population stats for a weighted bucket. */
+function bucketStats(b: Swatch[]): { range: number; channel: 'r' | 'g' | 'b'; count: number } {
+  if (b.length < 2) return { range: 0, channel: 'r', count: b[0]?.count ?? 0 }
   let minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0
+  let count = 0
   for (const p of b) {
-    if (p[0] < minR) minR = p[0]; if (p[0] > maxR) maxR = p[0]
-    if (p[1] < minG) minG = p[1]; if (p[1] > maxG) maxG = p[1]
-    if (p[2] < minB) minB = p[2]; if (p[2] > maxB) maxB = p[2]
+    if (p.r < minR) minR = p.r; if (p.r > maxR) maxR = p.r
+    if (p.g < minG) minG = p.g; if (p.g > maxG) maxG = p.g
+    if (p.b < minB) minB = p.b; if (p.b > maxB) maxB = p.b
+    count += p.count
   }
   const rR = maxR - minR, rG = maxG - minG, rB = maxB - minB
-  if (rR >= rG && rR >= rB) return { range: rR, channel: 0 }
-  if (rG >= rB) return { range: rG, channel: 1 }
-  return { range: rB, channel: 2 }
+  if (rR >= rG && rR >= rB) return { range: rR, channel: 'r', count }
+  if (rG >= rB) return { range: rG, channel: 'g', count }
+  return { range: rB, channel: 'b', count }
 }
 
-/** Priority-queue median cut: repeatedly split the bucket with the widest
- *  remaining range until there are exactly `k` buckets.
+/** Weighted priority-queue median cut.
  *
- *  Split point is the midpoint of the channel's *range* (min + max)/2, not
- *  the midpoint of the population. For bimodal distributions (a dominant
- *  population with a minority of outliers) this lands in the gap between
- *  the two clusters and isolates them in a single cut — a population
- *  median would land inside the dominant cluster, requiring many further
- *  cuts before the outliers earn their own bucket. For smooth/continuous
- *  distributions the two split points coincide, so nothing is lost on
- *  natural photos. */
-function medianCut(pixels: RGB[], k: number): RGB[] {
-  if (pixels.length === 0) return []
-  const buckets: RGB[][] = [pixels.slice()]
+ *  The old sampler boosted saturation and split at the colour-range midpoint,
+ *  which was great for preserving tiny accents but bad when the user expects
+ *  "sample from media" to reflect colour amounts. This version chooses buckets
+ *  by both spread and population, then splits at the weighted median so common
+ *  colours occupy proportionally more of the final palette. */
+function medianCut(swatches: Swatch[], k: number): { color: RGB; count: number }[] {
+  if (swatches.length === 0) return []
+  const buckets: Swatch[][] = [swatches.slice()]
 
   while (buckets.length < k) {
     let bestIdx = -1
-    let bestRange = 0
-    let bestChannel: 0 | 1 | 2 = 0
+    let bestScore = 0
+    let bestChannel: 'r' | 'g' | 'b' = 'r'
     for (let i = 0; i < buckets.length; i++) {
-      const { range, channel } = bucketRange(buckets[i]!)
-      if (range > bestRange) {
-        bestRange = range
+      const { range, channel, count } = bucketStats(buckets[i]!)
+      const score = range * Math.sqrt(count)
+      if (score > bestScore) {
+        bestScore = score
         bestIdx = i
         bestChannel = channel
       }
@@ -61,19 +58,17 @@ function medianCut(pixels: RGB[], k: number): RGB[] {
 
     const bucket = buckets[bestIdx]!
     bucket.sort((a, b) => a[bestChannel] - b[bestChannel])
-    const lo = bucket[0]![bestChannel]
-    const hi = bucket[bucket.length - 1]![bestChannel]
-    const splitVal = (lo + hi) / 2
-
-    // Find the first pixel whose channel value crosses the split point.
-    // Linear scan is fine — bucket is already sorted and we'd otherwise have
-    // to allocate a binary-search closure.
-    let splitAt = -1
+    const total = bucket.reduce((sum, p) => sum + p.count, 0)
+    const half = total / 2
+    let seen = 0
+    let splitAt = bucket.length >> 1
     for (let i = 0; i < bucket.length; i++) {
-      if (bucket[i]![bestChannel] >= splitVal) { splitAt = i; break }
+      seen += bucket[i]!.count
+      if (seen >= half) {
+        splitAt = i + 1
+        break
+      }
     }
-    // Degenerate cases: all pixels on one side (rare with our range math).
-    // Fall back to the population midpoint so we still make progress.
     if (splitAt <= 0 || splitAt >= bucket.length) {
       splitAt = bucket.length >> 1
     }
@@ -84,10 +79,16 @@ function medianCut(pixels: RGB[], k: number): RGB[] {
 
   return buckets.map((b) => {
     let r = 0, g = 0, bl = 0
-    for (const p of b) { r += p[0]; g += p[1]; bl += p[2] }
-    const n = b.length || 1
-    return [r / n, g / n, bl / n] as RGB
-  })
+    let count = 0
+    for (const p of b) {
+      r += p.r * p.count
+      g += p.g * p.count
+      bl += p.b * p.count
+      count += p.count
+    }
+    const n = count || 1
+    return { color: [r / n, g / n, bl / n] as RGB, count }
+  }).sort((a, b) => b.count - a.count)
 }
 
 function rgbToHex(r: number, g: number, b: number): string {
@@ -174,12 +175,22 @@ export async function sampleMediaPalette(
 
   // Collect non-transparent, non-near-black, non-near-white pixels so we
   // don't end up with a palette of grays from letterboxed / faded edges.
-  // Each pixel is also given a "weight" via repetition based on its HSV
-  // saturation — minority but saturated colours (e.g. red accents on a
-  // dark blue background) get more votes so median-cut splits them out
-  // instead of folding them into the dominant population bucket.
+  // Pixels are quantised into 5-bit bins with counts; that keeps the sampler
+  // population-weighted without ballooning memory or over-promoting accents.
   const data = ctx.getImageData(0, 0, SIZE, SIZE).data
-  const pixels: RGB[] = []
+  const bins = new Map<number, { r: number; g: number; b: number; count: number }>()
+  const addPixel = (r: number, g: number, b: number) => {
+    const key = (r >> 3) << 10 | (g >> 3) << 5 | (b >> 3)
+    const cur = bins.get(key)
+    if (cur) {
+      cur.r += r
+      cur.g += g
+      cur.b += b
+      cur.count += 1
+    } else {
+      bins.set(key, { r, g, b, count: 1 })
+    }
+  }
   for (let i = 0; i < data.length; i += 4) {
     const a = data[i + 3]!
     if (a < 180) continue
@@ -187,48 +198,45 @@ export async function sampleMediaPalette(
     const sum = r + g + b
     if (sum < 30 || sum > 720) continue
 
-    pixels.push([r, g, b])
-
-    // Vibrancy boost. HSV saturation = (max - min) / max. Scales 0..1.
-    // reps in [0..3], so a fully saturated pixel counts 4× vs neutral.
-    // Subtle enough not to swamp natural dominance, strong enough to keep
-    // accent colours alive at small k.
-    const mx = r > g ? (r > b ? r : b) : (g > b ? g : b)
-    const mn = r < g ? (r < b ? r : b) : (g < b ? g : b)
-    const sat = mx === 0 ? 0 : (mx - mn) / mx
-    const reps = Math.floor(sat * 3)
-    for (let j = 0; j < reps; j++) pixels.push([r, g, b])
+    addPixel(r, g, b)
   }
 
   // If filtering left us with too few pixels (silhouette / solid bg), retry
   // with all opaque pixels — better a desaturated palette than no palette.
-  if (pixels.length < 200) {
-    pixels.length = 0
+  const usableCount = Array.from(bins.values()).reduce((sum, b) => sum + b.count, 0)
+  if (usableCount < 200) {
+    bins.clear()
     for (let i = 0; i < data.length; i += 4) {
       if (data[i + 3]! < 180) continue
-      pixels.push([data[i]!, data[i + 1]!, data[i + 2]!])
+      addPixel(data[i]!, data[i + 1]!, data[i + 2]!)
     }
   }
-  if (pixels.length === 0) throw new Error('No usable pixels found')
+
+  let swatches: Swatch[] = Array.from(bins.values()).map((b) => ({
+    r: b.r / b.count,
+    g: b.g / b.count,
+    b: b.b / b.count,
+    count: b.count,
+  }))
+  if (swatches.length === 0) throw new Error('No usable pixels found')
 
   // Seeded subsample for variety across repeat clicks. Drop ~40% of pixels
-  // using a deterministic PRNG so the same seed always produces the same
+  // by reducing bin counts with a deterministic PRNG so the same seed always
+  // produces the same
   // palette but successive seeds produce slightly different views of the
   // image. Skipped when seed is 0 (canonical / first-click result).
   if (seed > 0) {
     const rng = mulberry32(seed * 2654435761)
-    let w = 0
-    for (let i = 0; i < pixels.length; i++) {
-      if (rng() < 0.6) pixels[w++] = pixels[i]!
-    }
-    pixels.length = w
-    // Guard against losing too many pixels — rare but possible at small inputs.
-    if (pixels.length < 20) {
+    swatches = swatches
+      .map((s) => ({ ...s, count: Math.round(s.count * (0.45 + rng() * 0.35)) }))
+      .filter((s) => s.count > 0)
+    const kept = swatches.reduce((sum, s) => sum + s.count, 0)
+    if (kept < 20) {
       throw new Error('Too few pixels survived subsampling')
     }
   }
 
-  // Priority-queue median-cut → exactly `k` buckets, no slicing afterwards.
-  const buckets = medianCut(pixels, k)
-  return buckets.map(([r, g, b]) => rgbToHex(r, g, b))
+  // Priority-queue weighted median-cut → most common colour bucket first.
+  const buckets = medianCut(swatches, k)
+  return buckets.map(({ color: [r, g, b] }) => rgbToHex(r, g, b))
 }

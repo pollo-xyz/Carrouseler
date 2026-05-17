@@ -156,6 +156,16 @@ function sliderFill(value: number, min: number, max: number): React.CSSPropertie
   return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
 }
 
+function slideHasAnimatedExport(items: PlacedMedia[], slideId: string): boolean {
+  return items.some((it) => {
+    if (it.slideId === slideId && (it.type === 'video' || it.type === 'gif')) return true
+    // GIF masters render as animated ghosts on every other slide, so those
+    // slides need MP4 export too. Video masters currently render as static
+    // placeholders on non-home slides, so don't promote them here.
+    return it.type === 'gif' && !!it.appearsOnAllSlides && it.slideId !== slideId
+  })
+}
+
 /* ============================================================
    BackgroundPanel — Solid/Vibe modes, palette, sliders, randomize
    ============================================================ */
@@ -1266,7 +1276,7 @@ export default function App() {
         const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
           ? `_${sanitizeFilenameSegment(slide.name.trim())}`
           : ''
-        const hasVideo = st.items.some((it) => it.slideId === slideId && (it.type === 'video' || it.type === 'gif'))
+        const hasVideo = slideHasAnimatedExport(st.items, slideId)
 
         if (hasVideo) {
           // Video slide → export as MP4
@@ -1344,7 +1354,7 @@ export default function App() {
     const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
       ? `_${sanitizeFilenameSegment(slide.name.trim())}`
       : ''
-    const hasVideo = st.items.some((it) => it.slideId === slideId && (it.type === 'video' || it.type === 'gif'))
+    const hasVideo = slideHasAnimatedExport(st.items, slideId)
     setExporting(true)
     setExportProgress(`Exporting slide ${idx + 1}...`)
     st.setSelectedIds([])
@@ -2101,10 +2111,10 @@ export default function App() {
                     </label>
                   )}
 
-                  <div className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <div className="field text-style-toolbar" style={{ flexDirection: 'row' }}>
                     <button
                       type="button"
-                      className={`btn btn--sm ${t.bold ? 'btn--accent' : ''}`}
+                      className={`btn btn--sm text-style-btn ${t.bold ? 'btn--accent' : ''}`}
                       style={{ fontWeight: 700 }}
                       onClick={() => patch({ bold: !t.bold })}
                       title="Bold"
@@ -2113,23 +2123,23 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      className={`btn btn--sm ${t.italic ? 'btn--accent' : ''}`}
+                      className={`btn btn--sm text-style-btn ${t.italic ? 'btn--accent' : ''}`}
                       style={{ fontStyle: 'italic' }}
                       onClick={() => patch({ italic: !t.italic })}
                       title="Italic"
                     >
                       I
                     </button>
-                    <div style={{ flex: 1 }} />
+                    <div className="text-style-toolbar__spacer" />
                     {(['left', 'center', 'right', 'justify'] as const).map((a) => (
                       <button
                         key={a}
                         type="button"
-                        className={`btn btn--sm ${align === a ? 'btn--accent' : ''}`}
+                        className={`btn btn--sm text-style-btn ${align === a ? 'btn--accent' : ''}`}
                         onClick={() => patch({ textAlign: a })}
                         title={`Align ${a}`}
                       >
-                        {a === 'left' ? '⯇' : a === 'center' ? '≡' : a === 'right' ? '⯈' : '☰'}
+                        {a === 'left' ? 'L' : a === 'center' ? 'C' : a === 'right' ? 'R' : 'J'}
                       </button>
                     ))}
                   </div>
@@ -2546,6 +2556,9 @@ export default function App() {
             const singleItem = singleId ? items.find((x) => x.id === singleId) : null
             const isImage = singleItem?.type === 'image'
             const isGif = singleItem?.type === 'gif'
+            const singleRemoveLabel = singleItem
+              ? `Remove ${singleItem.type === 'gif' ? 'GIF' : singleItem.type}`
+              : 'Remove item'
             return (
               <div className="selection-panel">
                 <h2><Icon.Target />{count > 1 ? `Selection (${count})` : 'Selection'}</h2>
@@ -2592,7 +2605,7 @@ export default function App() {
                   }}
                 >
                   <Icon.Trash style={{ width: 11, height: 11 }} />
-                  {count > 1 ? `Remove ${count} items` : 'Remove media'}
+                  {count > 1 ? `Remove ${count} items` : singleRemoveLabel}
                 </button>
               </div>
             )

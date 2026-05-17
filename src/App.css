@@ -10,6 +10,31 @@
   background: var(--bg);
 }
 
+/* Keep scroll affordances present but quiet. The app leans on dense panels;
+   loud native scrollbars read like extra borders in that context. */
+.app * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.07) transparent;
+}
+.app *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.app *::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app *::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  background-clip: content-box;
+}
+.app *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: content-box;
+}
+
 /* ================================================================
    HEADER — frosted glass, macOS traffic-light aware
    ================================================================ */
@@ -506,6 +531,7 @@ input.scrubbable:focus {
   align-items: center;
   justify-content: center;
   gap: 1px;
+  min-height: 30px;
   padding: 6px 12px;
   border-radius: var(--r-sm);
   border: 1px solid transparent;
@@ -541,7 +567,10 @@ input.scrubbable:focus {
 }
 
 .btn:disabled {
-  opacity: 0.38;
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.012);
   cursor: not-allowed;
 }
 
@@ -644,9 +673,26 @@ input.scrubbable:focus {
 }
 
 .btn--sm {
+  min-height: 28px;
   padding: 4px 9px;
   font-size: 0.72rem;
   border-radius: var(--r-xs);
+}
+
+.btn--square {
+  width: 28px;
+  min-width: 28px;
+  padding-inline: 0;
+}
+
+.app__sidebar .btn--accent {
+  background: rgba(59, 130, 246, 0.16);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.34);
+  text-shadow: none;
+}
+.app__sidebar .btn--accent:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.22);
 }
 
 /* Quieter active state for in-panel segmented toggles (Solid/Vibe,
@@ -684,7 +730,7 @@ input.scrubbable:focus {
   width: 296px;
   flex-shrink: 0;
   padding: 16px 14px 22px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
   /* `scroll` + `scrollbar-gutter: stable` keeps the gutter reserved even when
      content fits, so the sidebar's interior width never jumps when a section
      expands/collapses. Without this, the scrollbar appears and disappears,
@@ -694,8 +740,6 @@ input.scrubbable:focus {
   scrollbar-gutter: stable;
   background:
     linear-gradient(180deg, var(--surface) 0%, rgba(10, 10, 16, 0.82) 100%);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
   position: relative;
 }
 
@@ -709,11 +753,11 @@ input.scrubbable:focus {
    so we don't double up on aesthetics. */
 .color-swatch {
   width: 32px;
-  height: 24px;
+  height: 26px;
   padding: 0;
-  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: var(--r-xs);
-  background: transparent;
+  background: rgba(0, 0, 0, 0.26);
   cursor: pointer;
 }
 
@@ -737,7 +781,7 @@ input[type='color']::-moz-color-swatch {
 /* Compact mono readout — hex codes after a colour picker, "mixed" labels. */
 .field__value {
   font-size: 0.7rem;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.42);
   font-family: var(--mono);
   letter-spacing: -0.01em;
 }
@@ -860,14 +904,11 @@ input[type='color']::-moz-color-swatch {
      doesn't reflow the surrounding panel. */
   max-height: 168px;
   overflow-y: auto;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
   padding: 4px;
   margin: 0 -4px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.045);
   border-radius: var(--r-xs);
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.13);
 }
 
 /* Small caps label that separates built-ins from user-saved palettes. */
@@ -890,7 +931,7 @@ input[type='color']::-moz-color-swatch {
   /* Bounded scroll containers use flex-column; default shrink would squish
      each row instead of letting the container scroll. Lock the row height. */
   flex-shrink: 0;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.045);
   border-radius: var(--r-xs);
   overflow: hidden;
   background: transparent;
@@ -899,7 +940,7 @@ input[type='color']::-moz-color-swatch {
   transition: border-color var(--dur-fast) var(--ease);
 }
 .preset:hover {
-  border-color: var(--border-bright);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
 .preset__pick {
@@ -921,7 +962,7 @@ input[type='color']::-moz-color-swatch {
   padding: 0 6px;
   text-align: left;
   font-size: 0.62rem;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.42);
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
@@ -1009,8 +1050,8 @@ input[type='color']::-moz-color-swatch {
 /* ── Collapsible sections — card-style ── */
 
 .collapsible {
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0));
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0));
   border-radius: var(--r);
   /* Symmetric vertical padding — when collapsed, the summary row sits visually
      centered in the card. The original 10px/2px asymmetry made closed panels
@@ -1022,12 +1063,12 @@ input[type='color']::-moz-color-swatch {
 }
 
 .collapsible:hover {
-  border-color: var(--border-strong);
+  border-color: rgba(255, 255, 255, 0.09);
 }
 
 .collapsible[open] {
   padding-bottom: 12px;
-  background: linear-gradient(180deg, rgba(59, 130, 246, 0.02), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.016), rgba(255, 255, 255, 0));
 }
 
 .collapsible summary {
@@ -1209,23 +1250,31 @@ input[type='color']::-moz-color-swatch {
 .field select,
 .field textarea,
 .field .font-picker__input {
+  box-sizing: border-box;
+  min-height: 32px;
   padding: 6px 9px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(0, 0, 0, 0.28);
   color: var(--text-bright);
   font-size: 0.78rem;
+  font-family: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   transition:
     border-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease),
     background var(--dur) var(--ease);
 }
 
+.field textarea {
+  line-height: 1.45;
+}
+
 .field input:not([type='color']):hover,
 .field select:hover,
 .field textarea:hover,
 .field .font-picker__input:hover {
-  border-color: var(--border-strong);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .field input:not([type='color']):focus,
@@ -1434,7 +1483,7 @@ input[type='color']::-moz-color-swatch {
 
 .app__sidebar hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
   margin: 12px 0;
 }
 
@@ -1444,14 +1493,14 @@ input[type='color']::-moz-color-swatch {
   margin-top: 14px;
   padding: 14px 12px 12px;
   border-radius: var(--r);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.055);
   background:
-    linear-gradient(180deg, rgba(59, 130, 246, 0.04) 0%, rgba(255, 255, 255, 0) 100%);
+    linear-gradient(180deg, rgba(59, 130, 246, 0.022) 0%, rgba(255, 255, 255, 0) 100%);
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .selection-panel::before {
@@ -1464,10 +1513,10 @@ input[type='color']::-moz-color-swatch {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(59, 130, 246, 0.95) 50%,
+    rgba(59, 130, 246, 0.45) 50%,
     transparent 100%
   );
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.25);
 }
 
 .selection-panel h2 {
@@ -1526,7 +1575,7 @@ input[type='color']::-moz-color-swatch {
     rgba(255, 255, 255, 0.08) 100%
   );
   border-radius: 3px;
-  box-shadow: 0 0 10px -2px rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 8px -3px rgba(59, 130, 246, 0.35);
 }
 
 .slider-field input[type='range']::-webkit-slider-thumb {
@@ -1560,6 +1609,27 @@ input[type='color']::-moz-color-swatch {
   transform: scale(1.1);
 }
 
+/* Compact typography button strip used by the Text panel. Keeps the bold /
+   italic and alignment controls on the same visual grid. */
+.text-style-toolbar {
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+}
+.text-style-toolbar__spacer {
+  flex: 1;
+}
+.text-style-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-direction: row;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
 /* ================================================================
    MAIN / CANVAS
    ================================================================ */
@@ -1586,6 +1656,207 @@ input[type='color']::-moz-color-swatch {
 
 .editor-stage-wrap {
   background: transparent;
+}
+
+.zoom-pill {
+  font-family: var(--mono);
+  min-width: 92px;
+  border-radius: var(--r);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(12, 12, 18, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  overflow: hidden;
+}
+.zoom-pill .btn {
+  border-radius: 0;
+}
+
+/* Canvas-side chrome should read as editor UI, not part of the artwork. */
+.artboard-label {
+  font-size: 11px;
+  font-weight: 650;
+  font-family: system-ui, sans-serif;
+  color: var(--chrome-fg);
+  white-space: nowrap;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 5px;
+  background: rgba(14, 14, 22, 0.72);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  transition:
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+.artboard-label--active {
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(28, 50, 90, 0.56);
+}
+.artboard-label--drop-target,
+.artboard-label--dragged {
+  color: #fff;
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.24);
+}
+.artboard-label__name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artboard-label__export {
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--chrome-fg-dim);
+  font-size: 9px;
+  font-weight: 650;
+  font-family: system-ui, sans-serif;
+  line-height: 14px;
+  cursor: pointer;
+}
+.artboard-label__export--on {
+  color: rgba(220, 235, 255, 0.96);
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(59, 130, 246, 0.22);
+}
+.artboard-label__icon {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--chrome-fg-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.artboard-label__icon:hover {
+  color: var(--chrome-fg);
+  background: rgba(255, 255, 255, 0.06);
+}
+.artboard-label__icon--danger:hover {
+  color: var(--danger-hi);
+  background: rgba(251, 113, 133, 0.11);
+}
+.artboard-bg-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 3px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 6px;
+  background: rgba(12, 12, 18, 0.48);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.artboard-bg-chip input[type='color'] {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--chrome-fg-faint);
+  border-radius: 4px;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+}
+.artboard-bg-chip__value {
+  font-size: 10px;
+  color: var(--chrome-fg-dim);
+  font-family: var(--mono);
+}
+
+.floating-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 9px;
+  background: rgba(18, 18, 26, 0.90);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(1.18);
+  -webkit-backdrop-filter: blur(14px) saturate(1.18);
+  white-space: nowrap;
+}
+
+.layer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 7px;
+  background: rgba(14, 14, 22, 0.74);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+}
+.layer-stack__title {
+  padding: 1px 4px 3px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.34);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.layer-stack__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: grab;
+  user-select: none;
+}
+.layer-stack__row--selected {
+  border-color: rgba(59, 130, 246, 0.46);
+  background: rgba(59, 130, 246, 0.20);
+}
+.layer-stack__thumb {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.layer-stack__thumb img,
+.layer-stack__thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.layer-stack__text-icon {
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+  font-family: var(--mono);
+}
+.layer-stack__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 /* ── Drop overlay (drag file onto canvas) ── */

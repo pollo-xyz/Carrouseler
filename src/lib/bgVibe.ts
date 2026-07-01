@@ -209,6 +209,7 @@ export function renderBgVibe(
   vibe: BgVibe,
   w: number,
   h: number,
+  opts: { dither?: boolean } = {},
 ): void {
   target.width = w
   target.height = h
@@ -319,6 +320,27 @@ export function renderBgVibe(
     lctx.restore()
   }
 
+  // Dither — opt-in pass to break 8-bit gradient quantization on the low-res
+  // blob canvas before upscaling. Smooth radial gradients posterize to a few
+  // hundred distinct values per channel; bilinear upscale then magnifies each
+  // flat step into a visible contour band that shifts as blur changes. Bands
+  // are only visible at large upscale ratios — specifically the wide seamless
+  // strip where the same SHORT_TARGET internal canvas is stretched across
+  // N slides. Single-slide rendering is band-free without this pass and
+  // adding noise there only makes it look subtly worse, so the caller passes
+  // `dither: true` solely for the seamless-strip path.
+  if (opts.dither) {
+    const did = lctx.getImageData(0, 0, iw, ih)
+    const dd = did.data
+    for (let p = 0; p < dd.length; p += 4) {
+      const n = (Math.random() - 0.5) * 4
+      dd[p] = dd[p]! + n
+      dd[p + 1] = dd[p + 1]! + n
+      dd[p + 2] = dd[p + 2]! + n
+    }
+    lctx.putImageData(did, 0, 0)
+  }
+
   // Upscale — bilinear interp softens any residual low-res character.
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
@@ -363,9 +385,10 @@ export function renderBgVibe(
 }
 
 /** Cache key — any change here invalidates the cached canvas. */
-export function bgVibeHash(vibe: BgVibe, w: number, h: number): string {
+export function bgVibeHash(vibe: BgVibe, w: number, h: number, opts: { dither?: boolean } = {}): string {
   const rs = vibe.randomSize ? 1 : 0
   const rl = vibe.randomLayer ? 1 : 0
   const sz = (vibe.size ?? 1).toFixed(2)
-  return `${w}x${h}|${vibe.seed}|${vibe.pointCount}|${vibe.blur.toFixed(2)}|${vibe.grain.toFixed(3)}|${sz}|${vibe.bgColor}|${rs}${rl}|${vibe.palette.join(',')}`
+  const d = opts.dither ? 1 : 0
+  return `${w}x${h}|${vibe.seed}|${vibe.pointCount}|${vibe.blur.toFixed(2)}|${vibe.grain.toFixed(3)}|${sz}|${vibe.bgColor}|${rs}${rl}${d}|${vibe.palette.join(',')}`
 }

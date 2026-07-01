@@ -136,12 +136,14 @@ function SlideBackground({
   y,
   width,
   height,
+  dither = false,
 }: {
   slide: Slide
   x: number
   y: number
   width: number
   height: number
+  dither?: boolean
 }) {
   const vibe = slide.bgVibe
   const imageRef = useRef<Konva.Image>(null)
@@ -150,7 +152,7 @@ function SlideBackground({
   // drags a slider or scrubs in the colour picker, onChange can fire dozens
   // of times per frame — collapsing them into a single rAF re-render means
   // we do the expensive renderBgVibe pass once per frame at most.
-  const pendingRef = useRef<{ vibe: BgVibe; w: number; h: number } | null>(null)
+  const pendingRef = useRef<{ vibe: BgVibe; w: number; h: number; dither: boolean } | null>(null)
   const rafIdRef = useRef<number | null>(null)
   // First mount uses a synchronous render so Konva sees a non-empty canvas
   // on its first paint (avoids a one-frame flash of nothing). Subsequent
@@ -159,7 +161,7 @@ function SlideBackground({
 
   const w = Math.max(1, Math.round(width))
   const h = Math.max(1, Math.round(height))
-  const hash = vibe ? bgVibeHash(vibe, w, h) : ''
+  const hash = vibe ? bgVibeHash(vibe, w, h, { dither }) : ''
 
   if (vibe) {
     let c = slideBgCanvases.get(slide.id)
@@ -172,21 +174,21 @@ function SlideBackground({
       if (firstRef.current) {
         // First time we've seen a vibe on this slide — render synchronously
         // so the Image isn't painted blank during React's commit phase.
-        renderBgVibe(c, vibe, w, h)
+        renderBgVibe(c, vibe, w, h, { dither })
         lastHashRef.current = hash
         firstRef.current = false
       } else {
         // Stash the latest params; the rAF callback re-reads from the ref
         // so multiple updates within one frame coalesce to the newest state.
-        pendingRef.current = { vibe, w, h }
+        pendingRef.current = { vibe, w, h, dither }
         if (rafIdRef.current === null) {
           rafIdRef.current = requestAnimationFrame(() => {
             rafIdRef.current = null
             const latest = pendingRef.current
             const cv = slideBgCanvases.get(slide.id)
             if (!latest || !cv) return
-            renderBgVibe(cv, latest.vibe, latest.w, latest.h)
-            lastHashRef.current = bgVibeHash(latest.vibe, latest.w, latest.h)
+            renderBgVibe(cv, latest.vibe, latest.w, latest.h, { dither: latest.dither })
+            lastHashRef.current = bgVibeHash(latest.vibe, latest.w, latest.h, { dither: latest.dither })
             imageRef.current?.getLayer()?.batchDraw()
           })
         }
@@ -4185,6 +4187,7 @@ const EditorStage = forwardRef<
                         y={ap0.y}
                         width={W * slides.length}
                         height={H}
+                        dither
                       />
                     )
                   }

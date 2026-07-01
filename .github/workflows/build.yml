@@ -1,24 +1,49 @@
 name: Build
 
+# ON-DEMAND FULL build: macOS + Windows installers attached to a GitHub Release.
+#
+# DEFAULT releases are built locally (Windows only) — no CI minutes:
+#   # bump "version" in package.json
+#   npm run publish:local            # build Windows + publish the release from your machine
+#
+# This CI runs ONLY when you want macOS too:
+#   git tag vX.Y.Z+mac && git push origin vX.Y.Z+mac
+# The "+mac" suffix is only the trigger; the release is named vX.Y.Z (suffix stripped).
+# You can also run it from the Actions tab (workflow_dispatch) against an existing tag.
+#
+# NOTE: GitHub Actions tag filters treat "+" as a special glob char, so the filter
+# below is "v*mac" (which matches vX.Y.Z+mac). Do NOT change it to "v*+mac".
+
 on:
-  # Tagged releases (`vX.Y.Z`) still build + draft a GitHub Release with the
-  # artifacts attached. Pushes to any branch and PRs against main also build
-  # — those uploads are artifact-only so we can grab a Mac DMG / Windows EXE
-  # without needing to cut a release for every test build.
   push:
-    branches: ['**']
     tags:
-      - 'v*'
-  pull_request:
-    branches: [main]
+      - "v*mac"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to build both platforms for, e.g. v0.5.3"
+        required: true
+        type: string
 
 permissions:
   contents: write
-  pull-requests: read
 
 jobs:
+  # Resolve the trigger ref (which exists) and the clean release tag (suffix stripped).
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      raw: ${{ steps.t.outputs.raw }}
+      clean: ${{ steps.t.outputs.clean }}
+    steps:
+      - id: t
+        run: |
+          raw="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "raw=$raw"          >> "$GITHUB_OUTPUT"
+          echo "clean=${raw%+mac}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +52,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build the commit the trigger tag points at (matters for workflow_dispatch).
+          ref: ${{ needs.prepare.outputs.raw }}
 
       - uses: actions/setup-node@v4
         with:
@@ -35,19 +63,10 @@ jobs:
 
       - run: npm ci
 
-      # Compose a unique build identifier per CI run. Local builds (no
-      # CI variable) still produce `Tiovivo Setup ${version}.exe`; CI builds
-      # produce `Tiovivo Setup ${version}-build.${run}.exe` so we can trace
-      # any installer back to a specific workflow run + commit.
-      - name: Compute build version
-        shell: bash
-        run: |
-          BASE=$(node -p "require('./package.json').version")
-          echo "BUILD_VERSION=${BASE}-build.${{ github.run_number }}" >> "$GITHUB_ENV"
-
+      # Release builds carry the plain package.json version (which must match the tag).
       - name: Build
         shell: bash
-        run: npm run dist -- --config.extraMetadata.version=${{ env.BUILD_VERSION }}
+        run: npm run dist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Vite only exposes variables prefixed with VITE_ to the renderer.
@@ -76,10 +95,12 @@ jobs:
           if-no-files-found: ignore
 
       - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          # Publish under the clean vX.Y.Z tag regardless of the +mac trigger.
+          tag_name: ${{ needs.prepare.outputs.clean }}
+          name: Tiovivo ${{ needs.prepare.outputs.clean }}
+          draft: false
           files: |
             release/*.dmg
             release/*.zip

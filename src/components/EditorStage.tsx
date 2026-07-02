@@ -43,11 +43,9 @@ function useHtmlMedia(
     // Empty src — callers (e.g. MasterGhost on a text/shape item) invoke
     // this hook unconditionally to satisfy the rules-of-hooks. Bail out
     // silently rather than firing a phantom Image() load that would log
-    // a misleading "image load failed" error.
-    if (!src) {
-      setNode(null)
-      return
-    }
+    // a misleading "image load failed" error. No state reset needed: node
+    // starts null and every loading path clears it in its effect cleanup.
+    if (!src) return
     if (type === 'video') {
       const v = document.createElement('video')
       v.src = src; v.muted = true; v.playsInline = true; v.loop = true; v.preload = 'auto'
@@ -1902,7 +1900,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
       if (vAsp > cAsp) { sW = vh * cAsp; sx = (vw - sW) / 2 }
       else { sH = vw / cAsp; sy = (vh - sH) / 2 }
       ctx.clearRect(0, 0, cw, ch)
-      try { ctx.drawImage(v, sx, sy, sW, sH, 0, 0, cw, ch) } catch {}
+      try { ctx.drawImage(v, sx, sy, sW, sH, 0, 0, cw, ch) } catch { /* video not decodable yet — next seeked redraws */ }
     }
     draw()
     const onSeeked = () => draw()
@@ -2378,7 +2376,7 @@ const EditorStage = forwardRef<
     }
     wrap.addEventListener('wheel', handler, { passive: false })
     return () => wrap.removeEventListener('wheel', handler)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   /* ---- pointer pan ---- */
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {

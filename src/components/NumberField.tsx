@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
 interface Props {
   value: number
@@ -32,8 +32,14 @@ export default function NumberField({
   const [text, setText] = useState<string>(() => fmt(value))
 
   // Re-sync local text whenever the source value changes (e.g. from undo,
-  // a slider, or another input editing the same store field).
-  useEffect(() => { setText(fmt(value)) }, [value, decimals])
+  // a slider, or another input editing the same store field). Done as a
+  // render-time state adjustment (React's sanctioned derived-state reset)
+  // rather than an effect, so there's no flash of stale text.
+  const [prevSync, setPrevSync] = useState({ value, decimals })
+  if (prevSync.value !== value || prevSync.decimals !== decimals) {
+    setPrevSync({ value, decimals })
+    setText(fmt(value))
+  }
 
   // Scrub state — null when not in a drag, populated on pointerdown. The
   // `active` flag flips once the pointer has moved past a small threshold,

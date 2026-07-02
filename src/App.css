@@ -14,7 +14,7 @@
    loud native scrollbars read like extra borders in that context. */
 .app * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.07) transparent;
+  scrollbar-color: color-mix(in srgb, var(--ink) 7%, transparent) transparent;
 }
 .app *::-webkit-scrollbar {
   width: 10px;
@@ -27,11 +27,11 @@
   min-height: 28px;
   border: 3px solid transparent;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.10);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
   background-clip: content-box;
 }
 .app *::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
   background-clip: content-box;
 }
 
@@ -52,8 +52,8 @@
   flex-shrink: 0;
   background: linear-gradient(
     180deg,
-    rgba(15, 15, 22, 0.92) 0%,
-    rgba(10, 10, 16, 0.85) 100%
+    color-mix(in srgb, var(--glass-tint) 92%, transparent) 0%,
+    color-mix(in srgb, var(--glass-tint) 85%, transparent) 100%
   );
   backdrop-filter: blur(18px) saturate(1.4);
   -webkit-backdrop-filter: blur(18px) saturate(1.4);
@@ -70,8 +70,8 @@
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.08) 20%,
-    rgba(255, 255, 255, 0.08) 80%,
+    color-mix(in srgb, var(--ink) 8%, transparent) 20%,
+    color-mix(in srgb, var(--ink) 8%, transparent) 80%,
     transparent
   );
   pointer-events: none;
@@ -103,7 +103,7 @@
      dark glass. */
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(255, 255, 255, 0.06);
+    0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .app__brand-title {
   font-size: 0.82rem;
@@ -129,7 +129,7 @@
   padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
 }
 
 .app__header-pill-label {
@@ -159,7 +159,7 @@
   padding-left: 8px;
   /* Reserve room for the titleBarOverlay's window controls on the right. */
   padding-right: 144px;
-  background: linear-gradient(180deg, rgba(15, 15, 22, 0.96), rgba(10, 10, 16, 0.92));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--glass-tint) 96%, transparent), color-mix(in srgb, var(--glass-tint) 92%, transparent));
   border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-app-region: drag;
@@ -179,7 +179,7 @@
   -webkit-app-region: no-drag;
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.78);
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
   font-family: inherit;
   font-size: 0.78rem;
   font-weight: 500;
@@ -188,11 +188,11 @@
   transition: background 0.1s var(--ease);
 }
 .menubar__btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .menubar__btn--active {
-  background: rgba(255, 255, 255, 0.10);
-  color: #fff;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--text-bright);
 }
 
 /* Top-level dropdown panel anchored beneath the menubar buttons. */
@@ -202,8 +202,8 @@
   -webkit-app-region: no-drag;
   min-width: 220px;
   padding: 4px 0;
-  background: rgba(18, 18, 24, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: color-mix(in srgb, var(--glass-tint) 98%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
   border-radius: 6px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(20px) saturate(1.4);
@@ -224,11 +224,11 @@
   white-space: nowrap;
 }
 .menubar__item:hover:not(.menubar__item--disabled) {
-  background: rgba(59, 130, 246, 0.28);
-  color: #fff;
+  background: color-mix(in srgb, var(--hot) 28%, transparent);
+  color: var(--text-bright);
 }
 .menubar__item--disabled {
-  color: rgba(255, 255, 255, 0.35);
+  color: color-mix(in srgb, var(--ink) 35%, transparent);
   cursor: default;
 }
 .menubar__item-label {
@@ -236,7 +236,7 @@
 }
 .menubar__item-shortcut {
   font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: color-mix(in srgb, var(--ink) 45%, transparent);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
@@ -244,13 +244,13 @@
 .menubar__separator {
   height: 1px;
   margin: 4px 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 /* Submenu: pops out to the right of its parent item on hover. */
 .menubar__item--has-submenu .menubar__item-arrow {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.55);
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
   line-height: 1;
 }
 .menubar__submenu {
@@ -260,8 +260,8 @@
   margin-left: 2px;
   min-width: 240px;
   padding: 4px 0;
-  background: rgba(18, 18, 24, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: color-mix(in srgb, var(--glass-tint) 98%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
   border-radius: 6px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(20px) saturate(1.4);
@@ -315,14 +315,14 @@
   align-items: center;
   gap: 8px;
   padding: 7px 12px 7px 10px;
-  background: rgba(18, 18, 24, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: color-mix(in srgb, var(--glass-tint) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
   border-radius: 8px;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.30);
   backdrop-filter: blur(14px) saturate(1.3);
   -webkit-backdrop-filter: blur(14px) saturate(1.3);
   font-size: 0.74rem;
-  color: rgba(255, 255, 255, 0.82);
+  color: color-mix(in srgb, var(--ink) 82%, transparent);
   font-variant-numeric: tabular-nums;
   max-width: min(420px, 50vw);
   user-select: none;
@@ -338,17 +338,17 @@
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--hot) 55%, transparent);
   animation: pulse-dot 1.4s ease-in-out infinite;
   flex-shrink: 0;
 }
 @keyframes pulse-dot {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--hot) 55%, transparent);
     transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--hot) 0%, transparent);
     transform: scale(1.12);
   }
 }
@@ -360,7 +360,7 @@
   align-items: stretch;
   gap: 1px;
   padding: 3px;
-  background: rgba(255, 255, 255, 0.035);
+  background: color-mix(in srgb, var(--ink) 3.5%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   flex-shrink: 0;
@@ -412,7 +412,7 @@
   padding: 0 9px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.4);
+  background: color-mix(in srgb, var(--well-tint) calc(40% * var(--well-scale)), transparent);
   color: var(--text-bright);
   text-align: right;
   font-size: 0.98rem;
@@ -431,8 +431,8 @@
 .app__custom-size input:focus {
   outline: none;
   border-color: var(--accent-strong);
-  background: rgba(59, 130, 246, 0.04);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+  background: color-mix(in srgb, var(--hot) 4%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hot) 14%, transparent);
 }
 
 /* Drag-to-scrub inputs (NumberField with `scrubStep`). Idle cursor hints at
@@ -473,12 +473,12 @@ input.scrubbable:focus {
   color: var(--text);
 }
 .app__aspect-lock--locked {
-  background: rgba(59, 130, 246, 0.13);
-  color: rgba(180, 210, 255, 0.95);
-  border-color: rgba(59, 130, 246, 0.32);
+  background: color-mix(in srgb, var(--hot) 13%, transparent);
+  color: color-mix(in srgb, var(--hot-pale) 95%, transparent);
+  border-color: color-mix(in srgb, var(--hot) 32%, transparent);
 }
 .app__aspect-lock--locked:hover {
-  background: rgba(59, 130, 246, 0.18);
+  background: color-mix(in srgb, var(--hot) 18%, transparent);
 }
 
 /* Filename-format toggle that lives inside the Name pill. Reads as a button
@@ -490,25 +490,25 @@ input.scrubbable:focus {
   letter-spacing: -0.01em;
   padding: 2px 6px;
   border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease);
 }
 .app__filename-toggle:hover {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.22);
-  color: rgba(255, 255, 255, 0.85);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
+  color: color-mix(in srgb, var(--ink) 85%, transparent);
 }
 .app__filename-toggle--on {
-  background: rgba(59, 130, 246, 0.16);
-  border-color: rgba(59, 130, 246, 0.36);
-  color: rgba(180, 210, 255, 0.95);
+  background: color-mix(in srgb, var(--hot) 16%, transparent);
+  border-color: color-mix(in srgb, var(--hot) 36%, transparent);
+  color: color-mix(in srgb, var(--hot-pale) 95%, transparent);
 }
 .app__filename-toggle--on:hover {
-  background: rgba(59, 130, 246, 0.22);
+  background: color-mix(in srgb, var(--hot) 22%, transparent);
 }
 
 .app__custom-size span {
@@ -550,7 +550,7 @@ input.scrubbable:focus {
 }
 
 .btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.055);
+  background: color-mix(in srgb, var(--ink) 5.5%, transparent);
   color: var(--text-bright);
 }
 
@@ -568,9 +568,9 @@ input.scrubbable:focus {
 
 .btn:disabled {
   opacity: 1;
-  color: rgba(255, 255, 255, 0.25);
-  border-color: rgba(255, 255, 255, 0.045);
-  background: rgba(255, 255, 255, 0.012);
+  color: color-mix(in srgb, var(--ink) 25%, transparent);
+  border-color: color-mix(in srgb, var(--ink) 4.5%, transparent);
+  background: color-mix(in srgb, var(--ink) 1.2%, transparent);
   cursor: not-allowed;
 }
 
@@ -586,17 +586,17 @@ input.scrubbable:focus {
 
 /* Active/selected preset — vivid violet glow pill */
 .btn--accent {
-  background: linear-gradient(180deg, rgba(59, 130, 246, 0.32), rgba(59, 130, 246, 0.18));
-  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 32%, transparent), color-mix(in srgb, var(--hot) 18%, transparent));
+  color: var(--text-bright);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    0 0 22px -2px rgba(59, 130, 246, 0.65),
-    0 2px 8px rgba(59, 130, 246, 0.35);
+    inset 0 0 0 1px color-mix(in srgb, var(--ink) 55%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 15%, transparent),
+    0 0 22px -2px color-mix(in srgb, var(--hot) 65%, transparent),
+    0 2px 8px color-mix(in srgb, var(--hot) 35%, transparent);
 }
 .btn--accent:hover:not(:disabled) {
-  background: linear-gradient(180deg, rgba(59, 130, 246, 0.42), rgba(59, 130, 246, 0.24));
-  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 42%, transparent), color-mix(in srgb, var(--hot) 24%, transparent));
+  color: var(--text-bright);
 }
 .btn--accent .btn__hint {
   opacity: 0.92;
@@ -610,8 +610,8 @@ input.scrubbable:focus {
   gap: 7px;
   align-items: center;
   padding: 7px 16px 7px 13px;
-  background: #3b82f6;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--hot);
+  border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
   color: #fff;
   font-weight: 600;
   font-size: 0.79rem;
@@ -619,9 +619,9 @@ input.scrubbable:focus {
   border-radius: var(--r-sm);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 25%, transparent),
     inset 0 -1px 0 rgba(0, 0, 0, 0.22),
-    0 6px 20px -2px rgba(59, 130, 246, 0.55),
+    0 6px 20px -2px color-mix(in srgb, var(--hot) 55%, transparent),
     0 1px 3px rgba(0, 0, 0, 0.4);
   transition:
     filter var(--dur) var(--ease),
@@ -630,11 +630,11 @@ input.scrubbable:focus {
 }
 
 .btn--export:hover:not(:disabled) {
-  background: #60a5fa;
+  background: var(--hot-hi);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 32%, transparent),
     inset 0 -1px 0 rgba(0, 0, 0, 0.22),
-    0 8px 28px -2px rgba(59, 130, 246, 0.75),
+    0 8px 28px -2px color-mix(in srgb, var(--hot) 75%, transparent),
     0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
@@ -650,16 +650,16 @@ input.scrubbable:focus {
 }
 
 .slide-strip__actions .btn--ghost:not(.btn--danger):hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.18);
-  color: #60a5fa;
-  border-color: rgba(59, 130, 246, 0.35);
+  background: color-mix(in srgb, var(--hot) 18%, transparent);
+  color: var(--hot-hi);
+  border-color: color-mix(in srgb, var(--hot) 35%, transparent);
 }
 
 .btn--outline {
   border-color: var(--border-strong);
 }
 .btn--outline:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
   border-color: var(--border-bright);
 }
 
@@ -686,13 +686,13 @@ input.scrubbable:focus {
 }
 
 .app__sidebar .btn--accent {
-  background: rgba(59, 130, 246, 0.16);
+  background: color-mix(in srgb, var(--hot) 16%, transparent);
   color: var(--text-bright);
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.34);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hot) 34%, transparent);
   text-shadow: none;
 }
 .app__sidebar .btn--accent:hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.22);
+  background: color-mix(in srgb, var(--hot) 22%, transparent);
 }
 
 /* Quieter active state for in-panel segmented toggles (Solid/Vibe,
@@ -701,12 +701,12 @@ input.scrubbable:focus {
    less attention-grabbing inside the sidebar where toggle pills sit
    alongside actual content controls. */
 .btn--seg-active {
-  background: rgba(59, 130, 246, 0.13);
+  background: color-mix(in srgb, var(--hot) 13%, transparent);
   color: var(--text-bright);
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.28);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hot) 28%, transparent);
 }
 .btn--seg-active:hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.18);
+  background: color-mix(in srgb, var(--hot) 18%, transparent);
 }
 
 .btn__icon {
@@ -730,7 +730,7 @@ input.scrubbable:focus {
   width: 296px;
   flex-shrink: 0;
   padding: 16px 14px 22px;
-  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-right: 1px solid color-mix(in srgb, var(--ink) 4%, transparent);
   /* `scroll` + `scrollbar-gutter: stable` keeps the gutter reserved even when
      content fits, so the sidebar's interior width never jumps when a section
      expands/collapses. Without this, the scrollbar appears and disappears,
@@ -739,7 +739,7 @@ input.scrubbable:focus {
   overflow-x: hidden;
   scrollbar-gutter: stable;
   background:
-    linear-gradient(180deg, var(--surface) 0%, rgba(10, 10, 16, 0.82) 100%);
+    linear-gradient(180deg, var(--surface) 0%, color-mix(in srgb, var(--glass-tint) 82%, transparent) 100%);
   position: relative;
 }
 
@@ -755,9 +755,9 @@ input.scrubbable:focus {
   width: 32px;
   height: 26px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
   border-radius: var(--r-xs);
-  background: rgba(0, 0, 0, 0.26);
+  background: color-mix(in srgb, var(--well-tint) calc(26% * var(--well-scale)), transparent);
   cursor: pointer;
 }
 
@@ -781,7 +781,7 @@ input[type='color']::-moz-color-swatch {
 /* Compact mono readout — hex codes after a colour picker, "mixed" labels. */
 .field__value {
   font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.42);
+  color: color-mix(in srgb, var(--ink) 42%, transparent);
   font-family: var(--mono);
   letter-spacing: -0.01em;
 }
@@ -800,7 +800,7 @@ input[type='color']::-moz-color-swatch {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border: 1.5px solid color-mix(in srgb, var(--ink) 20%, transparent);
   border-radius: 6px;
   background: transparent;
   cursor: pointer;
@@ -811,8 +811,8 @@ input[type='color']::-moz-color-swatch {
 
 .palette-swatch--add {
   border-style: dashed;
-  border-color: rgba(255, 255, 255, 0.25);
-  color: rgba(255, 255, 255, 0.55);
+  border-color: color-mix(in srgb, var(--ink) 25%, transparent);
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
   font-size: 16px;
   line-height: 1;
   transition:
@@ -830,7 +830,7 @@ input[type='color']::-moz-color-swatch {
 .palette-swatch--base {
   border-color: var(--accent-strong);
   border-width: 2px;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hot) 18%, transparent);
 }
 
 /* Wrapper that lets a "BG" badge sit on top of the base swatch without
@@ -854,7 +854,7 @@ input[type='color']::-moz-color-swatch {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: rgba(255, 255, 255, 0.95);
+  color: color-mix(in srgb, var(--ink) 95%, transparent);
   /* Heavy text-shadow so the label reads against any base colour. Dark and
      light backgrounds both pull the label toward the opposite. */
   text-shadow:
@@ -906,9 +906,9 @@ input[type='color']::-moz-color-swatch {
   overflow-y: auto;
   padding: 4px;
   margin: 0 -4px;
-  border: 1px solid rgba(255, 255, 255, 0.045);
+  border: 1px solid color-mix(in srgb, var(--ink) 4.5%, transparent);
   border-radius: var(--r-xs);
-  background: rgba(0, 0, 0, 0.13);
+  background: color-mix(in srgb, var(--well-tint) calc(13% * var(--well-scale)), transparent);
 }
 
 /* Small caps label that separates built-ins from user-saved palettes. */
@@ -921,7 +921,7 @@ input[type='color']::-moz-color-swatch {
   color: var(--text-dim);
   padding: 6px 4px 2px;
   margin-top: 2px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  border-top: 1px dashed color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .preset {
@@ -931,7 +931,7 @@ input[type='color']::-moz-color-swatch {
   /* Bounded scroll containers use flex-column; default shrink would squish
      each row instead of letting the container scroll. Lock the row height. */
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.045);
+  border: 1px solid color-mix(in srgb, var(--ink) 4.5%, transparent);
   border-radius: var(--r-xs);
   overflow: hidden;
   background: transparent;
@@ -940,7 +940,7 @@ input[type='color']::-moz-color-swatch {
   transition: border-color var(--dur-fast) var(--ease);
 }
 .preset:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: color-mix(in srgb, var(--ink) 15%, transparent);
 }
 
 .preset__pick {
@@ -962,7 +962,7 @@ input[type='color']::-moz-color-swatch {
   padding: 0 6px;
   text-align: left;
   font-size: 0.62rem;
-  color: rgba(255, 255, 255, 0.42);
+  color: color-mix(in srgb, var(--ink) 42%, transparent);
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
@@ -980,18 +980,18 @@ input[type='color']::-moz-color-swatch {
 }
 
 .preset--custom {
-  border-color: rgba(120, 180, 255, 0.28);
+  border-color: color-mix(in srgb, var(--hot-hi) 28%, transparent);
 }
 .preset--custom .preset__name {
-  color: rgba(180, 210, 255, 0.85);
+  color: color-mix(in srgb, var(--hot-pale) 85%, transparent);
 }
 
 /* Inline rename input replaces .preset__name while editing. Sized to match
    the static label exactly so the row doesn't jump when you start typing. */
 .preset__name-input {
-  border: 1px solid rgba(59, 130, 246, 0.45);
-  background: rgba(0, 0, 0, 0.4);
-  color: rgba(180, 210, 255, 0.95);
+  border: 1px solid color-mix(in srgb, var(--hot) 45%, transparent);
+  background: color-mix(in srgb, var(--well-tint) calc(40% * var(--well-scale)), transparent);
+  color: color-mix(in srgb, var(--hot-pale) 95%, transparent);
   border-radius: 3px;
   padding: 0 4px;
   font: inherit;
@@ -1015,7 +1015,7 @@ input[type='color']::-moz-color-swatch {
 }
 .preset__delete:hover {
   color: var(--danger-hi);
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
 /* Inner top highlight for a subtle sense of elevation */
@@ -1024,7 +1024,7 @@ input[type='color']::-moz-color-swatch {
   position: absolute;
   inset: 0 0 auto 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 5%, transparent), transparent);
   pointer-events: none;
 }
 
@@ -1050,8 +1050,8 @@ input[type='color']::-moz-color-swatch {
 /* ── Collapsible sections — card-style ── */
 
 .collapsible {
-  border: 1px solid rgba(255, 255, 255, 0.045);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0));
+  border: 1px solid color-mix(in srgb, var(--ink) 4.5%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 1.2%, transparent), color-mix(in srgb, var(--ink) 0%, transparent));
   border-radius: var(--r);
   /* Symmetric vertical padding — when collapsed, the summary row sits visually
      centered in the card. The original 10px/2px asymmetry made closed panels
@@ -1063,12 +1063,12 @@ input[type='color']::-moz-color-swatch {
 }
 
 .collapsible:hover {
-  border-color: rgba(255, 255, 255, 0.09);
+  border-color: color-mix(in srgb, var(--ink) 9%, transparent);
 }
 
 .collapsible[open] {
   padding-bottom: 12px;
-  background: linear-gradient(180deg, rgba(59, 130, 246, 0.016), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 1.6%, transparent), color-mix(in srgb, var(--ink) 0%, transparent));
 }
 
 .collapsible summary {
@@ -1099,9 +1099,9 @@ input[type='color']::-moz-color-swatch {
   content: '';
   width: 14px;
   height: 14px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.42)' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l6 6-6 6'/></svg>");
-  background-repeat: no-repeat;
-  background-position: center;
+  background-color: color-mix(in srgb, var(--ink) 42%, transparent);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l6 6-6 6'/></svg>") no-repeat center;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l6 6-6 6'/></svg>") no-repeat center;
   transition: transform var(--dur) var(--ease-spring);
 }
 
@@ -1122,7 +1122,7 @@ input[type='color']::-moz-color-swatch {
   justify-content: center;
   gap: 8px;
   padding: 22px 14px;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border: 1px dashed color-mix(in srgb, var(--ink) 10%, transparent);
   border-radius: var(--r);
   text-align: center;
   font-size: 0.78rem;
@@ -1130,8 +1130,8 @@ input[type='color']::-moz-color-swatch {
   cursor: pointer;
   background: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.015),
-    rgba(255, 255, 255, 0)
+    color-mix(in srgb, var(--ink) 1.5%, transparent),
+    color-mix(in srgb, var(--ink) 0%, transparent)
   );
   transition:
     border-color var(--dur) var(--ease),
@@ -1141,7 +1141,7 @@ input[type='color']::-moz-color-swatch {
 
 .drop-zone:hover {
   border-color: var(--accent-strong);
-  background: rgba(59, 130, 246, 0.04);
+  background: color-mix(in srgb, var(--hot) 4%, transparent);
   color: var(--text);
 }
 
@@ -1200,7 +1200,7 @@ input[type='color']::-moz-color-swatch {
   -webkit-appearance: none;
   width: 28px;
   height: 16px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   position: relative;
@@ -1220,7 +1220,7 @@ input[type='color']::-moz-color-swatch {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.55);
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
   transform: translateY(-50%);
   transition:
     left var(--dur) var(--ease-spring),
@@ -1233,14 +1233,14 @@ input[type='color']::-moz-color-swatch {
 }
 
 .check input[type='checkbox']:checked {
-  background: rgba(59, 130, 246, 0.28);
-  border-color: rgba(59, 130, 246, 0.5);
+  background: color-mix(in srgb, var(--hot) 28%, transparent);
+  border-color: color-mix(in srgb, var(--hot) 50%, transparent);
 }
 
 .check input[type='checkbox']:checked::after {
   left: 13px;
   background: var(--accent-hi);
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--hot) 55%, transparent);
 }
 
 /* Generic field controls share one look. Color inputs are excluded — they
@@ -1254,12 +1254,12 @@ input[type='color']::-moz-color-swatch {
   min-height: 32px;
   padding: 6px 9px;
   border-radius: var(--r-sm);
-  border: 1px solid rgba(255, 255, 255, 0.055);
-  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid color-mix(in srgb, var(--ink) 5.5%, transparent);
+  background: color-mix(in srgb, var(--well-tint) calc(28% * var(--well-scale)), transparent);
   color: var(--text-bright);
   font-size: 0.78rem;
   font-family: inherit;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 2.5%, transparent);
   transition:
     border-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease),
@@ -1274,7 +1274,7 @@ input[type='color']::-moz-color-swatch {
 .field select:hover,
 .field textarea:hover,
 .field .font-picker__input:hover {
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .field input:not([type='color']):focus,
@@ -1283,8 +1283,8 @@ input[type='color']::-moz-color-swatch {
 .field .font-picker__input:focus {
   outline: none;
   border-color: var(--accent-strong);
-  background: rgba(59, 130, 246, 0.04);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+  background: color-mix(in srgb, var(--hot) 4%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hot) 14%, transparent);
 }
 
 /* ── Font picker (custom combobox with rendered-in-font previews) ── */
@@ -1309,12 +1309,12 @@ input[type='color']::-moz-color-swatch {
   list-style: none;
   max-height: 280px;
   overflow-y: auto;
-  background: rgba(18, 18, 26, 0.98);
+  background: color-mix(in srgb, var(--glass-tint) 98%, transparent);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   box-shadow:
     0 12px 32px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
+    0 0 0 1px color-mix(in srgb, var(--ink) 4%, transparent);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -1330,10 +1330,10 @@ input[type='color']::-moz-color-swatch {
   /* Each row's `font-family` is set inline so the row renders in its own font. */
 }
 .font-picker__item--active {
-  background: rgba(59, 130, 246, 0.22);
+  background: color-mix(in srgb, var(--hot) 22%, transparent);
 }
 .font-picker__item--current {
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hot) 35%, transparent);
 }
 .font-picker__empty {
   padding: 8px 10px;
@@ -1347,7 +1347,7 @@ input[type='color']::-moz-color-swatch {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  border: 1.5px solid color-mix(in srgb, var(--ink) 18%, transparent);
   border-top-color: currentColor;
   animation: remove-bg-spin 0.8s linear infinite;
   display: inline-block;
@@ -1364,12 +1364,12 @@ input[type='color']::-moz-color-swatch {
   z-index: 200;
   display: flex;
   flex-direction: column;
-  background: rgba(18, 18, 26, 0.98);
+  background: color-mix(in srgb, var(--glass-tint) 98%, transparent);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 255, 255, 0.04);
+    0 0 0 1px color-mix(in srgb, var(--ink) 4%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   overflow: hidden;
@@ -1378,7 +1378,7 @@ input[type='color']::-moz-color-swatch {
   display: flex;
   gap: 4px;
   padding: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .gif-picker__tab {
   flex: 1;
@@ -1386,24 +1386,24 @@ input[type='color']::-moz-color-swatch {
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
-  color: rgba(255, 255, 255, 0.5);
+  color: color-mix(in srgb, var(--ink) 50%, transparent);
   font-size: 0.78rem;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
-.gif-picker__tab:hover { color: rgba(255, 255, 255, 0.85); }
+.gif-picker__tab:hover { color: color-mix(in srgb, var(--ink) 85%, transparent); }
 .gif-picker__tab--active {
-  background: rgba(59, 130, 246, 0.18);
-  color: rgba(180, 210, 255, 0.95);
+  background: color-mix(in srgb, var(--hot) 18%, transparent);
+  color: color-mix(in srgb, var(--hot-pale) 95%, transparent);
 }
 .gif-picker__search {
   margin: 0 8px;
   padding: 7px 10px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.4);
+  background: color-mix(in srgb, var(--well-tint) calc(40% * var(--well-scale)), transparent);
   color: var(--text-bright);
   font-family: inherit;
   font-size: 0.85rem;
@@ -1411,8 +1411,8 @@ input[type='color']::-moz-color-swatch {
 }
 .gif-picker__search:focus {
   border-color: var(--accent-strong);
-  background: rgba(59, 130, 246, 0.04);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+  background: color-mix(in srgb, var(--hot) 4%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hot) 14%, transparent);
 }
 .gif-picker__grid {
   /* Flexbox over CSS Grid — when the grid was given `flex: 1` height the
@@ -1435,15 +1435,15 @@ input[type='color']::-moz-color-swatch {
   /* Three uniform 1:1 cells per row. width = (100% - 2 × gap) / 3 */
   width: calc((100% - 12px) / 3);
   aspect-ratio: 1 / 1;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.3);
+  background: color-mix(in srgb, var(--well-tint) calc(30% * var(--well-scale)), transparent);
   cursor: pointer;
   overflow: hidden;
   transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .gif-picker__cell:hover {
-  border-color: rgba(59, 130, 246, 0.5);
+  border-color: color-mix(in srgb, var(--hot) 50%, transparent);
   transform: scale(1.03);
 }
 .gif-picker__cell-img {
@@ -1461,11 +1461,11 @@ input[type='color']::-moz-color-swatch {
 }
 .gif-picker__footer {
   padding: 6px 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
   font-size: 0.66rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.35);
+  color: color-mix(in srgb, var(--ink) 35%, transparent);
   text-align: right;
 }
 
@@ -1474,16 +1474,16 @@ input[type='color']::-moz-color-swatch {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 26px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-image: var(--select-arrow);
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 12px;
-  background-color: rgba(0, 0, 0, 0.35);
+  background-color: color-mix(in srgb, var(--well-tint) calc(35% * var(--well-scale)), transparent);
 }
 
 .app__sidebar hr {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 5.5%, transparent);
   margin: 12px 0;
 }
 
@@ -1493,14 +1493,14 @@ input[type='color']::-moz-color-swatch {
   margin-top: 14px;
   padding: 14px 12px 12px;
   border-radius: var(--r);
-  border: 1px solid rgba(255, 255, 255, 0.055);
+  border: 1px solid color-mix(in srgb, var(--ink) 5.5%, transparent);
   background:
-    linear-gradient(180deg, rgba(59, 130, 246, 0.022) 0%, rgba(255, 255, 255, 0) 100%);
+    linear-gradient(180deg, color-mix(in srgb, var(--hot) 2.2%, transparent) 0%, color-mix(in srgb, var(--ink) 0%, transparent) 100%);
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 2.5%, transparent);
 }
 
 .selection-panel::before {
@@ -1513,10 +1513,10 @@ input[type='color']::-moz-color-swatch {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(59, 130, 246, 0.45) 50%,
+    color-mix(in srgb, var(--hot) 45%, transparent) 50%,
     transparent 100%
   );
-  box-shadow: 0 0 10px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--hot) 25%, transparent);
 }
 
 .selection-panel h2 {
@@ -1569,13 +1569,13 @@ input[type='color']::-moz-color-swatch {
   height: 3px;
   background: linear-gradient(
     90deg,
-    #3b82f6 0%,
-    #3b82f6 var(--fill, 50%),
-    rgba(255, 255, 255, 0.08) var(--fill, 50%),
-    rgba(255, 255, 255, 0.08) 100%
+    var(--hot) 0%,
+    var(--hot) var(--fill, 50%),
+    color-mix(in srgb, var(--ink) 8%, transparent) var(--fill, 50%),
+    color-mix(in srgb, var(--ink) 8%, transparent) 100%
   );
   border-radius: 3px;
-  box-shadow: 0 0 8px -3px rgba(59, 130, 246, 0.35);
+  box-shadow: 0 0 8px -3px color-mix(in srgb, var(--hot) 35%, transparent);
 }
 
 .slider-field input[type='range']::-webkit-slider-thumb {
@@ -1583,13 +1583,13 @@ input[type='color']::-moz-color-swatch {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--ink);
   cursor: grab;
   border: none;
   margin-top: -5.5px;
   box-shadow:
-    0 0 0 1px rgba(59, 130, 246, 0.4),
-    0 2px 8px rgba(59, 130, 246, 0.4),
+    0 0 0 1px color-mix(in srgb, var(--hot) 40%, transparent),
+    0 2px 8px color-mix(in srgb, var(--hot) 40%, transparent),
     0 1px 3px rgba(0, 0, 0, 0.4);
   transition:
     transform var(--dur) var(--ease-spring),
@@ -1599,8 +1599,8 @@ input[type='color']::-moz-color-swatch {
 .slider-field input[type='range']::-webkit-slider-thumb:hover {
   transform: scale(1.2);
   box-shadow:
-    0 0 0 2px rgba(59, 130, 246, 0.55),
-    0 4px 14px rgba(59, 130, 246, 0.55),
+    0 0 0 2px color-mix(in srgb, var(--hot) 55%, transparent),
+    0 4px 14px color-mix(in srgb, var(--hot) 55%, transparent),
     0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
@@ -1649,7 +1649,7 @@ input[type='color']::-moz-color-swatch {
   justify-content: stretch;
   overflow: hidden;
   background:
-    radial-gradient(ellipse 70% 50% at 50% 50%, rgba(59, 130, 246, 0.025), transparent 70%),
+    radial-gradient(ellipse 70% 50% at 50% 50%, color-mix(in srgb, var(--hot) 2.5%, transparent), transparent 70%),
     var(--bg);
   position: relative;
 }
@@ -1662,9 +1662,9 @@ input[type='color']::-moz-color-swatch {
   font-family: var(--mono);
   min-width: 92px;
   border-radius: var(--r);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(12, 12, 18, 0.72);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  border: 1px solid color-mix(in srgb, var(--ink) 7%, transparent);
+  background: color-mix(in srgb, var(--glass-tint) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent);
   overflow: hidden;
 }
 .zoom-pill .btn {
@@ -1683,9 +1683,9 @@ input[type='color']::-moz-color-swatch {
   align-items: center;
   gap: 5px;
   padding: 2px 5px;
-  border: 1px solid rgba(255, 255, 255, 0.075);
+  border: 1px solid color-mix(in srgb, var(--ink) 7.5%, transparent);
   border-radius: 5px;
-  background: rgba(14, 14, 22, 0.72);
+  background: color-mix(in srgb, var(--glass-tint) 72%, transparent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(10px) saturate(1.15);
   -webkit-backdrop-filter: blur(10px) saturate(1.15);
@@ -1696,14 +1696,14 @@ input[type='color']::-moz-color-swatch {
     opacity var(--dur-fast) var(--ease);
 }
 .artboard-label--active {
-  border-color: rgba(59, 130, 246, 0.34);
-  background: rgba(28, 50, 90, 0.56);
+  border-color: color-mix(in srgb, var(--hot) 34%, transparent);
+  background: var(--hot-veil);
 }
 .artboard-label--drop-target,
 .artboard-label--dragged {
-  color: #fff;
-  border-color: rgba(59, 130, 246, 0.55);
-  background: rgba(59, 130, 246, 0.24);
+  color: var(--text-bright);
+  border-color: color-mix(in srgb, var(--hot) 55%, transparent);
+  background: color-mix(in srgb, var(--hot) 24%, transparent);
 }
 .artboard-label__name {
   max-width: 180px;
@@ -1714,8 +1714,8 @@ input[type='color']::-moz-color-swatch {
   height: 16px;
   padding: 0 5px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  background: color-mix(in srgb, var(--ink) 4.5%, transparent);
   color: var(--chrome-fg-dim);
   font-size: 9px;
   font-weight: 650;
@@ -1724,9 +1724,9 @@ input[type='color']::-moz-color-swatch {
   cursor: pointer;
 }
 .artboard-label__export--on {
-  color: rgba(220, 235, 255, 0.96);
-  border-color: rgba(59, 130, 246, 0.34);
-  background: rgba(59, 130, 246, 0.22);
+  color: var(--hot-text);
+  border-color: color-mix(in srgb, var(--hot) 34%, transparent);
+  background: color-mix(in srgb, var(--hot) 22%, transparent);
 }
 .artboard-label__icon {
   width: 18px;
@@ -1743,20 +1743,20 @@ input[type='color']::-moz-color-swatch {
 }
 .artboard-label__icon:hover {
   color: var(--chrome-fg);
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .artboard-label__icon--danger:hover {
   color: var(--danger-hi);
-  background: rgba(251, 113, 133, 0.11);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
 }
 .artboard-bg-chip {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 3px 6px 3px 3px;
-  border: 1px solid rgba(255, 255, 255, 0.055);
+  border: 1px solid color-mix(in srgb, var(--ink) 5.5%, transparent);
   border-radius: 6px;
-  background: rgba(12, 12, 18, 0.48);
+  background: color-mix(in srgb, var(--glass-tint) 48%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -1780,10 +1780,10 @@ input[type='color']::-moz-color-swatch {
   align-items: center;
   gap: 2px;
   padding: 3px 4px;
-  border: 1px solid rgba(255, 255, 255, 0.075);
+  border: 1px solid color-mix(in srgb, var(--ink) 7.5%, transparent);
   border-radius: 9px;
-  background: rgba(18, 18, 26, 0.90);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--glass-tint) 90%, transparent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32), inset 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent);
   backdrop-filter: blur(14px) saturate(1.18);
   -webkit-backdrop-filter: blur(14px) saturate(1.18);
   white-space: nowrap;
@@ -1794,17 +1794,17 @@ input[type='color']::-moz-color-swatch {
   flex-direction: column;
   gap: 4px;
   padding: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.065);
+  border: 1px solid color-mix(in srgb, var(--ink) 6.5%, transparent);
   border-radius: 7px;
-  background: rgba(14, 14, 22, 0.74);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  background: color-mix(in srgb, var(--glass-tint) 74%, transparent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26), inset 0 1px 0 color-mix(in srgb, var(--ink) 3.5%, transparent);
   backdrop-filter: blur(10px) saturate(1.15);
   -webkit-backdrop-filter: blur(10px) saturate(1.15);
 }
 .layer-stack__title {
   padding: 1px 4px 3px;
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.34);
+  color: color-mix(in srgb, var(--ink) 34%, transparent);
   font-family: var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1814,15 +1814,15 @@ input[type='color']::-moz-color-swatch {
   align-items: center;
   gap: 7px;
   padding: 4px 6px;
-  border: 1px solid rgba(255, 255, 255, 0.055);
+  border: 1px solid color-mix(in srgb, var(--ink) 5.5%, transparent);
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
   cursor: grab;
   user-select: none;
 }
 .layer-stack__row--selected {
-  border-color: rgba(59, 130, 246, 0.46);
-  background: rgba(59, 130, 246, 0.20);
+  border-color: color-mix(in srgb, var(--hot) 46%, transparent);
+  background: color-mix(in srgb, var(--hot) 20%, transparent);
 }
 .layer-stack__thumb {
   width: 22px;
@@ -1843,7 +1843,7 @@ input[type='color']::-moz-color-swatch {
   pointer-events: none;
 }
 .layer-stack__text-icon {
-  color: rgba(255, 255, 255, 0.78);
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
   font-weight: 700;
   font-size: 12px;
   line-height: 1;
@@ -1856,7 +1856,7 @@ input[type='color']::-moz-color-swatch {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.78);
+  color: color-mix(in srgb, var(--ink) 78%, transparent);
 }
 
 /* ── Drop overlay (drag file onto canvas) ── */
@@ -1865,34 +1865,34 @@ input[type='color']::-moz-color-swatch {
   position: absolute;
   inset: 14px;
   z-index: 20;
-  background: rgba(10, 8, 20, 0.55);
+  background: color-mix(in srgb, var(--glass-tint) 55%, transparent);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  border: 1.5px dashed rgba(59, 130, 246, 0.55);
+  border: 1.5px dashed color-mix(in srgb, var(--hot) 55%, transparent);
   border-radius: var(--r-lg);
   display: flex;
   align-items: center;
   justify-content: center;
   pointer-events: none;
   box-shadow:
-    inset 0 0 0 1px rgba(59, 130, 246, 0.08),
+    inset 0 0 0 1px color-mix(in srgb, var(--hot) 8%, transparent),
     0 0 0 1px rgba(0, 0, 0, 0.3),
-    inset 0 0 80px rgba(59, 130, 246, 0.08);
+    inset 0 0 80px color-mix(in srgb, var(--hot) 8%, transparent);
   animation: drop-pulse 1.6s var(--ease) infinite alternate;
 }
 
 @keyframes drop-pulse {
   from {
     box-shadow:
-      inset 0 0 0 1px rgba(59, 130, 246, 0.08),
+      inset 0 0 0 1px color-mix(in srgb, var(--hot) 8%, transparent),
       0 0 0 1px rgba(0, 0, 0, 0.3),
-      inset 0 0 60px rgba(59, 130, 246, 0.06);
+      inset 0 0 60px color-mix(in srgb, var(--hot) 6%, transparent);
   }
   to {
     box-shadow:
-      inset 0 0 0 1px rgba(59, 130, 246, 0.18),
+      inset 0 0 0 1px color-mix(in srgb, var(--hot) 18%, transparent),
       0 0 0 1px rgba(0, 0, 0, 0.3),
-      inset 0 0 100px rgba(59, 130, 246, 0.14);
+      inset 0 0 100px color-mix(in srgb, var(--hot) 14%, transparent);
   }
 }
 
@@ -1912,13 +1912,13 @@ input[type='color']::-moz-color-swatch {
   height: 56px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 50% 45%, rgba(59, 130, 246, 0.35), rgba(59, 130, 246, 0.08)),
-    rgba(59, 130, 246, 0.12);
-  border: 1.5px solid rgba(59, 130, 246, 0.5);
+    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--hot) 35%, transparent), color-mix(in srgb, var(--hot) 8%, transparent)),
+    color-mix(in srgb, var(--hot) 12%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--hot) 50%, transparent);
   display: grid;
   place-items: center;
-  color: #fff;
-  box-shadow: 0 0 40px rgba(59, 130, 246, 0.3);
+  color: var(--text-bright);
+  box-shadow: 0 0 40px color-mix(in srgb, var(--hot) 30%, transparent);
 }
 
 .drop-overlay__icon svg {
@@ -1932,7 +1932,7 @@ input[type='color']::-moz-color-swatch {
   align-items: center;
   padding: 2px 8px;
   border-radius: var(--r-pill);
-  background: rgba(59, 130, 246, 0.18);
+  background: color-mix(in srgb, var(--hot) 18%, transparent);
   color: var(--accent-hi);
   font-family: var(--mono);
   font-size: 0.78rem;
@@ -1951,7 +1951,7 @@ input[type='color']::-moz-color-swatch {
   padding: 0 3px;
   line-height: 1;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.32);
+  color: color-mix(in srgb, var(--ink) 32%, transparent);
   transition: color var(--dur) var(--ease);
 }
 
@@ -1972,7 +1972,7 @@ kbd {
   border: 1px solid var(--border-strong);
   border-radius: var(--r-xs);
   color: var(--text);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 /* ================================================================
@@ -2039,10 +2039,12 @@ kbd {
   align-items: flex-start;
   gap: 10px;
   padding: 11px 12px 11px 14px;
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-lg);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-lg), var(--glass-highlight);
   color: var(--text-bright);
   pointer-events: auto;
   animation: toast-in var(--dur) var(--ease);
@@ -2068,7 +2070,7 @@ kbd {
 .toast--info .toast__icon    { background: var(--warm-dim);   color: var(--warm-hi); }
 .toast--success .toast__icon { background: var(--cool-dim);   color: var(--success); }
 .toast--error .toast__icon   { background: var(--danger-dim); color: var(--danger-hi); }
-.toast--error { border-color: rgba(251, 113, 133, 0.35); }
+.toast--error { border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
 
 .toast__msg {
   flex: 1;
@@ -2105,10 +2107,12 @@ kbd {
 .confirm {
   width: 400px;
   max-width: calc(100vw - 48px);
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
   border-radius: var(--r-xl);
-  box-shadow: var(--shadow-lg);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-lg), var(--glass-highlight);
   padding: 20px;
 }
 
@@ -2144,13 +2148,13 @@ kbd {
 .confirm__btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #000;
+  color: var(--on-accent);
   font-weight: 600;
 }
 .confirm__btn--primary:hover {
   background: var(--accent-deep);
   border-color: var(--accent-deep);
-  color: #000;
+  color: var(--on-accent);
 }
 
 .confirm__btn--danger {
@@ -2160,4 +2164,41 @@ kbd {
 .confirm__btn--danger:hover {
   background: var(--danger-hi);
   border-color: var(--danger-hi);
+}
+
+/* ================================================================
+   THEME PASS POLISH — metadata typeface + tactile motion
+   ================================================================ */
+
+/* Funnel Sans for chrome metadata: panel headings, menus, pills, labels */
+.collapsible summary h2,
+.menubar,
+.app__header-pill,
+.artboard-label,
+.toast,
+.confirm__title {
+  font-family: var(--meta);
+}
+
+/* Tactile press on chrome buttons (.btn already presses at 0.97) */
+.menubar__btn:active,
+.app__aspect-lock:active,
+.confirm__btn:active,
+.toast__close:active {
+  transform: var(--press);
+}
+
+/* Primary CTA lifts on hover, presses on click */
+.btn--export {
+  transition:
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+.btn--export:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px -12px color-mix(in srgb, var(--hot) 75%, transparent);
+}
+.btn--export:active:not(:disabled) {
+  transform: var(--press);
 }

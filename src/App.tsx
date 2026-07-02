@@ -794,7 +794,7 @@ function RemoveBgButton({
         )}
       </button>
       {error && (
-        <span style={{ fontSize: 11, color: 'rgba(255, 120, 120, 0.85)' }}>
+        <span style={{ fontSize: 11, color: 'var(--danger)' }}>
           {error}
         </span>
       )}
@@ -1691,6 +1691,21 @@ export default function App() {
     void refreshFonts()
   }, [addText, refreshFonts])
 
+  // Theme — dark is the default; main.tsx applies the persisted choice
+  // before first paint, so initial state just reads the DOM back.
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
+  )
+  const toggleTheme = useCallback(() => {
+    setTheme((cur) => {
+      const next = cur === 'dark' ? 'light' : 'dark'
+      if (next === 'light') document.documentElement.dataset.theme = 'light'
+      else delete document.documentElement.dataset.theme
+      localStorage.setItem('tiovivo-theme', next)
+      return next
+    })
+  }, [])
+
   return (
     <div className="app">
       <ToastHost />
@@ -1825,6 +1840,24 @@ export default function App() {
         >
           <Icon.Eye style={{ width: 14, height: 14 }} />
         </button>
+        {/* Theme toggle — dark ⇄ light, persisted across sessions. */}
+        <button
+          type="button"
+          className="app__aspect-lock"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        >
+          {theme === 'dark' ? (
+            <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+            </svg>
+          ) : (
+            <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+            </svg>
+          )}
+        </button>
         {/* Workspace pasteboard colour — lives in the header because it's a
             global view setting, not per-slide. Same pill shape as the export
             name input so it sits cleanly in the row. The reset button is
@@ -1878,13 +1911,13 @@ export default function App() {
             alignItems: 'center',
             gap: 6,
             padding: '0 8px',
-            border: '1px solid rgba(255,255,255,0.08)',
+            border: '1px solid color-mix(in srgb, var(--ink) 8%, transparent)',
             borderRadius: 6,
-            background: 'rgba(255,255,255,0.03)',
+            background: 'color-mix(in srgb, var(--ink) 3%, transparent)',
             height: 32,
           }}
         >
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Name</span>
+          <span style={{ fontSize: 11, color: 'color-mix(in srgb, var(--ink) 50%, transparent)' }}>Name</span>
           <input
             type="text"
             value={exportPrefix}
@@ -1896,7 +1929,7 @@ export default function App() {
               border: 'none',
               outline: 'none',
               background: 'transparent',
-              color: '#fff',
+              color: 'var(--text-bright)',
               fontSize: 13,
               fontFamily: 'inherit',
             }}

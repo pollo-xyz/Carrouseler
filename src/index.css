@@ -1,59 +1,92 @@
+/* ================================================================
+   TIOVIVO DESIGN TOKENS
+
+   Two-layer system: each theme block sets the base palette (ink,
+   paper, surfaces, accents); every border, text tone, and wash
+   derives from those via color-mix. Components must never reference
+   raw colors — always tokens or color-mix over tokens. Theme is
+   switched with [data-theme] on <html>; dark is the default.
+   ================================================================ */
+
 :root {
-  /* ── Backgrounds (true black → warm elevated surfaces) ── */
-  --bg:         #000000;
-  --bg-soft:    #05050a;
+  color-scheme: dark;
+
+  /* ── Base palette — dark ── */
+  --ink:   #ffffff;              /* foreground base; every wash derives from it */
+  --paper: #000000;              /* deepest background */
+  --bg:      var(--paper);
+  --bg-soft: #05050a;
   --surface:    #0a0a10;
   --surface-2:  #101017;
   --surface-3:  #181822;
   --surface-hi: #24242f;
+  --glass-tint: #0c0c14;         /* translucent panel base, sits over backdrop blur */
 
-  /* ── Borders ── */
-  --border:        rgba(255, 255, 255, 0.055);
-  --border-strong: rgba(255, 255, 255, 0.105);
-  --border-bright: rgba(255, 255, 255, 0.18);
+  /* ── Interactive accent: blue (selection, CTAs, active states) ── */
+  --hot:      #3b82f6;
+  --hot-hi:   #60a5fa;
+  --hot-pale: #b4d2ff;           /* readable text over hot tints */
+  --hot-text: rgba(220, 235, 255, 0.96);
+  --hot-veil: color-mix(in srgb, #1c325a 56%, transparent); /* active-item backdrop */
 
-  /* ── Text ── */
-  --text-dim:    rgba(255, 255, 255, 0.34);
-  --text:        rgba(255, 255, 255, 0.62);
-  --text-bright: rgba(255, 255, 255, 0.96);
+  /* ── Primary accent: white — flips to near-black on light ── */
+  --accent:      #ffffff;
+  --accent-hi:   #ffffff;
+  --accent-deep: #cccccc;
+  --on-accent:   #000000;        /* text placed on solid --accent */
 
-  /* ── Primary accent: white ── */
-  --accent:        #ffffff;
-  --accent-hi:     #ffffff;
-  --accent-deep:   #cccccc;
-  --accent-dim:    rgba(255, 255, 255, 0.14);
-  --accent-glow:   rgba(255, 255, 255, 0.55);
-  --accent-strong: rgba(255, 255, 255, 0.85);
+  /* ── Secondary accents ── */
+  --warm:    #06b6d4;
+  --warm-hi: #67e8f9;
+  --cool:    #a3e635;
+  --cool-hi: #d9f99d;
+  --success: #4ade80;
+  --danger:     #fb7185;
+  --danger-hi:  #fda4af;
 
-  /* ── Secondary accent: electric cyan ── */
-  --warm:        #06b6d4;
-  --warm-hi:     #67e8f9;
-  --warm-dim:    rgba(6, 182, 212, 0.14);
-  --warm-glow:   rgba(6, 182, 212, 0.50);
-
-  /* ── Tertiary pop: neon lime ── */
-  --cool:        #a3e635;
-  --cool-hi:     #d9f99d;
-  --cool-dim:    rgba(163, 230, 53, 0.14);
-  --cool-glow:   rgba(163, 230, 53, 0.45);
+  /* ── Derived washes (identical formula on every theme) ── */
+  --border:        color-mix(in srgb, var(--ink) 5.5%, transparent);
+  --border-strong: color-mix(in srgb, var(--ink) 10.5%, transparent);
+  --border-bright: color-mix(in srgb, var(--ink) 18%, transparent);
+  --text-dim:    color-mix(in srgb, var(--ink) 34%, transparent);
+  --text:        color-mix(in srgb, var(--ink) 62%, transparent);
+  --text-bright: color-mix(in srgb, var(--ink) 96%, transparent);
+  --accent-dim:    color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-glow:   color-mix(in srgb, var(--accent) 55%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 85%, transparent);
+  --warm-dim:   color-mix(in srgb, var(--warm) 14%, transparent);
+  --warm-glow:  color-mix(in srgb, var(--warm) 50%, transparent);
+  --cool-dim:   color-mix(in srgb, var(--cool) 14%, transparent);
+  --cool-glow:  color-mix(in srgb, var(--cool) 45%, transparent);
+  --danger-dim: color-mix(in srgb, var(--danger) 14%, transparent);
 
   /* ── Soft solid ── */
   --accent-soft: #333333;
 
   /* ── Bold cool-spectrum gradient ── */
-  --grad:        linear-gradient(120deg, #ffffff 0%, #22d3ee 55%, #a3e635 110%);
-  --grad-soft:   linear-gradient(120deg, rgba(139,92,246,0.28) 0%, rgba(34,211,238,0.20) 55%, rgba(163,230,53,0.14) 110%);
+  --grad:      linear-gradient(120deg, #ffffff 0%, #22d3ee 55%, #a3e635 110%);
+  --grad-soft: linear-gradient(120deg, rgba(139,92,246,0.28) 0%, rgba(34,211,238,0.20) 55%, rgba(163,230,53,0.14) 110%);
 
-  /* ── Success / Danger ── */
-  --success:     #4ade80;
-  --danger:      #fb7185;
-  --danger-hi:   #fda4af;
-  --danger-dim:  rgba(251, 113, 133, 0.14);
+  /* ── Recessed field wells (inputs, swatch backdrops) ── */
+  --well-tint: #000000;
+  --well-scale: 1;      /* light theme scales well darkness down */
+
+  /* ── Select dropdown arrow (data-URI can't use tokens; two variants) ── */
+  --select-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+
+  /* ── Frosted glass (floating chrome only: menus, pickers, toasts) ── */
+  --blur:    blur(20px) saturate(130%);
+  --blur-sm: blur(12px) saturate(120%);
+  --glass-bg:        color-mix(in srgb, var(--glass-tint) 72%, transparent);
+  --glass-bg-strong: color-mix(in srgb, var(--glass-tint) 88%, transparent);
+  --glass-border:    color-mix(in srgb, var(--ink) 13%, transparent);
+  --glass-highlight: inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent);
 
   /* ── Radius ── */
   --r-xs: 4px;
   --r-sm: 6px;
   --r:    9px;
+  --r-md: 9px;
   --r-lg: 13px;
   --r-xl: 18px;
   --r-pill: 999px;
@@ -65,16 +98,87 @@
   --shadow-accent: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 8px 28px rgba(255, 255, 255, 0.45);
   --shadow-cool:   0 0 0 1px rgba(34, 211, 238, 0.45), 0 8px 28px rgba(34, 211, 238, 0.40);
 
+  /* ── Ambient wash (body backdrop glows) ── */
+  --ambient:
+    radial-gradient(ellipse 75% 50% at 12% -5%, rgba(255, 255, 255, 0.18), transparent 60%),
+    radial-gradient(ellipse 55% 45% at 92% 105%, rgba(34, 211, 238, 0.13), transparent 60%),
+    radial-gradient(ellipse 40% 30% at 95% 0%, rgba(163, 230, 53, 0.06), transparent 60%);
+
   /* ── Motion ── */
   --ease:        cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-fast:    120ms;
   --dur:         180ms;
   --dur-slow:    280ms;
+  --press: scale(0.965);         /* tactile button press */
 
-  /* ── Typography ── */
-  --font: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  /* ── Typography (self-hosted via @fontsource) ── */
+  --font: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --meta: 'Funnel Sans', var(--font);   /* labels, badges, metadata */
+  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+}
+
+/* ================================================================
+   LIGHT THEME — only the base palette changes; washes re-derive.
+   ================================================================ */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --ink:   #171921;
+  --paper: #e7e9ee;
+  --bg-soft: #eceef2;
+  /* Elevation gets whiter on light, darker themes go the other way */
+  --surface:    #eff1f5;
+  --surface-2:  #f4f6f9;
+  --surface-3:  #fafbfd;
+  --surface-hi: #ffffff;
+  --glass-tint: #f5f7fb;
+
+  --hot:      #2f6fe4;
+  --hot-hi:   #3b82f6;
+  --hot-pale: #274b8f;
+  --hot-text: rgba(23, 52, 105, 0.96);
+  --hot-veil: color-mix(in srgb, #b9cffb 66%, transparent);
+
+  --accent:      #16181f;
+  --accent-hi:   #000000;
+  --accent-deep: #3c4150;
+  --on-accent:   #ffffff;
+  --accent-soft: #c9cdd6;
+
+  --warm-hi:   #0891b2;
+  --cool-hi:   #65a30d;
+  --danger:    #e11d48;
+  --danger-hi: #be123c;
+
+  /* Dark-on-light borders and text need a touch more weight */
+  --border:        color-mix(in srgb, var(--ink) 9%, transparent);
+  --border-strong: color-mix(in srgb, var(--ink) 16%, transparent);
+  --border-bright: color-mix(in srgb, var(--ink) 26%, transparent);
+  --text-dim:    color-mix(in srgb, var(--ink) 44%, transparent);
+  --text:        color-mix(in srgb, var(--ink) 72%, transparent);
+  --text-bright: color-mix(in srgb, var(--ink) 94%, transparent);
+
+  --glass-border:    color-mix(in srgb, var(--ink) 16%, transparent);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+
+  --well-tint: #1c2434;
+  --well-scale: 0.22;
+
+  --select-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(23,25,33,0.55)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+
+  --grad-soft: linear-gradient(120deg, rgba(139,92,246,0.16) 0%, rgba(34,211,238,0.12) 55%, rgba(163,230,53,0.08) 110%);
+
+  --shadow-sm: 0 1px 2px rgba(23, 28, 42, 0.10);
+  --shadow:    0 4px 16px rgba(23, 28, 42, 0.13), 0 1px 2px rgba(23, 28, 42, 0.08);
+  --shadow-lg: 0 16px 48px rgba(23, 28, 42, 0.18), 0 2px 8px rgba(23, 28, 42, 0.10);
+  --shadow-accent: 0 0 0 1px rgba(23, 24, 31, 0.30), 0 8px 28px rgba(23, 24, 31, 0.25);
+  --shadow-cool:   0 0 0 1px rgba(8, 145, 178, 0.35), 0 8px 28px rgba(8, 145, 178, 0.25);
+
+  --ambient:
+    radial-gradient(ellipse 75% 50% at 12% -5%, rgba(255, 255, 255, 0.85), transparent 60%),
+    radial-gradient(ellipse 55% 45% at 92% 105%, rgba(34, 211, 238, 0.10), transparent 60%),
+    radial-gradient(ellipse 40% 30% at 95% 0%, rgba(163, 230, 53, 0.05), transparent 60%);
 }
 
 * {
@@ -96,23 +200,21 @@ body {
   font-feature-settings: 'cv11', 'ss01', 'ss03';
   color: var(--text);
   background: var(--bg);
+  transition: color var(--dur-slow) ease, background var(--dur-slow) ease;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   overflow: hidden;
 }
 
-/* Ambient radial glow — gives the black background a subtle sense of depth */
+/* Ambient radial glow — gives the backdrop a subtle sense of depth */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background:
-    radial-gradient(ellipse 75% 50% at 12% -5%, rgba(255, 255, 255, 0.18), transparent 60%),
-    radial-gradient(ellipse 55% 45% at 92% 105%, rgba(34, 211, 238, 0.13), transparent 60%),
-    radial-gradient(ellipse 40% 30% at 95% 0%, rgba(163, 230, 53, 0.06), transparent 60%);
+  background: var(--ambient);
 }
 
 #root {
@@ -140,7 +242,7 @@ input[type='number'] {
   color: #fff;
 }
 
-/* Scrollbar default (thin, accent on hover) */
+/* Scrollbar default (thin, brighter on hover) */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -149,10 +251,18 @@ input[type='number'] {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
   border-radius: 3px;
   transition: background var(--dur) var(--ease);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.55);
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+
+/* Respect reduced-motion: keep fades, drop movement */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

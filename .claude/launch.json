@@ -4,8 +4,9 @@
     {
       "name": "post-preparator",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host"],
-      "port": 5173
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host", "--mode", "browser"],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }

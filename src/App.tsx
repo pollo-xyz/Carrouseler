@@ -5,6 +5,8 @@ import MenuBar from './components/MenuBar'
 import FontPicker from './components/FontPicker'
 import GifPicker from './components/GifPicker'
 import { downloadGif, type GiphyItem } from './lib/giphy'
+import { ToastHost, ConfirmHost } from './components/FeedbackHosts'
+import { toast, confirmDialog } from './lib/feedback'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
 import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
 import { PRESETS } from './lib/presets'
@@ -267,8 +269,14 @@ function BackgroundPanel({
   }
 
   const deleteCustomPalette = (name: string) => {
-    if (!window.confirm(`Delete the "${name}" palette?`)) return
-    setCustomPalettes((cur) => cur.filter((p) => p.name !== name))
+    void confirmDialog({
+      title: 'Delete palette',
+      message: `Delete the "${name}" palette?`,
+      confirmLabel: 'Delete',
+      danger: true,
+    }).then((ok) => {
+      if (ok) setCustomPalettes((cur) => cur.filter((p) => p.name !== name))
+    })
   }
 
   // Inline rename for a saved custom palette. Double-click its name to enter,
@@ -491,9 +499,10 @@ function BackgroundPanel({
                     if (colors.length) apply({ palette: colors })
                   } catch (err) {
                     console.error('[sample-from-media] failed:', err)
-                    alert(
+                    toast(
                       'Could not sample colours from the selected media. ' +
                       'For videos make sure the frame is decoded; for images, check the file is still loaded.',
+                      { kind: 'error' },
                     )
                   }
                 }}
@@ -889,7 +898,7 @@ export default function App() {
       addMedia(file, item.width, item.height)
     } catch (err) {
       console.error('[giphy] download failed:', err)
-      alert(`Could not load that GIF: ${err instanceof Error ? err.message : String(err)}`)
+      toast(`Could not load that GIF: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
   }, [addMedia])
 
@@ -1163,7 +1172,7 @@ export default function App() {
     if (!st.slides.length || !stageRef.current) return
     if (!window.electronAPI) {
       console.error('[export] window.electronAPI is undefined — run inside the Electron app')
-      alert('Export only works in the desktop app, not the browser.')
+      toast('Export only works in the desktop app, not the browser.', { kind: 'error' })
       return
     }
     setExporting(true)
@@ -1251,12 +1260,14 @@ export default function App() {
       }
 
       if (mixedReports.length > 0) {
-        const proceed = window.confirm(
-          `Mixed video frame rates detected.\n\n` +
-          mixedReports.join('\n') +
-          `\n\nExport will use ${projectFps} fps. Sources at other rates may appear ` +
-          `slowed down, sped up, or have repeated frames.\n\nContinue?`,
-        )
+        const proceed = await confirmDialog({
+          title: 'Mixed video frame rates',
+          message:
+            mixedReports.join('\n') +
+            `\n\nExport will use ${projectFps} fps. Sources at other rates may appear ` +
+            `slowed down, sped up, or have repeated frames.`,
+          confirmLabel: 'Export anyway',
+        })
         if (!proceed) {
           setExportProgress('')
           return
@@ -1320,18 +1331,19 @@ export default function App() {
       }
       console.log(`[export] wrote ${written.length} file(s) to ${dir}`, written)
       if (videoErrors > 0) {
-        alert(
+        toast(
           `Exported ${written.length} file(s) to:\n${dir}\n\n` +
           `${videoErrors} video slide(s) failed. Check the dev console (View → Toggle Developer Tools) for details.`,
+          { kind: 'error' },
         )
       } else if (written.length > 0) {
-        alert(`Exported ${written.length} file(s) to:\n${dir}`)
+        toast(`Exported ${written.length} file(s) to:\n${dir}`, { kind: 'success' })
       } else {
-        alert(`Nothing was exported. The slide list is empty or every slide failed.`)
+        toast('Nothing was exported. The slide list is empty or every slide failed.', { kind: 'error' })
       }
     } catch (err) {
       console.error('[export] failed:', err)
-      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     } finally {
       setExporting(false)
       setExportProgress('')
@@ -1343,7 +1355,7 @@ export default function App() {
     const st = useTiovivoStore.getState()
     if (!stageRef.current) return
     if (!window.electronAPI) {
-      alert('Export only works in the desktop app, not the browser.')
+      toast('Export only works in the desktop app, not the browser.', { kind: 'error' })
       return
     }
     const idx = st.slides.findIndex((s) => s.id === slideId)
@@ -1389,14 +1401,14 @@ export default function App() {
           (pct) => setExportProgress(`Encoding slide ${idx + 1}: ${Math.round(pct)}%`),
           (dataUrl) => setExportPreview(dataUrl),
         )
-        if (!result) alert('Video export failed. Check the dev console for details.')
+        if (!result) toast('Video export failed. Check the dev console for details.', { kind: 'error' })
       } else {
         await new Promise<void>((r) =>
           requestAnimationFrame(() => requestAnimationFrame(() => r())),
         )
         const blob = await stageRef.current.exportSlidePng(slideId)
         if (!blob) {
-          alert('Export failed.')
+          toast('Export failed.', { kind: 'error' })
           return
         }
         const defaultName = `${prefix}${slideNameSeg}_${n}.png`
@@ -1410,7 +1422,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('[export-single] failed:', err)
-      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     } finally {
       setExporting(false)
       setExportProgress('')
@@ -1423,7 +1435,7 @@ export default function App() {
   // path uses the boolean to decide whether to proceed with closing the window.
   const handleSave = useCallback(async (forcePrompt: boolean): Promise<boolean> => {
     if (!window.electronAPI) {
-      alert('Saving projects only works in the desktop app, not the browser.')
+      toast('Saving projects only works in the desktop app, not the browser.', { kind: 'error' })
       return false
     }
     const st = useTiovivoStore.getState()
@@ -1498,7 +1510,7 @@ export default function App() {
       return false
     } catch (err) {
       console.error('[save] failed:', err)
-      alert(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast(`Save failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
       return false
     }
   }, [refreshRecents])
@@ -1525,13 +1537,13 @@ export default function App() {
       setProjectPath(path)
     } catch (err) {
       console.error('[open] failed:', err)
-      alert(`Open failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast(`Open failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
   }, [])
 
   const handleOpen = useCallback(async () => {
     if (!window.electronAPI) {
-      alert('Opening projects only works in the desktop app, not the browser.')
+      toast('Opening projects only works in the desktop app, not the browser.', { kind: 'error' })
       return
     }
     try {
@@ -1541,14 +1553,21 @@ export default function App() {
       void refreshRecents()
     } catch (err) {
       console.error('[open] failed:', err)
-      alert(`Open failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast(`Open failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
   }, [loadFromBuffer, refreshRecents])
 
   const handleNew = useCallback(() => {
-    if (!window.confirm('Discard current project and start fresh?')) return
-    useTiovivoStore.getState().resetProject()
-    setProjectPath(null)
+    void confirmDialog({
+      title: 'New project',
+      message: 'Discard current project and start fresh?',
+      confirmLabel: 'Discard',
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return
+      useTiovivoStore.getState().resetProject()
+      setProjectPath(null)
+    })
   }, [])
 
   /* ---- File-menu keyboard shortcuts ---- */
@@ -1668,6 +1687,8 @@ export default function App() {
 
   return (
     <div className="app">
+      <ToastHost />
+      <ConfirmHost />
       {/* In-app menu bar for Windows / Linux. CSS hides it on macOS — Mac
           uses the native menu strip at the top of the screen instead. */}
       <MenuBar

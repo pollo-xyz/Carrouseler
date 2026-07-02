@@ -2017,3 +2017,147 @@ kbd {
      immediately after the user clicks one. */
   outline: none;
 }
+
+/* ================================================================
+   FEEDBACK — toasts + confirm dialog (in-app alert/confirm)
+   ================================================================ */
+
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 400; /* above the gif picker (200) and export toast (20) */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px 11px 14px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-bright);
+  pointer-events: auto;
+  animation: toast-in var(--dur) var(--ease);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.toast__icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.toast--info .toast__icon    { background: var(--warm-dim);   color: var(--warm-hi); }
+.toast--success .toast__icon { background: var(--cool-dim);   color: var(--success); }
+.toast--error .toast__icon   { background: var(--danger-dim); color: var(--danger-hi); }
+.toast--error { border-color: rgba(251, 113, 133, 0.35); }
+
+.toast__msg {
+  flex: 1;
+  white-space: pre-line; /* alert() messages used \n freely */
+  overflow-wrap: anywhere;
+}
+
+.toast__close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-xs);
+  font-size: 11px;
+  line-height: 1;
+  margin-top: 2px;
+  transition: color var(--dur-fast) var(--ease);
+}
+.toast__close:hover { color: var(--text-bright); }
+
+.confirm__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  animation: toast-in var(--dur-fast) var(--ease);
+}
+
+.confirm {
+  width: 400px;
+  max-width: calc(100vw - 48px);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+}
+
+.confirm__title {
+  color: var(--text-bright);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.confirm__message {
+  white-space: pre-line;
+  margin-bottom: 18px;
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm__btn {
+  padding: 7px 16px;
+  border-radius: var(--r);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.confirm__btn:hover { background: var(--surface-hi); color: var(--text-bright); }
+
+.confirm__btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+  font-weight: 600;
+}
+.confirm__btn--primary:hover {
+  background: var(--accent-deep);
+  border-color: var(--accent-deep);
+  color: #000;
+}
+
+.confirm__btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.confirm__btn--danger:hover {
+  background: var(--danger-hi);
+  border-color: var(--danger-hi);
+}

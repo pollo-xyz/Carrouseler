@@ -6,7 +6,7 @@ import FontPicker from './components/FontPicker'
 import GifPicker from './components/GifPicker'
 import { downloadGif, type GiphyItem } from './lib/giphy'
 import { ToastHost, ConfirmHost } from './components/FeedbackHosts'
-import { toast, confirmDialog } from './lib/feedback'
+import { toast, dismissToast, confirmDialog } from './lib/feedback'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
 import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
 import { PRESETS } from './lib/presets'
@@ -891,6 +891,10 @@ export default function App() {
   // Download the chosen Giphy result and drop it on the active slide. We
   // embed the bytes (not the remote URL) so the .vpost stays portable.
   const handleGifPick = useCallback(async (item: GiphyItem) => {
+    // Sticky toast while the bytes download — GIFs can be several MB and
+    // the picker closes immediately, so without this there's no sign
+    // anything is happening.
+    const loadingId = toast('Downloading GIF…', { duration: 0 })
     try {
       const blob = await downloadGif(item)
       const safeTitle = item.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || 'gif'
@@ -899,6 +903,8 @@ export default function App() {
     } catch (err) {
       console.error('[giphy] download failed:', err)
       toast(`Could not load that GIF: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
+    } finally {
+      dismissToast(loadingId)
     }
   }, [addMedia])
 

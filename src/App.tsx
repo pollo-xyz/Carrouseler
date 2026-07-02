@@ -7,6 +7,7 @@ import GifPicker from './components/GifPicker'
 import { downloadGif, type GiphyItem } from './lib/giphy'
 import { ToastHost, ConfirmHost } from './components/FeedbackHosts'
 import { toast, dismissToast, confirmDialog } from './lib/feedback'
+import { useThemeStore, resolveWorkspaceBg, WORKSPACE_AUTO } from './lib/theme'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
 import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
 import { PRESETS } from './lib/presets'
@@ -1453,7 +1454,7 @@ export default function App() {
         st.slides,
         st.items,
         st.dimensions,
-        st.workspaceBgColor,
+        resolveWorkspaceBg(st.workspaceBgColor, useThemeStore.getState().theme),
       ).catch((err) => {
         console.warn('[save] preview generation failed:', err)
         return null
@@ -1691,20 +1692,10 @@ export default function App() {
     void refreshFonts()
   }, [addText, refreshFonts])
 
-  // Theme — dark is the default; main.tsx applies the persisted choice
-  // before first paint, so initial state just reads the DOM back.
-  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
-  )
-  const toggleTheme = useCallback(() => {
-    setTheme((cur) => {
-      const next = cur === 'dark' ? 'light' : 'dark'
-      if (next === 'light') document.documentElement.dataset.theme = 'light'
-      else delete document.documentElement.dataset.theme
-      localStorage.setItem('tiovivo-theme', next)
-      return next
-    })
-  }, [])
+  // Theme — Onyx (dark) / Cream (light); lib/theme.ts owns persistence and
+  // the DOM attribute, and resolves the "auto" pasteboard color.
+  const theme = useThemeStore((s) => s.theme)
+  const toggleTheme = useThemeStore((s) => s.toggleTheme)
 
   return (
     <div className="app">
@@ -1845,9 +1836,9 @@ export default function App() {
           type="button"
           className="app__aspect-lock"
           onClick={toggleTheme}
-          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={theme === 'onyx' ? 'Switch to Cream (light) theme' : 'Switch to Onyx (dark) theme'}
         >
-          {theme === 'dark' ? (
+          {theme === 'onyx' ? (
             <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="4" />
               <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
@@ -1866,7 +1857,7 @@ export default function App() {
             Name input next to it. */}
         {(() => {
           const isWorkspaceDefault =
-            !workspaceBgColor || workspaceBgColor.toLowerCase() === '#0a0a0e'
+            !workspaceBgColor || workspaceBgColor.toLowerCase() === WORKSPACE_AUTO
           return (
             <label
               className="app__header-pill"
@@ -1875,14 +1866,14 @@ export default function App() {
               <input
                 className="color-swatch"
                 type="color"
-                value={workspaceBgColor || '#0a0a0e'}
+                value={resolveWorkspaceBg(workspaceBgColor, theme)}
                 onChange={(e) => setWorkspaceBgColor(e.target.value)}
               />
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
-                onClick={(e) => { e.preventDefault(); setWorkspaceBgColor('#0a0a0e') }}
-                title={isWorkspaceDefault ? 'Workspace already at default' : 'Reset workspace colour'}
+                onClick={(e) => { e.preventDefault(); setWorkspaceBgColor(WORKSPACE_AUTO) }}
+                title={isWorkspaceDefault ? 'Workspace follows the theme — pick a colour to override' : 'Reset workspace colour to follow the theme'}
                 style={{
                   padding: '2px 6px',
                   flexDirection: 'row',
@@ -1893,8 +1884,8 @@ export default function App() {
                   // is picked it brightens to the normal ghost-btn tone so
                   // the affordance becomes obvious.
                   color: isWorkspaceDefault
-                    ? 'rgba(255, 255, 255, 0.18)'
-                    : 'rgba(255, 255, 255, 0.55)',
+                    ? 'color-mix(in srgb, var(--ink) 18%, transparent)'
+                    : 'color-mix(in srgb, var(--ink) 55%, transparent)',
                   transition: 'color var(--dur-fast) var(--ease)',
                 }}
               >
@@ -2825,7 +2816,7 @@ export default function App() {
             {exporting && (
               <div
                 className="app__export-veil"
-                style={{ background: workspaceBgColor || '#0a0a0e' }}
+                style={{ background: resolveWorkspaceBg(workspaceBgColor, theme) }}
                 aria-hidden
               >
                 {exportPreview && (

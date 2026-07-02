@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { WORKSPACE_AUTO } from '../lib/theme'
 import type { PresetId, Size } from '../lib/presets'
 import { PRESETS, clampSize } from '../lib/presets'
 import { generateThumbnail } from '../lib/thumbnail'
@@ -399,7 +400,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   items: [],
   selectedIds: [],
 
-  workspaceBgColor: '#0a0a0e',
+  workspaceBgColor: WORKSPACE_AUTO,
 
   showGrid: false,
   gridSize: 40,
@@ -1197,7 +1198,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       presetId: payload.presetId,
       customWidth: payload.customWidth,
       customHeight: payload.customHeight,
-      workspaceBgColor: payload.workspaceBgColor ?? '#0a0a0e',
+      workspaceBgColor: payload.workspaceBgColor ?? WORKSPACE_AUTO,
       activeSlideId: firstSlideId,
       selectedIds: [],
       cropItemId: null,
@@ -1244,7 +1245,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       presetId: '3:4',
       customWidth: 1080,
       customHeight: 1350,
-      workspaceBgColor: '#0a0a0e',
+      workspaceBgColor: WORKSPACE_AUTO,
       items: [],
       selectedIds: [],
       cropItemId: null,

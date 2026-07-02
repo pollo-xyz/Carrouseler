@@ -11,6 +11,7 @@ import { Arc, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Transformer } fr
 import Konva from 'konva'
 import { Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import { useTiovivoStore, type PlacedMedia, type Slide } from '../store/useTiovivoStore'
+import { useThemeStore, resolveWorkspaceBg } from '../lib/theme'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { createGifAnimator, type GifAnimator } from '../lib/gifAnimator'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
@@ -681,7 +682,7 @@ function contrastStrokeFor(bgColor: string, alpha = 0.22): string {
   const g = parseInt(hex.slice(2, 4), 16) || 0
   const b = parseInt(hex.slice(4, 6), 16) || 0
   const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
-  return lum > 140 ? `rgba(0,0,0,${alpha})` : `rgba(255,255,255,${alpha})`
+  return lum > 140 ? `rgba(10,11,15,${alpha})` : `rgba(241,242,245,${alpha})`
 }
 
 function TextItemView({
@@ -1178,7 +1179,7 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
       y={item.y}
       width={item.width}
       height={item.height}
-      stroke="rgba(255,255,255,0.4)"
+      stroke="rgba(241,242,245,0.4)"
       dash={[6, 4]}
       strokeWidth={1.5}
       strokeScaleEnabled={false}
@@ -1296,8 +1297,8 @@ function CropOverlay({
     return () => window.removeEventListener('keydown', handler)
   }, [doApply, setCropMode])
 
-  const OVERLAY = 'rgba(0,0,0,0.55)'
-  const THIRDS = 'rgba(255,255,255,0.2)'
+  const OVERLAY = 'rgba(10,11,15,0.55)'
+  const THIRDS = 'rgba(241,242,245,0.2)'
 
   return (
     <>
@@ -1407,8 +1408,8 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
         padding: '8px 10px',
         background: 'rgba(30,30,40,0.97)',
         borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        border: '1px solid rgba(241,242,245,0.1)',
+        boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
         backdropFilter: 'blur(12px)',
         display: 'flex',
         flexDirection: 'column',
@@ -1511,7 +1512,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
 
   const btn: React.CSSProperties = {
     width: 26, height: 26, padding: 0, border: 'none', borderRadius: 5,
-    background: 'transparent', color: 'rgba(255,255,255,0.85)', cursor: 'pointer',
+    background: 'transparent', color: 'rgba(241,242,245,0.85)', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   }
 
@@ -1529,8 +1530,8 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
         padding: '4px 8px',
         background: 'rgba(30,30,40,0.95)',
         borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.4)',
+        border: '1px solid rgba(241,242,245,0.1)',
+        boxShadow: '0 2px 12px rgba(10,11,15,0.4)',
         backdropFilter: 'blur(12px)',
         display: 'flex',
         alignItems: 'center',
@@ -1559,7 +1560,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
         disabled={!ready || !duration}
         style={{ flex: 1, minWidth: 60 }}
       />
-      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', fontFamily: 'var(--mono)', minWidth: 68, textAlign: 'right' }}>
+      <span style={{ fontSize: 10, color: 'rgba(241,242,245,0.55)', fontFamily: 'var(--mono)', minWidth: 68, textAlign: 'right' }}>
         {fmt(currentTime)} / {fmt(duration)}
       </span>
       <button type="button" onClick={toggleMute} disabled={!ready} title={muted ? 'Unmute' : 'Mute'} style={btn}>
@@ -1674,25 +1675,25 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
         padding: 12,
         background: 'rgba(30,30,40,0.97)',
         borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        border: '1px solid rgba(241,242,245,0.1)',
+        boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
         backdropFilter: 'blur(12px)',
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
       }}
     >
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(241,242,245,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover</span>
       {usingImage ? (
         <img
           src={item.coverImageSrc}
-          style={{ width: '100%', borderRadius: 4, background: '#000', aspectRatio: '16/9', objectFit: 'contain' }}
+          style={{ width: '100%', borderRadius: 4, background: '#0d0d11', aspectRatio: '16/9', objectFit: 'contain' }}
           alt=""
         />
       ) : (
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', borderRadius: 4, background: '#000', aspectRatio: '16/9', objectFit: 'contain' }}
+          style={{ width: '100%', borderRadius: 4, background: '#0d0d11', aspectRatio: '16/9', objectFit: 'contain' }}
         />
       )}
       {!usingImage && (
@@ -1708,7 +1709,7 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
             onTouchEnd={handleScrubEnd}
             style={{ flex: 1 }}
           />
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
+          <span style={{ fontSize: 10, color: 'rgba(241,242,245,0.4)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
             {fmt(currentTime)}
           </span>
         </div>
@@ -1727,9 +1728,9 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
           fontSize: 11,
           padding: '6px 8px',
           borderRadius: 4,
-          border: '1px solid rgba(255,255,255,0.15)',
-          background: 'rgba(255,255,255,0.05)',
-          color: 'rgba(255,255,255,0.85)',
+          border: '1px solid rgba(241,242,245,0.15)',
+          background: 'rgba(241,242,245,0.05)',
+          color: 'rgba(241,242,245,0.85)',
           cursor: 'pointer',
         }}
       >
@@ -1940,8 +1941,8 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         padding: 12,
         background: 'rgba(30,30,40,0.97)',
         borderRadius: 8,
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+        border: '1px solid rgba(241,242,245,0.1)',
+        boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
         backdropFilter: 'blur(12px)',
         display: 'flex',
         flexDirection: 'column',
@@ -1949,15 +1950,15 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Trim</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(241,242,245,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Trim</span>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', fontFamily: 'var(--mono)' }}>
+          <span style={{ fontSize: 10, color: 'rgba(241,242,245,0.55)', fontFamily: 'var(--mono)' }}>
             {fmt(start)} → {fmt(end)} · {fmt(Math.max(0, (end || duration) - start))}
           </span>
           <button
             type="button"
             onClick={onReset}
-            style={{ padding: '2px 6px', border: 'none', borderRadius: 4, background: 'transparent', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: 10 }}
+            style={{ padding: '2px 6px', border: 'none', borderRadius: 4, background: 'transparent', color: 'rgba(241,242,245,0.5)', cursor: 'pointer', fontSize: 10 }}
           >Reset</button>
         </div>
       </div>
@@ -1970,7 +1971,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
           position: 'relative',
           width: TRIM_STRIP_WIDTH,
           height: TRIM_STRIP_HEIGHT,
-          background: '#000',
+          background: '#0d0d11',
           borderRadius: 4,
           userSelect: 'none',
           touchAction: 'none',
@@ -1998,9 +1999,9 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
                 style={{
                   width: pW, height: pH,
                   borderRadius: 4,
-                  background: '#000',
+                  background: '#0d0d11',
                   border: '2px solid #3b82f6',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
+                  boxShadow: '0 4px 12px rgba(10,11,15,0.6)',
                   display: 'block',
                 }}
               />
@@ -2009,8 +2010,8 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
                 padding: '2px 6px',
                 fontSize: 10,
                 fontFamily: 'var(--mono)',
-                color: '#fff',
-                background: 'rgba(0,0,0,0.75)',
+                color: '#f1f2f5',
+                background: 'rgba(10,11,15,0.75)',
                 borderRadius: 3,
               }}>{fmt(dragPreview.t)}</div>
             </div>
@@ -2027,8 +2028,8 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
                 backgroundImage: thumbs[i] ? `url(${thumbs[i]})` : undefined,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
-                backgroundColor: thumbs[i] ? undefined : 'rgba(255,255,255,0.04)',
-                borderRight: i < TRIM_THUMB_COUNT - 1 ? '1px solid rgba(0,0,0,0.2)' : undefined,
+                backgroundColor: thumbs[i] ? undefined : 'rgba(241,242,245,0.04)',
+                borderRight: i < TRIM_THUMB_COUNT - 1 ? '1px solid rgba(10,11,15,0.2)' : undefined,
               }}
             />
           ))}
@@ -2037,14 +2038,14 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         <div style={{
           position: 'absolute', top: 0, left: 0, height: '100%',
           width: startX,
-          background: 'rgba(0,0,0,0.65)',
+          background: 'rgba(10,11,15,0.65)',
           pointerEvents: 'none',
         }} />
         {/* Right dimmer (after OUT) */}
         <div style={{
           position: 'absolute', top: 0, left: endX, height: '100%',
           width: Math.max(0, TRIM_STRIP_WIDTH - endX),
-          background: 'rgba(0,0,0,0.65)',
+          background: 'rgba(10,11,15,0.65)',
           pointerEvents: 'none',
         }} />
         {/* Selection frame */}
@@ -2071,7 +2072,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             borderRadius: '4px 0 0 4px',
           }}
         >
-          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" strokeLinecap="round">
+          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="rgba(241,242,245,0.85)" strokeWidth="1.5" strokeLinecap="round">
             <line x1="2" y1="5" x2="2" y2="19" />
             <line x1="4" y1="5" x2="4" y2="19" />
           </svg>
@@ -2090,7 +2091,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             borderRadius: '0 4px 4px 0',
           }}
         >
-          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" strokeLinecap="round">
+          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="rgba(241,242,245,0.85)" strokeWidth="1.5" strokeLinecap="round">
             <line x1="2" y1="5" x2="2" y2="19" />
             <line x1="4" y1="5" x2="4" y2="19" />
           </svg>
@@ -2158,7 +2159,12 @@ const EditorStage = forwardRef<
   const toggleSlideExport = useTiovivoStore((s) => s.toggleSlideExport)
   const activeSlideId = useTiovivoStore((s) => s.activeSlideId)
   const thumbnails = useTiovivoStore((s) => s.thumbnails)
-  const workspaceBgColor = useTiovivoStore((s) => s.workspaceBgColor)
+  const workspaceBgColorRaw = useTiovivoStore((s) => s.workspaceBgColor)
+  const theme = useThemeStore((s) => s.theme)
+  // Resolved against the theme — the "auto" sentinel follows Onyx/Cream.
+  // Everything below (pasteboard fill, chrome luminance, seam veil) uses
+  // the resolved hex.
+  const workspaceBgColor = resolveWorkspaceBg(workspaceBgColorRaw, theme)
   const fitItemToSlide = useTiovivoStore((s) => s.fitItemToSlide)
   const fillItemToSlide = useTiovivoStore((s) => s.fillItemToSlide)
   const resetItemScale = useTiovivoStore((s) => s.resetItemScale)
@@ -2677,7 +2683,7 @@ const EditorStage = forwardRef<
               lctx.clearRect(0, 0, LOUPE_SIZE, LOUPE_SIZE)
               lctx.drawImage(srcCanvas, 0, 0, LOUPE_SRC, LOUPE_SRC, 0, 0, LOUPE_SIZE, LOUPE_SIZE)
               // Draw grid
-              lctx.strokeStyle = 'rgba(255,255,255,0.12)'
+              lctx.strokeStyle = 'rgba(241,242,245,0.12)'
               lctx.lineWidth = 0.5
               for (let gx = 0; gx <= LOUPE_SRC; gx++) {
                 lctx.beginPath(); lctx.moveTo(gx * LOUPE_PX, 0); lctx.lineTo(gx * LOUPE_PX, LOUPE_SIZE); lctx.stroke()
@@ -2686,7 +2692,7 @@ const EditorStage = forwardRef<
                 lctx.beginPath(); lctx.moveTo(0, gy * LOUPE_PX); lctx.lineTo(LOUPE_SIZE, gy * LOUPE_PX); lctx.stroke()
               }
               // Highlight center pixel
-              lctx.strokeStyle = '#fff'
+              lctx.strokeStyle = '#f1f2f5'
               lctx.lineWidth = 1.5
               lctx.strokeRect(half * LOUPE_PX + 0.5, half * LOUPE_PX + 0.5, LOUPE_PX - 1, LOUPE_PX - 1)
             }
@@ -3185,7 +3191,7 @@ const EditorStage = forwardRef<
     const b = parseInt(hex.slice(4, 6), 16) || 0
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
     const dark = lum > 140
-    const fg = dark ? '0, 0, 0' : '255, 255, 255'
+    const fg = dark ? '17, 18, 22' : '241, 242, 245'
     return {
       ['--chrome-fg' as string]: `rgba(${fg}, 0.85)`,
       ['--chrome-fg-med' as string]: `rgba(${fg}, 0.6)`,
@@ -3226,11 +3232,11 @@ const EditorStage = forwardRef<
           display: 'flex',
           flexDirection: 'column',
           background: 'rgba(18,18,24,0.95)',
-          border: '1px solid rgba(255,255,255,0.15)',
+          border: '1px solid rgba(241,242,245,0.15)',
           borderRadius: 8,
           overflow: 'hidden',
           backdropFilter: 'blur(8px)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          boxShadow: '0 4px 20px rgba(10,11,15,0.5)',
         }}>
           <canvas
             width={LOUPE_SIZE}
@@ -3254,13 +3260,13 @@ const EditorStage = forwardRef<
             <div style={{
               width: 14, height: 14, borderRadius: 3,
               background: pixelInfo.color,
-              border: '1px solid rgba(255,255,255,0.25)',
+              border: '1px solid rgba(241,242,245,0.25)',
               flexShrink: 0,
             }} />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#fff' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#f1f2f5' }}>
               {pixelInfo.color}
             </span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', marginLeft: 'auto' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'rgba(241,242,245,0.4)', marginLeft: 'auto' }}>
               {pixelInfo.x},{pixelInfo.y}
             </span>
           </div>
@@ -3290,7 +3296,7 @@ const EditorStage = forwardRef<
           className="btn btn--ghost btn--sm"
           onClick={fitToScreen}
           title="Fit to screen"
-          style={{ fontSize: '0.76rem', padding: '5px 10px', color: 'rgba(255,255,255,0.78)' }}
+          style={{ fontSize: '0.76rem', padding: '5px 10px', color: 'rgba(241,242,245,0.78)' }}
         >
           Fit
         </button>
@@ -3302,7 +3308,7 @@ const EditorStage = forwardRef<
           style={{
             fontSize: '0.76rem',
             padding: '5px 6px',
-            color: 'rgba(255,255,255,0.58)',
+            color: 'rgba(241,242,245,0.58)',
             fontFamily: 'var(--mono)',
             minWidth: 48,
             textAlign: 'right',
@@ -3317,7 +3323,7 @@ const EditorStage = forwardRef<
           Chrome colours adapt to workspace luminance via --chrome-fg-* CSS
           custom properties set on the outer .editor-stage-wrap. Children
           reference them with var(--chrome-fg-...) instead of hard-coded
-          rgba(255,255,255,...) so white workspaces don't hide the chrome. */}
+          rgba(241,242,245,...) so white workspaces don't hide the chrome. */}
       <div
         style={{ position: 'absolute', inset: 0, zIndex: 5, pointerEvents: isReordering ? 'auto' : 'none' }}
         onMouseMove={(e) => {
@@ -3431,8 +3437,8 @@ const EditorStage = forwardRef<
                         spellCheck={false}
                         maxLength={80}
                         style={{
-                          background: 'rgba(0, 0, 0, 0.4)',
-                          border: '1px solid rgba(59, 130, 246, 0.45)',
+                          background: 'rgba(10, 11, 15, 0.4)',
+                          border: '1px solid color-mix(in srgb, var(--hot) 45%, transparent)',
                           borderRadius: 3,
                           color: 'inherit',
                           font: 'inherit',
@@ -3628,8 +3634,8 @@ const EditorStage = forwardRef<
                         borderRadius: '50%',
                         background: '#ffb020',
                         color: '#1a1100',
-                        border: '2px solid rgba(0,0,0,0.55)',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+                        border: '2px solid rgba(10,11,15,0.55)',
+                        boxShadow: '0 2px 6px rgba(10,11,15,0.5)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -3688,9 +3694,9 @@ const EditorStage = forwardRef<
                   transform: 'translate(-50%, -50%)',
                   pointerEvents: 'auto',
                   width: 28, height: 28, borderRadius: '50%',
-                  border: '1.5px solid rgba(255,255,255,0.2)',
+                  border: '1.5px solid rgba(241,242,245,0.2)',
                   background: 'rgba(30,30,40,0.85)',
-                  color: 'rgba(255,255,255,0.5)',
+                  color: 'rgba(241,242,245,0.5)',
                   cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   transition: 'border-color 0.15s, color 0.15s, background 0.15s',
@@ -3698,13 +3704,13 @@ const EditorStage = forwardRef<
                 onMouseEnter={(e) => {
                   const b = e.currentTarget
                   b.style.borderColor = '#3b82f6'
-                  b.style.color = '#fff'
+                  b.style.color = '#f1f2f5'
                   b.style.background = '#3b82f6'
                 }}
                 onMouseLeave={(e) => {
                   const b = e.currentTarget
-                  b.style.borderColor = 'rgba(255,255,255,0.2)'
-                  b.style.color = 'rgba(255,255,255,0.5)'
+                  b.style.borderColor = 'rgba(241,242,245,0.2)'
+                  b.style.color = 'rgba(241,242,245,0.5)'
                   b.style.background = 'rgba(30,30,40,0.85)'
                 }}
               >
@@ -3742,7 +3748,7 @@ const EditorStage = forwardRef<
           const btnBase: React.CSSProperties = {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             width: 32, height: 28, border: 'none', borderRadius: 5,
-            background: 'transparent', color: 'rgba(255,255,255,0.7)',
+            background: 'transparent', color: 'rgba(241,242,245,0.7)',
             cursor: 'pointer', transition: 'background 0.12s, color 0.12s',
           }
 
@@ -3774,8 +3780,8 @@ const EditorStage = forwardRef<
                     onClick={(e) => { e.stopPropagation(); setCropMode(selectedId) }}
                     title="Crop image"
                     style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
                   >
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                       <path d="M4.5 1v10.5H15" />
@@ -3788,8 +3794,8 @@ const EditorStage = forwardRef<
                       onClick={(e) => { e.stopPropagation(); resetCropAction(selectedId) }}
                       title="Reset crop"
                       style={btnBase}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="1 4 1 10 7 10" />
@@ -3802,8 +3808,8 @@ const EditorStage = forwardRef<
                     onClick={(e) => { e.stopPropagation(); fitItemToSlide(selectedId!) }}
                     title="Fit to slide"
                     style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="1.5" />
@@ -3815,8 +3821,8 @@ const EditorStage = forwardRef<
                     onClick={(e) => { e.stopPropagation(); fillItemToSlide(selectedId!) }}
                     title="Fill slide"
                     style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="1.5" />
@@ -3831,8 +3837,8 @@ const EditorStage = forwardRef<
                     onClick={(e) => { e.stopPropagation(); resetItemScale(selectedId!) }}
                     title="Reset to 100%"
                     style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
                   >
                     <span style={{ fontFamily: 'var(--mono, monospace)', fontSize: 11, fontWeight: 700, letterSpacing: -0.3 }}>1:1</span>
                   </button>
@@ -3842,13 +3848,13 @@ const EditorStage = forwardRef<
                     title="Enable rotation"
                     style={{
                       ...btnBase,
-                      background: rotateMode ? 'rgba(255,255,255,0.1)' : 'transparent',
-                      color: rotateMode ? '#fff' : 'rgba(255,255,255,0.7)',
+                      background: rotateMode ? 'rgba(241,242,245,0.1)' : 'transparent',
+                      color: rotateMode ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = rotateMode ? 'rgba(255,255,255,0.1)' : 'transparent'
-                      e.currentTarget.style.color = rotateMode ? '#fff' : 'rgba(255,255,255,0.7)'
+                      e.currentTarget.style.background = rotateMode ? 'rgba(241,242,245,0.1)' : 'transparent'
+                      e.currentTarget.style.color = rotateMode ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
                     }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3862,13 +3868,13 @@ const EditorStage = forwardRef<
                     title="Mirror horizontal"
                     style={{
                       ...btnBase,
-                      background: sel.flipX ? 'rgba(255,255,255,0.1)' : 'transparent',
-                      color: sel.flipX ? '#fff' : 'rgba(255,255,255,0.7)',
+                      background: sel.flipX ? 'rgba(241,242,245,0.1)' : 'transparent',
+                      color: sel.flipX ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = sel.flipX ? 'rgba(255,255,255,0.1)' : 'transparent'
-                      e.currentTarget.style.color = sel.flipX ? '#fff' : 'rgba(255,255,255,0.7)'
+                      e.currentTarget.style.background = sel.flipX ? 'rgba(241,242,245,0.1)' : 'transparent'
+                      e.currentTarget.style.color = sel.flipX ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
                     }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3883,13 +3889,13 @@ const EditorStage = forwardRef<
                     title="Mirror vertical"
                     style={{
                       ...btnBase,
-                      background: sel.flipY ? 'rgba(255,255,255,0.1)' : 'transparent',
-                      color: sel.flipY ? '#fff' : 'rgba(255,255,255,0.7)',
+                      background: sel.flipY ? 'rgba(241,242,245,0.1)' : 'transparent',
+                      color: sel.flipY ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = sel.flipY ? 'rgba(255,255,255,0.1)' : 'transparent'
-                      e.currentTarget.style.color = sel.flipY ? '#fff' : 'rgba(255,255,255,0.7)'
+                      e.currentTarget.style.background = sel.flipY ? 'rgba(241,242,245,0.1)' : 'transparent'
+                      e.currentTarget.style.color = sel.flipY ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
                     }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3904,13 +3910,13 @@ const EditorStage = forwardRef<
                     title="Color corrections"
                     style={{
                       ...btnBase,
-                      background: showCorrections ? 'rgba(255,255,255,0.1)' : 'transparent',
-                      color: showCorrections ? '#fff' : 'rgba(255,255,255,0.7)',
+                      background: showCorrections ? 'rgba(241,242,245,0.1)' : 'transparent',
+                      color: showCorrections ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = showCorrections ? 'rgba(255,255,255,0.1)' : 'transparent'
-                      e.currentTarget.style.color = showCorrections ? '#fff' : 'rgba(255,255,255,0.7)'
+                      e.currentTarget.style.background = showCorrections ? 'rgba(241,242,245,0.1)' : 'transparent'
+                      e.currentTarget.style.color = showCorrections ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
                     }}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -3929,13 +3935,13 @@ const EditorStage = forwardRef<
                       title="Cover frame"
                       style={{
                         ...btnBase,
-                        background: showCoverFrame ? 'rgba(255,255,255,0.1)' : 'transparent',
-                        color: showCoverFrame ? '#fff' : 'rgba(255,255,255,0.7)',
+                        background: showCoverFrame ? 'rgba(241,242,245,0.1)' : 'transparent',
+                        color: showCoverFrame ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = showCoverFrame ? 'rgba(255,255,255,0.1)' : 'transparent'
-                        e.currentTarget.style.color = showCoverFrame ? '#fff' : 'rgba(255,255,255,0.7)'
+                        e.currentTarget.style.background = showCoverFrame ? 'rgba(241,242,245,0.1)' : 'transparent'
+                        e.currentTarget.style.color = showCoverFrame ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
                       }}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -3956,13 +3962,13 @@ const EditorStage = forwardRef<
                       title="Trim video"
                       style={{
                         ...btnBase,
-                        background: showTrim ? 'rgba(255,255,255,0.1)' : 'transparent',
-                        color: showTrim ? '#fff' : 'rgba(255,255,255,0.7)',
+                        background: showTrim ? 'rgba(241,242,245,0.1)' : 'transparent',
+                        color: showTrim ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = showTrim ? 'rgba(255,255,255,0.1)' : 'transparent'
-                        e.currentTarget.style.color = showTrim ? '#fff' : 'rgba(255,255,255,0.7)'
+                        e.currentTarget.style.background = showTrim ? 'rgba(241,242,245,0.1)' : 'transparent'
+                        e.currentTarget.style.color = showTrim ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
                       }}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3984,7 +3990,7 @@ const EditorStage = forwardRef<
                     style={{
                       display: 'flex', alignItems: 'center', gap: 4,
                       padding: '4px 10px', border: 'none', borderRadius: 5,
-                      background: 'var(--accent)', color: '#fff',
+                      background: 'var(--accent)', color: 'var(--on-accent)',
                       cursor: 'pointer', fontSize: 12, fontWeight: 600,
                       transition: 'filter 0.12s',
                     }}
@@ -4003,12 +4009,12 @@ const EditorStage = forwardRef<
                     style={{
                       display: 'flex', alignItems: 'center', gap: 4,
                       padding: '4px 10px', border: 'none', borderRadius: 5,
-                      background: 'transparent', color: 'rgba(255,255,255,0.6)',
+                      background: 'transparent', color: 'rgba(241,242,245,0.6)',
                       cursor: 'pointer', fontSize: 12, fontWeight: 500,
                       transition: 'background 0.12s, color 0.12s',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#fff' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.08)'; e.currentTarget.style.color = '#f1f2f5' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.6)' }}
                   >
                     Cancel
                   </button>
@@ -4065,7 +4071,7 @@ const EditorStage = forwardRef<
               pointerEvents: 'auto',
               width: 40, height: 40, borderRadius: '50%',
               border: '2px solid var(--accent)', background: 'var(--accent-dim)',
-              color: '#fff', fontSize: 24, cursor: 'pointer',
+              color: '#f1f2f5', fontSize: 24, cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >
@@ -4222,7 +4228,7 @@ const EditorStage = forwardRef<
                       paint a thin darker line. We draw a single perimeter
                       stroke around the whole strip below instead. */}
                   {!previewMode && !seamlessSlides && (
-                    <Rect x={0} y={0} width={W} height={H} stroke="rgba(255,255,255,0.12)" strokeWidth={1.5} />
+                    <Rect x={0} y={0} width={W} height={H} stroke="rgba(241,242,245,0.12)" strokeWidth={1.5} />
                   )}
                   {/* Grid and center guides used to live here, but now they
                       render in an overlay layer above the content so they sit
@@ -4268,7 +4274,7 @@ const EditorStage = forwardRef<
                   y={first.y}
                   width={(last.x + W) - first.x}
                   height={H}
-                  stroke="rgba(255,255,255,0.12)"
+                  stroke="rgba(241,242,245,0.12)"
                   strokeWidth={1.5}
                   listening={false}
                 />
@@ -4411,7 +4417,7 @@ const EditorStage = forwardRef<
                   <Line
                     key={`seam-guide-${slide.id}`}
                     points={points}
-                    stroke="rgba(0,0,0,0.2)"
+                    stroke="rgba(10,11,15,0.2)"
                     strokeWidth={1.5}
                     strokeScaleEnabled={false}
                     dash={dash}
@@ -4450,7 +4456,7 @@ const EditorStage = forwardRef<
                           height={H * 0.13}
                           fillLinearGradientStartPoint={{ x: 0, y: 0 }}
                           fillLinearGradientEndPoint={{ x: 0, y: H * 0.13 }}
-                          fillLinearGradientColorStops={[0, 'rgba(0,0,0,0.42)', 1, 'rgba(0,0,0,0)']}
+                          fillLinearGradientColorStops={[0, 'rgba(10,11,15,0.42)', 1, 'rgba(10,11,15,0)']}
                         />
                         <Rect
                           x={W * 0.04}
@@ -4458,8 +4464,8 @@ const EditorStage = forwardRef<
                           width={W * 0.55}
                           height={H * 0.035}
                           cornerRadius={H * 0.018}
-                          fill="rgba(255,255,255,0.14)"
-                          stroke="rgba(255,255,255,0.45)"
+                          fill="rgba(241,242,245,0.14)"
+                          stroke="rgba(241,242,245,0.45)"
                           strokeWidth={1}
                           strokeScaleEnabled={false}
                         />
@@ -4471,8 +4477,8 @@ const EditorStage = forwardRef<
                           width={W * 0.12}
                           height={H * 0.36}
                           cornerRadius={W * 0.06}
-                          fill="rgba(0,0,0,0.32)"
-                          stroke="rgba(255,255,255,0.32)"
+                          fill="rgba(10,11,15,0.32)"
+                          stroke="rgba(241,242,245,0.32)"
                           strokeWidth={1}
                           strokeScaleEnabled={false}
                         />
@@ -4484,7 +4490,7 @@ const EditorStage = forwardRef<
                           height={H * 0.16}
                           fillLinearGradientStartPoint={{ x: 0, y: 0 }}
                           fillLinearGradientEndPoint={{ x: 0, y: H * 0.16 }}
-                          fillLinearGradientColorStops={[0, 'rgba(0,0,0,0)', 1, 'rgba(0,0,0,0.46)']}
+                          fillLinearGradientColorStops={[0, 'rgba(10,11,15,0)', 1, 'rgba(10,11,15,0.46)']}
                         />
                         <Rect
                           x={W * 0.05}
@@ -4492,8 +4498,8 @@ const EditorStage = forwardRef<
                           width={W * 0.7}
                           height={H * 0.05}
                           cornerRadius={H * 0.025}
-                          fill="rgba(255,255,255,0.12)"
-                          stroke="rgba(255,255,255,0.4)"
+                          fill="rgba(241,242,245,0.12)"
+                          stroke="rgba(241,242,245,0.4)"
                           strokeWidth={1}
                           strokeScaleEnabled={false}
                         />
@@ -4516,7 +4522,7 @@ const EditorStage = forwardRef<
                                 height={stripH}
                                 fillLinearGradientStartPoint={{ x: 0, y: 0 }}
                                 fillLinearGradientEndPoint={{ x: 0, y: stripH }}
-                                fillLinearGradientColorStops={[0, 'rgba(0,0,0,0)', 1, 'rgba(0,0,0,0.42)']}
+                                fillLinearGradientColorStops={[0, 'rgba(10,11,15,0)', 1, 'rgba(10,11,15,0.42)']}
                               />
                               <Rect
                                 x={pillX}
@@ -4524,8 +4530,8 @@ const EditorStage = forwardRef<
                                 width={pillW}
                                 height={pillH}
                                 cornerRadius={pillH / 2}
-                                fill="rgba(255,255,255,0.18)"
-                                stroke="rgba(255,255,255,0.55)"
+                                fill="rgba(241,242,245,0.18)"
+                                stroke="rgba(241,242,245,0.55)"
                                 strokeWidth={1}
                                 strokeScaleEnabled={false}
                               />
@@ -4906,7 +4912,7 @@ const EditorStage = forwardRef<
               padding: 0,
               border: '1px dashed rgba(59,130,246,0.9)',
               outline: 'none',
-              background: 'rgba(255,255,255,0.06)',
+              background: 'rgba(241,242,245,0.06)',
               backdropFilter: 'blur(2px)',
               color: it.textColor || '#ffffff',
               fontFamily: it.fontFamily || 'Inter',

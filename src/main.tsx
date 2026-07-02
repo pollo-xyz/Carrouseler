@@ -8,10 +8,10 @@ import '@fontsource/funnel-sans/500.css'
 import '@fontsource/funnel-sans/700.css'
 import './index.css'
 import App from './App.tsx'
+import { initTheme } from './lib/theme'
 
 // Apply the persisted theme before first paint so there's no flash.
-const savedTheme = localStorage.getItem('tiovivo-theme')
-if (savedTheme === 'light') document.documentElement.dataset.theme = 'light'
+initTheme()
 
 // Tag the body with the platform so CSS can conditionally style chrome —
 // e.g. the macOS-only 82px left padding for traffic-light buttons. We use

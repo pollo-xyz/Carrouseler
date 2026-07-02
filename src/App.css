@@ -584,15 +584,15 @@ input.scrubbable:focus {
   margin-top: 1px;
 }
 
-/* Active/selected preset — vivid violet glow pill */
+/* Active/selected preset — raised segment thumb (Plaza-style: subtle
+   tint + hairline ring, no outer glow) */
 .btn--accent {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 32%, transparent), color-mix(in srgb, var(--hot) 18%, transparent));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 30%, transparent), color-mix(in srgb, var(--hot) 16%, transparent));
   color: var(--text-bright);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--ink) 55%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--ink) 15%, transparent),
-    0 0 22px -2px color-mix(in srgb, var(--hot) 65%, transparent),
-    0 2px 8px color-mix(in srgb, var(--hot) 35%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--hot) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 1px 3px color-mix(in srgb, var(--hot) 20%, transparent);
 }
 .btn--accent:hover:not(:disabled) {
   background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 42%, transparent), color-mix(in srgb, var(--hot) 24%, transparent));
@@ -612,7 +612,7 @@ input.scrubbable:focus {
   padding: 7px 16px 7px 13px;
   background: var(--hot);
   border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
-  color: #fff;
+  color: var(--on-hot);
   font-weight: 600;
   font-size: 0.79rem;
   letter-spacing: -0.01em;
@@ -1052,7 +1052,7 @@ input[type='color']::-moz-color-swatch {
 .collapsible {
   border: 1px solid color-mix(in srgb, var(--ink) 4.5%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 1.2%, transparent), color-mix(in srgb, var(--ink) 0%, transparent));
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   /* Symmetric vertical padding — when collapsed, the summary row sits visually
      centered in the card. The original 10px/2px asymmetry made closed panels
      look bottom-clipped. .collapsible__body provides its own extra spacing
@@ -1648,9 +1648,13 @@ input[type='color']::-moz-color-swatch {
   align-items: stretch;
   justify-content: stretch;
   overflow: hidden;
+  /* The work area reads as its own recessed layer, always distinguishable
+     from the surrounding chrome. The stage paints the actual pasteboard
+     color (theme "auto" or user-picked) on top of this backdrop. */
   background:
     radial-gradient(ellipse 70% 50% at 50% 50%, color-mix(in srgb, var(--hot) 2.5%, transparent), transparent 70%),
-    var(--bg);
+    var(--canvas-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent), inset 2px 0 6px -4px rgba(10, 11, 15, 0.5);
   position: relative;
 }
 
@@ -1829,7 +1833,7 @@ input[type='color']::-moz-color-swatch {
   height: 22px;
   flex-shrink: 0;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.42);
+  background: rgba(10, 11, 15, 0.42);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -2099,7 +2103,7 @@ kbd {
   z-index: 500;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(10, 11, 15, 0.55);
   backdrop-filter: blur(3px);
   animation: toast-in var(--dur-fast) var(--ease);
 }

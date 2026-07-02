@@ -10,6 +10,31 @@
   background: var(--bg);
 }
 
+/* Keep scroll affordances present but quiet. The app leans on dense panels;
+   loud native scrollbars read like extra borders in that context. */
+.app * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.07) transparent;
+}
+.app *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.app *::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app *::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  background-clip: content-box;
+}
+.app *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: content-box;
+}
+
 /* ================================================================
    HEADER — frosted glass, macOS traffic-light aware
    ================================================================ */
@@ -20,7 +45,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 14px;
-  padding: 9px 18px 9px 82px;
+  /* Default header padding for non-Mac platforms. macOS overrides the
+     left side to leave room for the traffic-light buttons (see below). */
+  padding: 9px 18px 9px 18px;
   min-height: 54px;
   flex-shrink: 0;
   background: linear-gradient(
@@ -67,22 +94,16 @@
   margin-right: 2px;
 }
 .app__brand-mark {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: #3b82f6;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+  display: block;
+  /* Subtle frame so the icon doesn't look like it's hovering on the
+     dark glass. */
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 4px 14px rgba(59, 130, 246, 0.55),
-    0 1px 3px rgba(0, 0, 0, 0.4);
-  display: grid;
-  place-items: center;
-  color: #fff;
-  font-weight: 800;
-  font-size: 12.5px;
-  letter-spacing: -0.04em;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+    0 1px 3px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 .app__brand-title {
   font-size: 0.82rem;
@@ -95,6 +116,241 @@
   height: 18px;
   background: var(--border-strong);
   margin: 0 4px;
+}
+
+/* Compact pill used for header-level chips that wrap a label + a control —
+   e.g. the Workspace colour picker. Shaped to sit cleanly alongside the
+   .app__export-name label without competing for attention. */
+.app__header-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.app__header-pill-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* macOS: leave room for the traffic-light buttons that sit on top of the
+   window chrome. Windows / Linux don't have them on the left so the
+   default 18px is fine. */
+.platform-mac .app__header {
+  padding-left: 110px;
+}
+
+/* ── In-app menu bar (Windows / Linux only) ─────────────────────────── */
+/* The strip sits above .app__header and acts as the window's drag region
+   (titleBarStyle: 'hidden' on Windows means we own the title bar). The
+   native close/min/max buttons come from titleBarOverlay and land in the
+   top-right; we pad-right by their footprint so menus / dropdowns don't
+   slide under them. */
+.menubar {
+  position: relative;
+  height: 34px;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding-left: 8px;
+  /* Reserve room for the titleBarOverlay's window controls on the right. */
+  padding-right: 144px;
+  background: linear-gradient(180deg, rgba(15, 15, 22, 0.96), rgba(10, 10, 16, 0.92));
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  z-index: 100;
+}
+/* macOS: hide entirely. Native menu lives at the top of the screen. */
+.platform-mac .menubar { display: none; }
+/* When the in-app menubar is rendered, the header doesn't need its own
+   drag region — clicks on header chrome should not start a window move. */
+.platform-win .app__header,
+.platform-other .app__header {
+  -webkit-app-region: no-drag;
+}
+
+.menubar__btn {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.78);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 0 10px;
+  cursor: default;
+  transition: background 0.1s var(--ease);
+}
+.menubar__btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.menubar__btn--active {
+  background: rgba(255, 255, 255, 0.10);
+  color: #fff;
+}
+
+/* Top-level dropdown panel anchored beneath the menubar buttons. */
+.menubar__dropdown {
+  position: absolute;
+  top: 100%;
+  -webkit-app-region: no-drag;
+  min-width: 220px;
+  padding: 4px 0;
+  background: rgba(18, 18, 24, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  z-index: 200;
+}
+
+.menubar__item {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 5px 16px 5px 14px;
+  font-size: 0.76rem;
+  color: var(--text);
+  cursor: default;
+  transition: background 0.08s var(--ease);
+  position: relative;
+  white-space: nowrap;
+}
+.menubar__item:hover:not(.menubar__item--disabled) {
+  background: rgba(59, 130, 246, 0.28);
+  color: #fff;
+}
+.menubar__item--disabled {
+  color: rgba(255, 255, 255, 0.35);
+  cursor: default;
+}
+.menubar__item-label {
+  flex: 1;
+}
+.menubar__item-shortcut {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.menubar__separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Submenu: pops out to the right of its parent item on hover. */
+.menubar__item--has-submenu .menubar__item-arrow {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1;
+}
+.menubar__submenu {
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  margin-left: 2px;
+  min-width: 240px;
+  padding: 4px 0;
+  background: rgba(18, 18, 24, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  display: none;
+}
+.menubar__item--has-submenu:hover > .menubar__submenu {
+  display: block;
+}
+
+/* Solid veil that covers the canvas during export. Konva keeps drawing
+   (frame capture depends on it), the user just doesn't see the stage
+   transform get reset and the videos seek frame by frame. Z-index sits
+   below the toast (20) so the status chip stays visible on top. */
+.app__export-veil {
+  position: absolute;
+  inset: 0;
+  /* Background is set inline from the store's workspaceBgColor so the
+     veil seamlessly matches whatever pasteboard colour is in use. */
+  z-index: 15;
+  pointer-events: none;
+  animation: export-veil-in 0.18s ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.app__export-veil-img {
+  max-width: 92%;
+  max-height: 92%;
+  object-fit: contain;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.40);
+  /* Slight rounded edge so the preview reads as a "picture" rather than
+     pretending to be the live canvas. */
+  border-radius: 4px;
+}
+@keyframes export-veil-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Floating export status toast — pinned to the top-right of the canvas
+   area. Lives here instead of the header so its constantly-changing
+   ffmpeg progress string doesn't jitter the header layout. Width grows
+   to fit content; never reaches the left edge thanks to max-width. */
+.app__export-toast {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 10px;
+  background: rgba(18, 18, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.30);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.82);
+  font-variant-numeric: tabular-nums;
+  max-width: min(420px, 50vw);
+  user-select: none;
+  pointer-events: none;
+}
+.app__export-toast-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app__export-toast-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse-dot {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0);
+    transform: scale(1.12);
+  }
 }
 
 /* ── Preset segmented group (pill) ── */
@@ -128,27 +384,42 @@
   padding: 0 4px;
 }
 
+/* Each W/H block is a single visual chip: small-caps label + numeric input.
+   align-items: stretch makes the label fill the full chip height so its
+   capital letter is vertically centred against the digits; line-height: 1
+   on the label gets rid of the extra baseline padding that pushed the
+   letter visibly upward of the input numbers. */
 .app__custom-size label {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  align-items: stretch;
+  gap: 6px;
+  height: 30px;
   cursor: default;
   font-variant-caps: all-small-caps;
   letter-spacing: 0.08em;
   color: var(--text-dim);
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 30px;
 }
 
 .app__custom-size input {
-  width: 4.4rem;
-  padding: 5px 8px;
+  /* Wide enough for 4 digits in tabular numerals + small breathing room.
+     We never realistically exceed 9999 px on either axis (the upper limit
+     in the store is 8192) so anything more is wasted header real estate. */
+  width: 3.6rem;
+  height: 30px;
+  padding: 0 9px;
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.4);
   color: var(--text-bright);
   text-align: right;
-  font-size: 0.78rem;
+  font-size: 0.98rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 30px;
   transition: border-color var(--dur) var(--ease),
     background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
@@ -162,6 +433,82 @@
   border-color: var(--accent-strong);
   background: rgba(59, 130, 246, 0.04);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+/* Drag-to-scrub inputs (NumberField with `scrubStep`). Idle cursor hints at
+   the drag affordance; on :focus the text cursor takes over so click-to-type
+   feels normal. Native number spinners go away too — they're redundant once
+   horizontal-drag scrubbing is in. */
+input.scrubbable {
+  cursor: ew-resize;
+  -moz-appearance: textfield;
+}
+input.scrubbable::-webkit-outer-spin-button,
+input.scrubbable::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.scrubbable:focus {
+  cursor: text;
+}
+
+/* Tiny aspect-lock toggle that sits between W and H inputs. Square button
+   with a chain icon; lit when constraints are enforced. */
+.app__aspect-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.app__aspect-lock:hover {
+  border-color: var(--border-bright);
+  color: var(--text);
+}
+.app__aspect-lock--locked {
+  background: rgba(59, 130, 246, 0.13);
+  color: rgba(180, 210, 255, 0.95);
+  border-color: rgba(59, 130, 246, 0.32);
+}
+.app__aspect-lock--locked:hover {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+/* Filename-format toggle that lives inside the Name pill. Reads as a button
+   even when inactive (visible border, hover state) so the affordance is
+   obvious, but stays compact mono since it shows the literal filename suffix. */
+.app__filename-toggle {
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.app__filename-toggle:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.85);
+}
+.app__filename-toggle--on {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.36);
+  color: rgba(180, 210, 255, 0.95);
+}
+.app__filename-toggle--on:hover {
+  background: rgba(59, 130, 246, 0.22);
 }
 
 .app__custom-size span {
@@ -184,6 +531,7 @@
   align-items: center;
   justify-content: center;
   gap: 1px;
+  min-height: 30px;
   padding: 6px 12px;
   border-radius: var(--r-sm);
   border: 1px solid transparent;
@@ -211,12 +559,18 @@
 }
 
 .btn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-strong);
+  /* Use outline (not box-shadow) for the focus ring so it stacks with any
+     existing box-shadow on the button — e.g. .btn--accent's blue glow,
+     which a box-shadow focus ring would clobber. */
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
 }
 
 .btn:disabled {
-  opacity: 0.38;
+  opacity: 1;
+  color: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.012);
   cursor: not-allowed;
 }
 
@@ -319,9 +673,40 @@
 }
 
 .btn--sm {
+  min-height: 28px;
   padding: 4px 9px;
   font-size: 0.72rem;
   border-radius: var(--r-xs);
+}
+
+.btn--square {
+  width: 28px;
+  min-width: 28px;
+  padding-inline: 0;
+}
+
+.app__sidebar .btn--accent {
+  background: rgba(59, 130, 246, 0.16);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.34);
+  text-shadow: none;
+}
+.app__sidebar .btn--accent:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+/* Quieter active state for in-panel segmented toggles (Solid/Vibe,
+   All slides/Selected slide). Same shape and rhythm as .btn--accent so the
+   toggle structure feels consistent, but no glow and a soft blue tint —
+   less attention-grabbing inside the sidebar where toggle pills sit
+   alongside actual content controls. */
+.btn--seg-active {
+  background: rgba(59, 130, 246, 0.13);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.28);
+}
+.btn--seg-active:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.18);
 }
 
 .btn__icon {
@@ -342,17 +727,295 @@
 }
 
 .app__sidebar {
-  width: 272px;
+  width: 296px;
   flex-shrink: 0;
   padding: 16px 14px 22px;
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  /* `scroll` + `scrollbar-gutter: stable` keeps the gutter reserved even when
+     content fits, so the sidebar's interior width never jumps when a section
+     expands/collapses. Without this, the scrollbar appears and disappears,
+     reflowing every inner control by ~8 px. */
+  overflow-y: scroll;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   background:
     linear-gradient(180deg, var(--surface) 0%, rgba(10, 10, 16, 0.82) 100%);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
   position: relative;
+}
+
+/* Shared building blocks used by the BackgroundPanel and any other field that
+   needs a color picker, a small monospace value readout, or a palette swatch
+   grid. Defining these once keeps the panel's inline styles to a minimum and
+   ensures borders/sizes match across the sidebar. */
+
+/* Color picker pill — appears in field rows next to a label + hex display.
+   Matches the size/borders used historically by inline-styled colour inputs
+   so we don't double up on aesthetics. */
+.color-swatch {
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--r-xs);
+  background: rgba(0, 0, 0, 0.26);
+  cursor: pointer;
+}
+
+/* Browsers wrap <input type="color"> internals in a swatch wrapper and a
+   swatch element, both with their own default padding/borders. Without
+   resetting them the visible colour shrinks to a tiny inset rectangle.
+   Apply globally so any colour input in the app — class-based or inline-
+   styled (the per-slide bg picker under each artboard) — fills its bounds. */
+input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type='color']::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+/* Compact mono readout — hex codes after a colour picker, "mixed" labels. */
+.field__value {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.42);
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+}
+
+/* Palette swatch grid (vibe panel). Larger than .color-swatch and laid out as
+   a wrapping flex row. The "+" add-color button uses the same dimensions for
+   visual rhythm but with a dashed border to flag its add-affordance. */
+.palette-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.palette-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.palette-swatch--add {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 16px;
+  line-height: 1;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.palette-swatch--add:hover {
+  border-color: var(--border-bright);
+  color: var(--text);
+}
+
+/* First palette swatch — the base / background colour. Highlighted with the
+   accent stroke + a soft outer glow so it's distinct from the other points
+   without redesigning the whole row. */
+.palette-swatch--base {
+  border-color: var(--accent-strong);
+  border-width: 2px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+/* Wrapper that lets a "BG" badge sit on top of the base swatch without
+   intercepting clicks (pointer-events: none on the badge, so the click goes
+   through to the underlying colour input). Sized to match .palette-swatch
+   so flex alignment in .palette-grid stays consistent. */
+.palette-swatch-wrap {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  line-height: 0;
+}
+.palette-swatch__badge {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.95);
+  /* Heavy text-shadow so the label reads against any base colour. Dark and
+     light backgrounds both pull the label toward the opposite. */
+  text-shadow:
+    0 0 1px rgba(0, 0, 0, 0.85),
+    0 0 3px rgba(0, 0, 0, 0.6);
+}
+
+/* Action row under the palette grid — Save preset + Sample from Media. */
+.palette-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.palette-actions .btn {
+  width: 100%;
+  flex-direction: row;
+  gap: 6px;
+  justify-content: center;
+}
+
+/* Footer row under the palette grid — helper text on the left, "Save preset"
+   ghost button on the right. */
+.palette-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+/* Inline variant of .hint — no top margin, fits next to a sibling button. */
+.hint--inline {
+  margin: 0;
+  font-size: 0.62rem;
+  line-height: 1.1;
+}
+
+/* Preset palette list — one row per palette: name on the left, colour strip
+   on the right. Custom (user-saved) entries get a delete affordance and a
+   subtle blue tint to distinguish them from the built-ins. */
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Bound the list so it always shows ~6 rows; scroll for the rest. Pairs
+     with `scrollbar-gutter: stable` so adding/removing custom entries
+     doesn't reflow the surrounding panel. */
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 4px;
+  margin: 0 -4px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: var(--r-xs);
+  background: rgba(0, 0, 0, 0.13);
+}
+
+/* Small caps label that separates built-ins from user-saved palettes. */
+.preset-list__divider {
+  flex-shrink: 0;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 6px 4px 2px;
+  margin-top: 2px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
+.preset {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  /* Bounded scroll containers use flex-column; default shrink would squish
+     each row instead of letting the container scroll. Lock the row height. */
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.preset:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.preset__pick {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  gap: 0;
+}
+
+.preset__name {
+  width: 60px;
+  flex-shrink: 0;
+  padding: 0 6px;
+  text-align: left;
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.42);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset__swatches {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.preset__swatches > span {
+  flex: 1;
+}
+
+.preset--custom {
+  border-color: rgba(120, 180, 255, 0.28);
+}
+.preset--custom .preset__name {
+  color: rgba(180, 210, 255, 0.85);
+}
+
+/* Inline rename input replaces .preset__name while editing. Sized to match
+   the static label exactly so the row doesn't jump when you start typing. */
+.preset__name-input {
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  background: rgba(0, 0, 0, 0.4);
+  color: rgba(180, 210, 255, 0.95);
+  border-radius: 3px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  outline: none;
+}
+
+.preset__delete {
+  width: 18px;
+  height: 100%;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.preset__delete:hover {
+  color: var(--danger-hi);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* Inner top highlight for a subtle sense of elevation */
@@ -387,21 +1050,25 @@
 /* ── Collapsible sections — card-style ── */
 
 .collapsible {
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(255, 255, 255, 0));
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0));
   border-radius: var(--r);
-  padding: 10px 12px 2px;
+  /* Symmetric vertical padding — when collapsed, the summary row sits visually
+     centered in the card. The original 10px/2px asymmetry made closed panels
+     look bottom-clipped. .collapsible__body provides its own extra spacing
+     above the inner content when open, so 10px here works for both states. */
+  padding: 10px 12px;
   margin-bottom: 10px;
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
 .collapsible:hover {
-  border-color: var(--border-strong);
+  border-color: rgba(255, 255, 255, 0.09);
 }
 
 .collapsible[open] {
   padding-bottom: 12px;
-  background: linear-gradient(180deg, rgba(59, 130, 246, 0.02), rgba(255, 255, 255, 0));
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.016), rgba(255, 255, 255, 0));
 }
 
 .collapsible summary {
@@ -576,31 +1243,230 @@
   box-shadow: 0 0 8px rgba(59, 130, 246, 0.55);
 }
 
-.field input,
-.field select {
+/* Generic field controls share one look. Color inputs are excluded — they
+   carry their own padding/border via .color-swatch / .palette-swatch and
+   would otherwise inherit text-input padding that shrinks the visible swatch. */
+.field input:not([type='color']),
+.field select,
+.field textarea,
+.field .font-picker__input {
+  box-sizing: border-box;
+  min-height: 32px;
   padding: 6px 9px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(0, 0, 0, 0.28);
   color: var(--text-bright);
   font-size: 0.78rem;
+  font-family: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   transition:
     border-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease),
     background var(--dur) var(--ease);
 }
 
-.field input:hover,
-.field select:hover {
-  border-color: var(--border-strong);
+.field textarea {
+  line-height: 1.45;
 }
 
-.field input:focus,
-.field select:focus {
+.field input:not([type='color']):hover,
+.field select:hover,
+.field textarea:hover,
+.field .font-picker__input:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.field input:not([type='color']):focus,
+.field select:focus,
+.field textarea:focus,
+.field .font-picker__input:focus {
   outline: none;
   border-color: var(--accent-strong);
   background: rgba(59, 130, 246, 0.04);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+/* ── Font picker (custom combobox with rendered-in-font previews) ── */
+.font-picker {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+.font-picker__input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.font-picker__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: rgba(18, 18, 26, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.font-picker__item {
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--text-bright);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Each row's `font-family` is set inline so the row renders in its own font. */
+}
+.font-picker__item--active {
+  background: rgba(59, 130, 246, 0.22);
+}
+.font-picker__item--current {
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+.font-picker__empty {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ── Remove-bg spinner (matches the button's currentColor) ── */
+.remove-bg-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  border-top-color: currentColor;
+  animation: remove-bg-spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes remove-bg-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Giphy picker popover ── */
+.gif-picker {
+  position: fixed;
+  width: 380px;
+  max-height: 480px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 18, 26, 0.98);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+.gif-picker__tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.gif-picker__tab {
+  flex: 1;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.gif-picker__tab:hover { color: rgba(255, 255, 255, 0.85); }
+.gif-picker__tab--active {
+  background: rgba(59, 130, 246, 0.18);
+  color: rgba(180, 210, 255, 0.95);
+}
+.gif-picker__search {
+  margin: 0 8px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 0.85rem;
+  outline: none;
+}
+.gif-picker__search:focus {
+  border-color: var(--accent-strong);
+  background: rgba(59, 130, 246, 0.04);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+.gif-picker__grid {
+  /* Flexbox over CSS Grid — when the grid was given `flex: 1` height the
+     auto-row tracks shrank below the cells' aspect-ratio height, leaving
+     each row top only ~45 px from the previous one (cells were 117 px
+     tall, so each row overlapped two-thirds into the next). Flex-wrap
+     respects per-item explicit height/aspect cleanly. */
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 220px;
+}
+.gif-picker__cell {
+  position: relative;
+  padding: 0;
+  /* Three uniform 1:1 cells per row. width = (100% - 2 × gap) / 3 */
+  width: calc((100% - 12px) / 3);
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.gif-picker__cell:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: scale(1.03);
+}
+.gif-picker__cell-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.gif-picker__empty {
+  flex: 1 1 100%;
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+.gif-picker__footer {
+  padding: 6px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: right;
 }
 
 /* Select arrow */
@@ -617,7 +1483,7 @@
 
 .app__sidebar hr {
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
   margin: 12px 0;
 }
 
@@ -627,14 +1493,14 @@
   margin-top: 14px;
   padding: 14px 12px 12px;
   border-radius: var(--r);
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.055);
   background:
-    linear-gradient(180deg, rgba(59, 130, 246, 0.04) 0%, rgba(255, 255, 255, 0) 100%);
+    linear-gradient(180deg, rgba(59, 130, 246, 0.022) 0%, rgba(255, 255, 255, 0) 100%);
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .selection-panel::before {
@@ -647,10 +1513,10 @@
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(59, 130, 246, 0.95) 50%,
+    rgba(59, 130, 246, 0.45) 50%,
     transparent 100%
   );
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.25);
 }
 
 .selection-panel h2 {
@@ -709,7 +1575,7 @@
     rgba(255, 255, 255, 0.08) 100%
   );
   border-radius: 3px;
-  box-shadow: 0 0 10px -2px rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 8px -3px rgba(59, 130, 246, 0.35);
 }
 
 .slider-field input[type='range']::-webkit-slider-thumb {
@@ -743,6 +1609,27 @@
   transform: scale(1.1);
 }
 
+/* Compact typography button strip used by the Text panel. Keeps the bold /
+   italic and alignment controls on the same visual grid. */
+.text-style-toolbar {
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+}
+.text-style-toolbar__spacer {
+  flex: 1;
+}
+.text-style-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-direction: row;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
 /* ================================================================
    MAIN / CANVAS
    ================================================================ */
@@ -769,6 +1656,207 @@
 
 .editor-stage-wrap {
   background: transparent;
+}
+
+.zoom-pill {
+  font-family: var(--mono);
+  min-width: 92px;
+  border-radius: var(--r);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(12, 12, 18, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  overflow: hidden;
+}
+.zoom-pill .btn {
+  border-radius: 0;
+}
+
+/* Canvas-side chrome should read as editor UI, not part of the artwork. */
+.artboard-label {
+  font-size: 11px;
+  font-weight: 650;
+  font-family: system-ui, sans-serif;
+  color: var(--chrome-fg);
+  white-space: nowrap;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 5px;
+  background: rgba(14, 14, 22, 0.72);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  transition:
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+.artboard-label--active {
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(28, 50, 90, 0.56);
+}
+.artboard-label--drop-target,
+.artboard-label--dragged {
+  color: #fff;
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.24);
+}
+.artboard-label__name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.artboard-label__export {
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--chrome-fg-dim);
+  font-size: 9px;
+  font-weight: 650;
+  font-family: system-ui, sans-serif;
+  line-height: 14px;
+  cursor: pointer;
+}
+.artboard-label__export--on {
+  color: rgba(220, 235, 255, 0.96);
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(59, 130, 246, 0.22);
+}
+.artboard-label__icon {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--chrome-fg-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.artboard-label__icon:hover {
+  color: var(--chrome-fg);
+  background: rgba(255, 255, 255, 0.06);
+}
+.artboard-label__icon--danger:hover {
+  color: var(--danger-hi);
+  background: rgba(251, 113, 133, 0.11);
+}
+.artboard-bg-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 3px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 6px;
+  background: rgba(12, 12, 18, 0.48);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.artboard-bg-chip input[type='color'] {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--chrome-fg-faint);
+  border-radius: 4px;
+  padding: 0;
+  cursor: pointer;
+  background: transparent;
+}
+.artboard-bg-chip__value {
+  font-size: 10px;
+  color: var(--chrome-fg-dim);
+  font-family: var(--mono);
+}
+
+.floating-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 9px;
+  background: rgba(18, 18, 26, 0.90);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(1.18);
+  -webkit-backdrop-filter: blur(14px) saturate(1.18);
+  white-space: nowrap;
+}
+
+.layer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 7px;
+  background: rgba(14, 14, 22, 0.74);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(10px) saturate(1.15);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+}
+.layer-stack__title {
+  padding: 1px 4px 3px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.34);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.layer-stack__row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  cursor: grab;
+  user-select: none;
+}
+.layer-stack__row--selected {
+  border-color: rgba(59, 130, 246, 0.46);
+  background: rgba(59, 130, 246, 0.20);
+}
+.layer-stack__thumb {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.layer-stack__thumb img,
+.layer-stack__thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.layer-stack__text-icon {
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+  font-family: var(--mono);
+}
+.layer-stack__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 /* ── Drop overlay (drag file onto canvas) ── */
@@ -923,6 +2011,9 @@ kbd {
 
 /* Focus ring reset for mouse clicks */
 .btn:focus:not(:focus-visible) {
+  /* Suppress only the focus outline for non-keyboard focus (e.g. the
+     button keeps focus after a mouse click). Crucially do NOT clear
+     box-shadow — that would wipe the accent glow on .btn--accent
+     immediately after the user clicks one. */
   outline: none;
-  box-shadow: none;
 }

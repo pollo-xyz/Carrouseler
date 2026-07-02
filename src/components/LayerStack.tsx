@@ -13,7 +13,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCarouselStore, type PlacedMedia } from '../store/useCarouselStore'
+import { useTiovivoStore, type PlacedMedia } from '../store/useTiovivoStore'
 
 function LayerRow({
   item,
@@ -31,38 +31,18 @@ function LayerRow({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.6 : 1,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '4px 6px',
-    borderRadius: 4,
-    background: isSelected ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.04)',
-    border: `1px solid ${isSelected ? 'rgba(59,130,246,0.6)' : 'rgba(255,255,255,0.08)'}`,
-    cursor: 'grab',
-    userSelect: 'none',
   }
 
   return (
     <div
       ref={setNodeRef}
+      className={`layer-stack__row ${isSelected ? 'layer-stack__row--selected' : ''}`}
       style={style}
       onClick={(e) => onSelect(e.shiftKey || e.metaKey || e.ctrlKey)}
       {...attributes}
       {...listeners}
     >
-      <div
-        style={{
-          width: 22,
-          height: 22,
-          flexShrink: 0,
-          borderRadius: 3,
-          background: 'rgba(0,0,0,0.5)',
-          overflow: 'hidden',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
+      <div className="layer-stack__thumb">
         {item.type === 'video' ? (
           <video
             src={item.src}
@@ -70,30 +50,24 @@ function LayerRow({
             playsInline
             preload="metadata"
             draggable={false}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
           />
+        ) : item.type === 'text' ? (
+          <span className="layer-stack__text-icon" aria-hidden>
+            T
+          </span>
         ) : (
           <img
             src={item.src}
             alt=""
             draggable={false}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
           />
         )}
       </div>
       <span
-        style={{
-          fontSize: 11,
-          color: 'rgba(255,255,255,0.85)',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          flex: 1,
-          minWidth: 0,
-        }}
-        title={item.name}
+        className="layer-stack__name"
+        title={item.type === 'text' ? (item.text || item.name) : item.name}
       >
-        {item.name}
+        {item.type === 'text' ? (item.text || 'Text') : item.name}
       </span>
     </div>
   )
@@ -114,12 +88,12 @@ export default function LayerStack({
   slideHeight: number
   slideAbsoluteXBySlideId: Map<string, number>
 }) {
-  const items = useCarouselStore((s) => s.items)
-  const reorderSlideLayers = useCarouselStore((s) => s.reorderSlideLayers)
-  const setSelected = useCarouselStore((s) => s.setSelected)
-  const toggleSelected = useCarouselStore((s) => s.toggleSelected)
-  const setActiveSlide = useCarouselStore((s) => s.setActiveSlide)
-  const selectedIds = useCarouselStore((s) => s.selectedIds)
+  const items = useTiovivoStore((s) => s.items)
+  const reorderSlideLayers = useTiovivoStore((s) => s.reorderSlideLayers)
+  const setSelected = useTiovivoStore((s) => s.setSelected)
+  const toggleSelected = useTiovivoStore((s) => s.toggleSelected)
+  const setActiveSlide = useTiovivoStore((s) => s.setActiveSlide)
+  const selectedIds = useTiovivoStore((s) => s.selectedIds)
 
   // Items that visually overlap this slide's region (both X and Y).
   // All slides share the same Y range, so Y overlap is: item.y..item.y+h vs 0..slideHeight.
@@ -162,26 +136,10 @@ export default function LayerStack({
   return (
     <div
       onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 3,
-        padding: 6,
-        background: 'rgba(20,20,28,0.85)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: 6,
-        backdropFilter: 'blur(6px)',
-      }}
+      className="layer-stack"
     >
       <div
-        style={{
-          fontSize: 10,
-          color: 'rgba(255,255,255,0.4)',
-          fontFamily: 'var(--mono)',
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          padding: '2px 4px 4px',
-        }}
+        className="layer-stack__title"
       >
         Layers · Slide {slideIndex + 1}
       </div>

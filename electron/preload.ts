@@ -51,6 +51,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowMaximizeToggle: () => ipcRenderer.invoke('window-maximize-toggle'),
   windowClose: () => ipcRenderer.invoke('window-close'),
 
+  /** Retint the native min/max/close overlay to match the app theme. */
+  setTitleOverlay: (colors: { color: string; symbolColor: string }) =>
+    ipcRenderer.invoke('window-set-title-overlay', colors),
+
   /** Write a buffer to a known path (no dialog) */
   writeFile: (options: {
     path: string

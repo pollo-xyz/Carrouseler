@@ -219,6 +219,19 @@ ipcMain.handle('window-close', async () => {
   BrowserWindow.getFocusedWindow()?.close()
 })
 
+// Retint the native window-control overlay (min/max/close) to match the app
+// theme. No-op on macOS (native traffic lights auto-theme) and if the window
+// wasn't created with a titleBarOverlay.
+ipcMain.handle('window-set-title-overlay', async (_e, colors: { color: string; symbolColor: string }) => {
+  if (isMac) return
+  const w = BrowserWindow.getFocusedWindow() ?? win
+  try {
+    w?.setTitleBarOverlay?.({ color: colors.color, symbolColor: colors.symbolColor, height: 34 })
+  } catch {
+    /* overlay not available on this platform/window */
+  }
+})
+
 ipcMain.handle('get-encoder-diagnostics', async (): Promise<EncoderDiagnostics | null> => {
   // Ensure the probe has completed (or run it now if it somehow hasn't).
   await probeEncoder()
@@ -341,13 +354,15 @@ function createWindow() {
     //      top-right; the rest of the bar is ours to paint (custom menus,
     //      drag region).
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
+    // Warm editorial defaults; the renderer retints these on theme change via
+    // the 'window:set-title-overlay' IPC below.
     titleBarOverlay: isMac ? undefined : {
-      color: '#0a0a0e',
-      symbolColor: '#ffffff',
+      color: '#171310',
+      symbolColor: '#f4f1ec',
       height: 34,
     },
     trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
-    backgroundColor: '#0a0a0e',
+    backgroundColor: '#0d0b0a',
     icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),

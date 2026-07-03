@@ -1,53 +1,59 @@
 /* ================================================================
-   TIOVIVO DESIGN TOKENS
+   TIOVIVO DESIGN TOKENS — "Signal" (Swiss editorial × bklit)
 
    Two-layer system: each theme block sets the base palette (ink,
    paper, surfaces, accents); every border, text tone, and wash
    derives from those via color-mix, so components never reference
    raw colors — always tokens or color-mix over tokens.
 
-   Themes: Onyx (dark, default — no [data-theme]) and Cream (warm
-   light — [data-theme='cream'] on <html>). Neither uses pure white
-   or pure black anywhere: ink tops out at #f1f2f5 / #1a1814.
+   Design creed (Müller-Brockmann / Vignelli / bklit):
+   neutral achromatic ground, ONE signal accent (blue),
+   hairline rules over cards, flat surfaces over gradients,
+   whitespace and weight carry hierarchy — never decoration.
+
+   Themes: Onyx (neutral near-black, default — no [data-theme])
+   and Cream (gallery paper — [data-theme='cream'] on <html>).
+   Neither uses pure white or pure black: ink tops out at
+   #f2f1ee / #191918.
    ================================================================ */
 
 :root {
   color-scheme: dark;
 
-  /* ── Base palette — Onyx ── */
-  --ink:   #f1f2f5;              /* foreground base; every wash derives from it */
-  --paper: #0c0c0e;              /* deepest background */
+  /* ── Base palette — neutral ink; the faintest warmth, no brown cast ── */
+  --ink:   #f2f1ee;              /* near-white foreground; every wash derives from it */
+  --paper: #0f0f0e;              /* neutral near-black */
   --bg:      var(--paper);
-  --bg-soft: #101013;
-  --surface:    #121216;
-  --surface-2:  #16161b;
-  --surface-3:  #1c1c22;
-  --surface-hi: #27272f;
-  --glass-tint: #131318;         /* translucent panel base, sits over backdrop blur */
-  --canvas-bg:  #17171d;         /* auto pasteboard — keep in sync with CANVAS_BG in lib/theme.ts */
+  --bg-soft: #131312;
+  --surface:    #141413;
+  --surface-2:  #181817;
+  --surface-3:  #1d1d1b;
+  --surface-hi: #282826;
+  --glass-tint: #151514;         /* translucent panel base, sits over backdrop blur */
+  --canvas-bg:  #1a1a19;         /* auto pasteboard — keep in sync with CANVAS_BG in lib/theme.ts */
 
-  /* ── Interactive accent: blue (selection, CTAs, active states) ── */
-  --hot:      #3b82f6;
-  --hot-hi:   #60a5fa;
-  --hot-pale: #b4d2ff;           /* readable text over hot tints */
-  --hot-text: rgba(220, 235, 255, 0.96);
-  --hot-veil: color-mix(in srgb, #1c325a 56%, transparent); /* active-item backdrop */
-  --on-hot:   #f4f6fb;           /* text placed on solid --hot */
+  /* ── Interactive accent: signal blue — THE one accent (selection, active, focus) ── */
+  --hot:      #3d7bfd;
+  --hot-hi:   #6b9dff;
+  --hot-pale: #b8cfff;           /* readable blue text over hot tints */
+  --hot-text: rgba(214, 228, 255, 0.96);
+  --hot-veil: color-mix(in srgb, var(--hot) 15%, transparent); /* active-item backdrop */
+  --on-hot:   #f4f8ff;           /* light text placed on solid --hot */
 
-  /* ── Primary accent: soft white — flips to warm near-black on Cream ── */
-  --accent:      #e7e9ee;
-  --accent-hi:   #f1f2f5;
-  --accent-deep: #c2c5ce;
-  --on-accent:   #141519;        /* text placed on solid --accent */
+  /* ── Primary CTA: ink solid — near-white on Onyx, flips to near-black on Cream ── */
+  --accent:      #ececea;
+  --accent-hi:   #f6f6f4;
+  --accent-deep: #c9c9c5;
+  --on-accent:   #161614;        /* text placed on solid --accent */
 
-  /* ── Secondary accents ── */
-  --warm:    #06b6d4;
-  --warm-hi: #67e8f9;
-  --cool:    #a3e635;
-  --cool-hi: #d9f99d;
-  --success: #4ade80;
-  --danger:     #fb7185;
-  --danger-hi:  #fda4af;
+  /* ── Semantic tones (functional only — never decorative) ── */
+  --warm:    #9a9a95;            /* info: quiet neutral */
+  --warm-hi: #c4c4bf;
+  --cool:    #4a9d5f;            /* success family */
+  --cool-hi: #7bc98e;
+  --success: #57b06e;
+  --danger:     #f0566a;         /* rose — reads apart from vermilion */
+  --danger-hi:  #f5808f;
 
   /* ── Derived washes (identical formula on every theme) ── */
   --border:        color-mix(in srgb, var(--ink) 5.5%, transparent);
@@ -65,19 +71,15 @@
   --cool-glow:  color-mix(in srgb, var(--cool) 45%, transparent);
   --danger-dim: color-mix(in srgb, var(--danger) 14%, transparent);
 
-  /* ── Soft solid ── */
-  --accent-soft: #33343a;
-
-  /* ── Bold cool-spectrum gradient ── */
-  --grad:      linear-gradient(120deg, #f1f2f5 0%, #22d3ee 55%, #a3e635 110%);
-  --grad-soft: linear-gradient(120deg, rgba(139,92,246,0.28) 0%, rgba(34,211,238,0.20) 55%, rgba(163,230,53,0.14) 110%);
+  /* ── Soft solid — raised toggle thumb ── */
+  --accent-soft: #2b2b28;
 
   /* ── Recessed field wells (inputs, swatch backdrops) ── */
-  --well-tint: #06070b;
+  --well-tint: #070706;
   --well-scale: 1;      /* Cream scales well darkness down */
 
   /* ── Select dropdown arrow (data-URI can't use tokens; two variants) ── */
-  --select-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(241,242,245,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  --select-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(242,241,238,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
 
   /* ── Frosted glass (floating chrome only: menus, pickers, toasts) ── */
   --blur:    blur(20px) saturate(130%);
@@ -87,27 +89,22 @@
   --glass-border:    color-mix(in srgb, var(--ink) 13%, transparent);
   --glass-highlight: inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent);
 
-  /* ── Radius (Plaza scale: 8 controls / 14 cards / 18 modals) ── */
-  --r-xs: 4px;
-  --r-sm: 8px;
-  --r:    10px;
-  --r-md: 10px;
-  --r-lg: 14px;
-  --r-xl: 18px;
+  /* ── Radius (Swiss scale — sharp geometry: 4 controls / 6 cards / 8 modals) ── */
+  --r-xs: 2px;
+  --r-sm: 4px;
+  --r:    6px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 10px;
   --r-pill: 999px;
 
-  /* ── Shadows ── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow:    0 4px 16px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-accent: 0 0 0 1px rgba(241, 242, 245, 0.45), 0 8px 28px rgba(241, 242, 245, 0.40);
-  --shadow-cool:   0 0 0 1px rgba(34, 211, 238, 0.45), 0 8px 28px rgba(34, 211, 238, 0.40);
+  /* ── Shadows — flat by default; elevation only for floating chrome ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow:    0 2px 10px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
 
-  /* ── Ambient wash (body backdrop glows) ── */
-  --ambient:
-    radial-gradient(ellipse 75% 50% at 12% -5%, rgba(241, 242, 245, 0.16), transparent 60%),
-    radial-gradient(ellipse 55% 45% at 92% 105%, rgba(34, 211, 238, 0.12), transparent 60%),
-    radial-gradient(ellipse 40% 30% at 95% 0%, rgba(163, 230, 53, 0.05), transparent 60%);
+  /* ── Ambient wash — none. The ground is flat; content carries the page. ── */
+  --ambient: none;
 
   /* ── Motion ── */
   --ease:        cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -117,45 +114,51 @@
   --dur-slow:    280ms;
   --press: scale(0.965);         /* tactile button press */
 
-  /* ── Typography (self-hosted via @fontsource) ── */
-  --font: 'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --meta: 'Funnel Sans', var(--font);   /* labels, badges, metadata */
-  --mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  /* ── Typography — all Inter (rsms.me), one family, two optical sizes ── */
+  --font:    'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --meta:    var(--font);                /* labels, badges, metadata */
+  --display: var(--font);                /* wordmark + titles; forces high opsz for the Display cut */
+  --serif:   var(--display);             /* legacy alias — display voice */
+  /* No separate mono face — Inter carries numerics too, with tabular figures
+     applied where digits must align (see input[type=number] + tabular-nums). */
+  --mono: var(--font);
 }
 
 /* ================================================================
-   CREAM — warm light theme; only the base palette changes.
+   CREAM — gallery-paper light theme; only the base palette changes.
    ================================================================ */
 :root[data-theme='cream'] {
   color-scheme: light;
 
-  --ink:   #1a1814;
-  --paper: #f9f8f3;
-  --bg-soft: #f4f2ea;
+  --ink:   #191918;
+  --paper: #f7f7f5;
+  --bg-soft: #f1f1ef;
   /* Elevation gets whiter on light; the canvas sits below everything */
-  --surface:    #f2f0e8;
-  --surface-2:  #f5f3ed;
-  --surface-3:  #faf9f4;
-  --surface-hi: #fdfcf8;
-  --glass-tint: #f7f5ee;
-  --canvas-bg:  #e6e2d7;
+  --surface:    #f0f0ee;
+  --surface-2:  #f3f3f1;
+  --surface-3:  #f9f9f7;
+  --surface-hi: #fcfcfb;
+  --glass-tint: #f5f5f3;
+  --canvas-bg:  #e8e8e5;
 
-  --hot:      #2f6be0;
-  --hot-hi:   #3b82f6;
-  --hot-pale: #274b8f;
-  --hot-text: rgba(26, 49, 94, 0.96);
-  --hot-veil: color-mix(in srgb, #c3d3f5 66%, transparent);
+  /* signal blue, deepened so it reads on the pale paper ground */
+  --hot:      #1a56db;
+  --hot-hi:   #1447b8;
+  --hot-pale: #0f3a9e;
+  --hot-text: rgba(12, 38, 96, 0.96);
+  --hot-veil: color-mix(in srgb, var(--hot) 12%, transparent);
+  --on-hot:   #f5f8fe;
 
-  --accent:      #23201a;
-  --accent-hi:   #14120e;
-  --accent-deep: #4a463c;
-  --on-accent:   #f9f8f3;
-  --accent-soft: #d8d3c6;
+  --accent:      #1d1d1b;
+  --accent-hi:   #111110;
+  --accent-deep: #454542;
+  --on-accent:   #f7f7f5;
+  --accent-soft: #dededa;
 
-  --warm-hi:   #0891b2;
-  --cool-hi:   #65a30d;
-  --danger:    #e11d48;
-  --danger-hi: #be123c;
+  --warm-hi:   #6f6f6a;
+  --cool-hi:   #3d8b52;
+  --danger:    #d92d43;
+  --danger-hi: #b1202f;
 
   /* Dark-on-light borders and text need a touch more weight */
   --border:        color-mix(in srgb, var(--ink) 9%, transparent);
@@ -166,25 +169,16 @@
   --text-bright: color-mix(in srgb, var(--ink) 94%, transparent);
 
   --glass-border:    color-mix(in srgb, var(--ink) 16%, transparent);
-  --glass-highlight: inset 0 1px 0 rgba(253, 252, 248, 0.7);
+  --glass-highlight: inset 0 1px 0 rgba(252, 252, 251, 0.7);
 
-  --well-tint: #2a2417;
+  --well-tint: #232321;
   --well-scale: 0.22;
 
-  --select-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(26,24,20,0.55)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  --select-arrow: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(25,25,24,0.55)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
 
-  --grad-soft: linear-gradient(120deg, rgba(139,92,246,0.14) 0%, rgba(34,211,238,0.10) 55%, rgba(163,230,53,0.07) 110%);
-
-  --shadow-sm: 0 1px 2px rgba(48, 42, 30, 0.10);
-  --shadow:    0 4px 16px rgba(48, 42, 30, 0.13), 0 1px 2px rgba(48, 42, 30, 0.08);
-  --shadow-lg: 0 16px 48px rgba(48, 42, 30, 0.18), 0 2px 8px rgba(48, 42, 30, 0.10);
-  --shadow-accent: 0 0 0 1px rgba(35, 32, 26, 0.30), 0 8px 28px rgba(35, 32, 26, 0.22);
-  --shadow-cool:   0 0 0 1px rgba(8, 145, 178, 0.35), 0 8px 28px rgba(8, 145, 178, 0.22);
-
-  --ambient:
-    radial-gradient(ellipse 75% 50% at 12% -5%, rgba(253, 252, 248, 0.9), transparent 60%),
-    radial-gradient(ellipse 55% 45% at 92% 105%, rgba(34, 211, 238, 0.08), transparent 60%),
-    radial-gradient(ellipse 40% 30% at 95% 0%, rgba(163, 230, 53, 0.05), transparent 60%);
+  --shadow-sm: 0 1px 2px rgba(28, 28, 26, 0.08);
+  --shadow:    0 2px 10px rgba(28, 28, 26, 0.10), 0 1px 2px rgba(28, 28, 26, 0.06);
+  --shadow-lg: 0 12px 32px rgba(28, 28, 26, 0.14), 0 2px 6px rgba(28, 28, 26, 0.08);
 }
 
 * {
@@ -203,7 +197,10 @@ body {
   font-family: var(--font);
   font-size: 13.5px;
   line-height: 1.5;
-  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  /* Inter's fancy feature set: cleaner lowercase a/g/l (cv), single-storey
+     glyph sets (ss), and optical sizing so large text picks the Display cut. */
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv09', 'cv11', 'ss01', 'ss03';
+  font-optical-sizing: auto;
   color: var(--text);
   background: var(--bg);
   transition: color var(--dur-slow) ease, background var(--dur-slow) ease;

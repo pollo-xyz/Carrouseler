@@ -16,7 +16,6 @@ import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { createGifAnimator, type GifAnimator } from '../lib/gifAnimator'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
 import { bgVibeHash, renderBgVibe, type BgVibe } from '../lib/bgVibe'
-import LayerStack from './LayerStack'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -24,9 +23,14 @@ import LayerStack from './LayerStack'
 
 const PASTEBOARD_PAD_BASE = 1500
 const PASTEBOARD_PAD_FACTOR = 2 // pasteboard extends this × max(W,H) beyond slides
-const ARTBOARD_GAP = 120
-const GUIDE_COLOR = '#3366ff'
-const GUIDE_COLOR_CENTER = '#3399ff'
+/* Exported for the inspector's docked Layers panel — it mirrors the
+   artboard X layout (i × (W + gap)) to decide which items overlap the
+   active slide. Pasteboard padding cancels out of that comparison. */
+export const ARTBOARD_GAP = 120
+/* Editor-chrome accent — signal blue, matching --hot in index.css. Guides,
+   transformer borders, and trim handles all speak the one accent color. */
+const GUIDE_COLOR = '#3d7bfd'
+const GUIDE_COLOR_CENTER = '#6b9dff'
 const MIN_ZOOM = 0.02
 const MAX_ZOOM = 8
 
@@ -1367,7 +1371,7 @@ function CropOverlay({
         boundBoxFunc={(old, nw) => (nw.width < 20 || nw.height < 20 ? old : nw)}
         anchorSize={12}
         anchorFill={GUIDE_COLOR}
-        anchorStroke="#1144cc"
+        anchorStroke="#1d4ed8"
         anchorStrokeWidth={1.5}
         anchorCornerRadius={2}
         borderStroke={GUIDE_COLOR}
@@ -1406,7 +1410,7 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
         zIndex: 3,
         width: 240,
         padding: '8px 10px',
-        background: 'rgba(30,30,40,0.97)',
+        background: 'rgba(21,21,20,0.97)',
         borderRadius: 8,
         border: '1px solid rgba(241,242,245,0.1)',
         boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
@@ -1528,7 +1532,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
         pointerEvents: 'auto',
         zIndex: 2,
         padding: '4px 8px',
-        background: 'rgba(30,30,40,0.95)',
+        background: 'rgba(21,21,20,0.95)',
         borderRadius: 8,
         border: '1px solid rgba(241,242,245,0.1)',
         boxShadow: '0 2px 12px rgba(10,11,15,0.4)',
@@ -1673,7 +1677,7 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
         zIndex: 3,
         width: 220,
         padding: 12,
-        background: 'rgba(30,30,40,0.97)',
+        background: 'rgba(21,21,20,0.97)',
         borderRadius: 8,
         border: '1px solid rgba(241,242,245,0.1)',
         boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
@@ -1687,13 +1691,13 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
       {usingImage ? (
         <img
           src={item.coverImageSrc}
-          style={{ width: '100%', borderRadius: 4, background: '#0d0d11', aspectRatio: '16/9', objectFit: 'contain' }}
+          style={{ width: '100%', borderRadius: 4, background: '#111110', aspectRatio: '16/9', objectFit: 'contain' }}
           alt=""
         />
       ) : (
         <canvas
           ref={canvasRef}
-          style={{ width: '100%', borderRadius: 4, background: '#0d0d11', aspectRatio: '16/9', objectFit: 'contain' }}
+          style={{ width: '100%', borderRadius: 4, background: '#111110', aspectRatio: '16/9', objectFit: 'contain' }}
         />
       )}
       {!usingImage && (
@@ -1939,7 +1943,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         zIndex: 3,
         width: TRIM_STRIP_WIDTH + 24,
         padding: 12,
-        background: 'rgba(30,30,40,0.97)',
+        background: 'rgba(21,21,20,0.97)',
         borderRadius: 8,
         border: '1px solid rgba(241,242,245,0.1)',
         boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
@@ -1971,7 +1975,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
           position: 'relative',
           width: TRIM_STRIP_WIDTH,
           height: TRIM_STRIP_HEIGHT,
-          background: '#0d0d11',
+          background: '#111110',
           borderRadius: 4,
           userSelect: 'none',
           touchAction: 'none',
@@ -1999,8 +2003,8 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
                 style={{
                   width: pW, height: pH,
                   borderRadius: 4,
-                  background: '#0d0d11',
-                  border: '2px solid #3b82f6',
+                  background: '#111110',
+                  border: '2px solid #3d7bfd',
                   boxShadow: '0 4px 12px rgba(10,11,15,0.6)',
                   display: 'block',
                 }}
@@ -2052,7 +2056,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         <div style={{
           position: 'absolute', top: 0, left: startX, height: '100%',
           width: Math.max(0, endX - startX),
-          border: '2px solid #3b82f6',
+          border: '2px solid #3d7bfd',
           borderLeft: 'none',
           borderRight: 'none',
           pointerEvents: 'none',
@@ -2066,7 +2070,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             top: 0, height: '100%',
             left: Math.max(0, Math.min(TRIM_STRIP_WIDTH - TRIM_HANDLE_W, startX - TRIM_HANDLE_W)),
             width: TRIM_HANDLE_W,
-            background: '#3b82f6',
+            background: '#3d7bfd',
             cursor: 'ew-resize',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             borderRadius: '4px 0 0 4px',
@@ -2085,7 +2089,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             top: 0, height: '100%',
             left: Math.max(0, Math.min(TRIM_STRIP_WIDTH - TRIM_HANDLE_W, endX)),
             width: TRIM_HANDLE_W,
-            background: '#3b82f6',
+            background: '#3d7bfd',
             cursor: 'ew-resize',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             borderRadius: '0 4px 4px 0',
@@ -2202,12 +2206,6 @@ const EditorStage = forwardRef<
       y: pasteboardPad,
     }))
   }, [slides, W, artboardGap, pasteboardPad])
-
-  const slideAbsoluteXBySlideId = useMemo(() => {
-    const m = new Map<string, number>()
-    slides.forEach((s, j) => m.set(s.id, artboardPositions[j]!.x))
-    return m
-  }, [slides, artboardPositions])
 
   /* ---- "hidden" zone around slides: media inside here is clipped by slide masks ---- */
   const hiddenZone = useMemo(() => {
@@ -3296,7 +3294,7 @@ const EditorStage = forwardRef<
           className="btn btn--ghost btn--sm"
           onClick={fitToScreen}
           title="Fit to screen"
-          style={{ fontSize: '0.76rem', padding: '5px 10px', color: 'rgba(241,242,245,0.78)' }}
+          style={{ fontSize: '0.76rem', padding: '5px 10px' }}
         >
           Fit
         </button>
@@ -3308,7 +3306,6 @@ const EditorStage = forwardRef<
           style={{
             fontSize: '0.76rem',
             padding: '5px 6px',
-            color: 'rgba(241,242,245,0.58)',
             fontFamily: 'var(--mono)',
             minWidth: 48,
             textAlign: 'right',
@@ -3652,26 +3649,6 @@ const EditorStage = forwardRef<
                   )
                 })}
 
-              {/* Layer stack — below color picker */}
-              <div
-                style={{
-                  position: 'absolute',
-                  left: screenX,
-                  top: screenY + screenH + 38,
-                  width: Math.max(200, screenW),
-                  pointerEvents: 'auto',
-                }}
-              >
-                <LayerStack
-                  slideId={slide.id}
-                  slideIndex={i}
-                  slideAbsoluteX={ap.x}
-                  slideWidth={W}
-                  slideHeight={H}
-                  slideAbsoluteXBySlideId={slideAbsoluteXBySlideId}
-                />
-              </div>
-
               {/* + button AFTER this artboard — hidden in seamless mode */}
               {/* "+" button between slides. Hidden in seamless mode for
                   inner slides (those dividers would visually break the
@@ -3695,7 +3672,7 @@ const EditorStage = forwardRef<
                   pointerEvents: 'auto',
                   width: 28, height: 28, borderRadius: '50%',
                   border: '1.5px solid rgba(241,242,245,0.2)',
-                  background: 'rgba(30,30,40,0.85)',
+                  background: 'rgba(21,21,20,0.85)',
                   color: 'rgba(241,242,245,0.5)',
                   cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3703,15 +3680,15 @@ const EditorStage = forwardRef<
                 }}
                 onMouseEnter={(e) => {
                   const b = e.currentTarget
-                  b.style.borderColor = '#3b82f6'
+                  b.style.borderColor = '#3d7bfd'
                   b.style.color = '#f1f2f5'
-                  b.style.background = '#3b82f6'
+                  b.style.background = '#3d7bfd'
                 }}
                 onMouseLeave={(e) => {
                   const b = e.currentTarget
                   b.style.borderColor = 'rgba(241,242,245,0.2)'
                   b.style.color = 'rgba(241,242,245,0.5)'
-                  b.style.background = 'rgba(30,30,40,0.85)'
+                  b.style.background = 'rgba(21,21,20,0.85)'
                 }}
               >
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -4367,7 +4344,7 @@ const EditorStage = forwardRef<
                         x={item.x} y={item.y}
                         width={item.width} height={item.height}
                         rotation={item.rotation}
-                        stroke="#3b82f6" strokeWidth={2}
+                        stroke="#3d7bfd" strokeWidth={2}
                         strokeScaleEnabled={false}
                         listening={false}
                       />
@@ -4708,7 +4685,7 @@ const EditorStage = forwardRef<
               rotateEnabled={false}
               resizeEnabled={!rotateMode}
               anchorSize={10}
-              borderStroke={rotateMode ? '#3b82f6' : undefined}
+              borderStroke={rotateMode ? '#3d7bfd' : undefined}
               anchorStrokeWidth={1.5}
               borderStrokeWidth={1.5}
               anchorCornerRadius={2}
@@ -4734,7 +4711,7 @@ const EditorStage = forwardRef<
               const handleAng = rad + Math.PI / 2
               const hx = cx + rulerR * Math.cos(handleAng)
               const hy = cy + rulerR * Math.sin(handleAng)
-              const stroke = '#3b82f6'
+              const stroke = '#3d7bfd'
               const sw = Math.max(1.5, 2 / zoom)
               return (
                 <Group listening>

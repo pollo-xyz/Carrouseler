@@ -8,7 +8,7 @@ import {
 } from '@dnd-kit/core'
 import {
   SortableContext,
-  horizontalListSortingStrategy,
+  verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -96,7 +96,7 @@ export default function SlideStrip() {
       >
         <SortableContext
           items={slides.map((s) => s.id)}
-          strategy={horizontalListSortingStrategy}
+          strategy={verticalListSortingStrategy}
         >
           <div className="slide-strip__list">
             {slides.map((s, i) => (

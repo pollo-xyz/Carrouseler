@@ -1,17 +1,21 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 // Self-hosted fonts — no network fetch, works offline in the desktop app.
-import '@fontsource-variable/inter/index.css'
-import '@fontsource-variable/jetbrains-mono/index.css'
-import '@fontsource/funnel-sans/400.css'
-import '@fontsource/funnel-sans/500.css'
-import '@fontsource/funnel-sans/700.css'
+// Inter (rsms.me) — the variable `opsz` cut carries both the text axis and
+// the Display optical size. Body text uses it flat; the display voice
+// (wordmark, panel titles) forces a higher `opsz` for the Display cut.
+import '@fontsource-variable/inter/opsz.css'
+import '@fontsource-variable/inter/opsz-italic.css'
 import './index.css'
 import App from './App.tsx'
 import { initTheme } from './lib/theme'
+import { initLicense } from './lib/license'
 
 // Apply the persisted theme before first paint so there's no flash.
 initTheme()
+
+// Load the cached license status and revalidate once in the background.
+initLicense()
 
 // Tag the body with the platform so CSS can conditionally style chrome —
 // e.g. the macOS-only 82px left padding for traffic-light buttons. We use

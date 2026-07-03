@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import EditorStage, { type EditorStageHandle } from './components/EditorStage'
+import EditorStage, { type EditorStageHandle, ARTBOARD_GAP } from './components/EditorStage'
+import LayerStack from './components/LayerStack'
 import NumberField from './components/NumberField'
 import MenuBar from './components/MenuBar'
 import FontPicker from './components/FontPicker'
 import GifPicker from './components/GifPicker'
 import { downloadGif, type GiphyItem } from './lib/giphy'
 import { ToastHost, ConfirmHost } from './components/FeedbackHosts'
+import { LicensePill, LicenseGate } from './components/LicenseGate'
 import { toast, dismissToast, confirmDialog } from './lib/feedback'
 import { useThemeStore, resolveWorkspaceBg, WORKSPACE_AUTO } from './lib/theme'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
@@ -127,6 +129,18 @@ const Icon = {
       <circle cx="12" cy="12" r="3" />
     </svg>
   ),
+  Layers: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M12 2l10 6-10 6L2 8l10-6z" />
+      <path d="M2 16l10 6 10-6" />
+    </svg>
+  ),
+  Slide: (p: React.SVGProps<SVGSVGElement>) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M4 16l5-5 4 4 3-3 4 4" />
+    </svg>
+  ),
   Link: (p: React.SVGProps<SVGSVGElement>) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
       <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
@@ -142,6 +156,70 @@ const Icon = {
   ),
 }
 
+
+/* ============================================================
+   Popover — small anchored dropdown shared by the Format chip,
+   the Export button, and the canvas View cluster. Render inside
+   a `.popover-host` (position: relative) next to its trigger;
+   closes on outside click or Escape. The host wraps the trigger
+   too, so a click on the trigger doesn't count as "outside" and
+   the trigger's own onClick can toggle cleanly.
+   ============================================================ */
+function Popover({
+  open,
+  onClose,
+  up,
+  alignRight,
+  width,
+  children,
+}: {
+  open: boolean
+  onClose: () => void
+  /** Open above the trigger (for the canvas-bottom View cluster). */
+  up?: boolean
+  /** Anchor to the trigger's right edge (for right-side header items). */
+  alignRight?: boolean
+  width?: number
+  children: React.ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      const host = ref.current?.parentElement
+      if (host && !host.contains(e.target as Node)) onClose()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onClose])
+  if (!open) return null
+  return (
+    <div
+      ref={ref}
+      className={`popover${up ? ' popover--up' : ''}${alignRight ? ' popover--right' : ''}`}
+      style={width ? { width } : undefined}
+    >
+      {children}
+    </div>
+  )
+}
+
+/** Header label for each canvas preset (the format chip's bold half). */
+const PRESET_LABELS: Record<string, string> = {
+  hd: '16:9',
+  '1:1': '1:1',
+  '4:5': '4:5',
+  '3:4': '3:4',
+  '9:16': '9:16',
+  custom: 'Custom',
+}
 
 /** Format seconds → "1m 04s" / "12s" for the export elapsed-time readout. */
 function formatElapsed(ms: number): string {
@@ -849,6 +927,14 @@ export default function App() {
   // Giphy picker state — anchored to the "Add GIF" button below. The actual
   // pick handler is defined further down (after `addMedia` is in scope).
   const [gifPickerOpen, setGifPickerOpen] = useState(false)
+  // Dev aid (View → Show CSS outlines): outlines every region + control so
+  // the user can name elements precisely when giving design feedback.
+  const [showOutlines, setShowOutlines] = useState(false)
+
+  // Header + canvas popovers (Format chip, Export options, View cluster).
+  const [formatOpen, setFormatOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [viewOpen, setViewOpen] = useState(false)
   const gifPickerAnchorRef = useRef<HTMLButtonElement>(null)
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
   const [isDragOver, setIsDragOver] = useState(false)
@@ -970,6 +1056,11 @@ export default function App() {
   const setSnapCenter = useTiovivoStore((s) => s.setSnapCenter)
   const setSnapItems = useTiovivoStore((s) => s.setSnapItems)
   const setSnapMargins = useTiovivoStore((s) => s.setSnapMargins)
+  const setSlideName = useTiovivoStore((s) => s.setSlideName)
+  const setSlideExport = useTiovivoStore((s) => s.setSlideExport)
+  const setSlideBgColor = useTiovivoStore((s) => s.setSlideBgColor)
+  const duplicateSlide = useTiovivoStore((s) => s.duplicateSlide)
+  const removeSlide = useTiovivoStore((s) => s.removeSlide)
   const setAllSlidesBgVibe = useTiovivoStore((s) => s.setAllSlidesBgVibe)
   const setSlideBgVibe = useTiovivoStore((s) => s.setSlideBgVibe)
   const randomizeAllSlideVibes = useTiovivoStore((s) => s.randomizeAllSlideVibes)
@@ -1652,6 +1743,20 @@ export default function App() {
   /* ---- Active slide indicator ---- */
   const activeSlideIndex = slides.findIndex((s) => s.id === activeSlideId)
 
+  /* ---- Export summary (Export popover) ---- */
+  const exportEnabledCount = slides.filter((s) => s.exportEnabled !== false).length
+
+  /* ---- Active slide (drives the inspector's Slide sheet + Layers) ---- */
+  const activeSlide = activeSlideIndex >= 0 ? slides[activeSlideIndex] : undefined
+
+  /* Mirror of the canvas artboard X layout for the docked Layers panel.
+     Pasteboard padding cancels out of LayerStack's overlap math, so a
+     pad-less i × (W + gap) reproduces EditorStage's positions exactly. */
+  const slideAbsoluteXBySlideId = useMemo(() => {
+    const gap = seamlessSlides ? 0 : ARTBOARD_GAP
+    return new Map(slides.map((s, i) => [s.id, i * (dimensions.width + gap)]))
+  }, [slides, seamlessSlides, dimensions.width])
+
   /* ---- Text selection (for properties panel) ---- */
   const selectedTextItem: PlacedMedia | null = useMemo(() => {
     if (selectedIds.length !== 1) return null
@@ -1698,9 +1803,12 @@ export default function App() {
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
 
   return (
-    <div className="app">
+    <div className={`app${showOutlines ? ' app--outline-debug' : ''}`}>
       <ToastHost />
       <ConfirmHost />
+      {/* Desktop-only blocking overlay once the trial is over; a no-op on
+          the free web tier and while licensed. */}
+      <LicenseGate />
       {/* In-app menu bar for Windows / Linux. CSS hides it on macOS — Mac
           uses the native menu strip at the top of the screen instead. */}
       <MenuBar
@@ -1721,6 +1829,8 @@ export default function App() {
         onUndo={() => useTiovivoStore.getState().undo()}
         onRedo={() => useTiovivoStore.getState().redo()}
         onReload={() => location.reload()}
+        showOutlines={showOutlines}
+        onToggleOutlines={() => setShowOutlines((v) => !v)}
         onToggleDevTools={() => {
           // No IPC for this yet; rely on the F12 / Ctrl+Shift+I native
           // accelerator Chromium still honours. The menu item exists as a
@@ -1733,104 +1843,127 @@ export default function App() {
           <span className="app__brand-title">Tiovivo</span>
         </div>
         <div className="app__brand-sep" aria-hidden />
-        <div className="app__presets">
-          {(
-            [
-              ['hd', '16:9'],
-              ['1:1', '1:1'],
-              ['4:5', '4:5'],
-              ['3:4', '3:4'],
-              ['9:16', '9:16'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`btn ${presetId === id ? 'btn--accent' : ''}`}
-              onClick={() => setPreset(id)}
-              title={`${PRESETS[id].width} × ${PRESETS[id].height}`}
-            >
-              {label}
-            </button>
-          ))}
+        {/* Format — chosen once per project, so it's one chip. Presets,
+            custom W/H and the aspect lock live in its popover. */}
+        <div className="popover-host">
           <button
             type="button"
-            className={`btn ${presetId === 'custom' ? 'btn--accent' : ''}`}
-            onClick={() => setPreset('custom')}
+            className="app__format-chip"
+            onClick={() => setFormatOpen((v) => !v)}
+            title="Canvas format — presets and custom size"
+            aria-expanded={formatOpen}
           >
-            Custom
+            <b>{PRESET_LABELS[presetId] ?? presetId}</b>
+            <span className="app__format-dims">{dimensions.width}×{dimensions.height}</span>
+            <span className="app__chev" aria-hidden>▾</span>
           </button>
+          <Popover open={formatOpen} onClose={() => setFormatOpen(false)} width={312}>
+            <div className="app__presets" style={{ marginBottom: 10 }}>
+              {(
+                [
+                  ['hd', '16:9'],
+                  ['1:1', '1:1'],
+                  ['4:5', '4:5'],
+                  ['3:4', '3:4'],
+                  ['9:16', '9:16'],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`btn ${presetId === id ? 'btn--seg-active' : ''}`}
+                  onClick={() => setPreset(id)}
+                  title={`${PRESETS[id].width} × ${PRESETS[id].height}`}
+                  style={{ flex: 1 }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="app__custom-size">
+              <label>
+                W
+                <NumberField
+                  min={64}
+                  max={8192}
+                  // Bind to the live dimensions, not the cached customWidth — that
+                  // field doesn't update when the user clicks a preset, so the
+                  // input would stay stale. setCustomDimensions still flips the
+                  // preset to "custom" as a side effect of typing here.
+                  value={dimensions.width}
+                  scrubStep={1}
+                  onCommit={(w) => {
+                    if (lockAspect) {
+                      const aspect = dimensions.width / Math.max(1, dimensions.height)
+                      const h = Math.max(64, Math.round(w / aspect))
+                      setCustomDimensions(w, h)
+                    } else {
+                      setCustomDimensions(w, dimensions.height)
+                    }
+                  }}
+                />
+              </label>
+              <label>
+                H
+                <NumberField
+                  min={64}
+                  max={8192}
+                  value={dimensions.height}
+                  scrubStep={1}
+                  onCommit={(h) => {
+                    if (lockAspect) {
+                      const aspect = dimensions.width / Math.max(1, dimensions.height)
+                      const w = Math.max(64, Math.round(h * aspect))
+                      setCustomDimensions(w, h)
+                    } else {
+                      setCustomDimensions(dimensions.width, h)
+                    }
+                  }}
+                />
+              </label>
+              {/* Aspect-lock toggle — when locked, editing one dimension
+                  scales the other from the current aspect ratio. */}
+              <button
+                type="button"
+                className={`app__aspect-lock ${lockAspect ? 'app__aspect-lock--locked' : ''}`}
+                onClick={() => setLockAspect((v) => !v)}
+                title={lockAspect ? 'Aspect ratio locked — click to unlock' : 'Lock aspect ratio'}
+                aria-pressed={lockAspect}
+              >
+                {lockAspect
+                  ? <Icon.Link style={{ width: 12, height: 12 }} />
+                  : <Icon.LinkOff style={{ width: 12, height: 12 }} />}
+              </button>
+            </div>
+          </Popover>
         </div>
-        <div className="app__custom-size">
-          <label>
-            W
-            <NumberField
-              min={64}
-              max={8192}
-              // Bind to the live dimensions, not the cached customWidth — that
-              // field doesn't update when the user clicks a preset, so the
-              // input would stay stale. setCustomDimensions still flips the
-              // preset to "custom" as a side effect of typing here.
-              value={dimensions.width}
-              scrubStep={1}
-              onCommit={(w) => {
-                if (lockAspect) {
-                  const aspect = dimensions.width / Math.max(1, dimensions.height)
-                  const h = Math.max(64, Math.round(w / aspect))
-                  setCustomDimensions(w, h)
-                } else {
-                  setCustomDimensions(w, dimensions.height)
-                }
-              }}
-            />
-          </label>
-          {/* Aspect-lock toggle between W and H. When locked, editing one
-              dimension scales the other from the current aspect ratio. */}
+        {/* Composition mode — paged carousel vs. one continuous panorama.
+            A first-class mode switch, not a buried checkbox: it changes the
+            kind of output (artboard gaps collapse, backgrounds fuse into a
+            single strip across every slide). */}
+        <div className="app__presets" role="group" aria-label="Composition mode">
           <button
             type="button"
-            className={`app__aspect-lock ${lockAspect ? 'app__aspect-lock--locked' : ''}`}
-            onClick={() => setLockAspect((v) => !v)}
-            title={lockAspect ? 'Aspect ratio locked — click to unlock' : 'Lock aspect ratio'}
-            aria-pressed={lockAspect}
+            className={`btn ${!seamlessSlides ? 'btn--seg-active' : ''}`}
+            onClick={() => setSeamlessSlides(false)}
+            title="Independent slides with gaps — classic carousel pages"
           >
-            {lockAspect
-              ? <Icon.Link style={{ width: 12, height: 12 }} />
-              : <Icon.LinkOff style={{ width: 12, height: 12 }} />}
+            Slides
           </button>
-          <label>
-            H
-            <NumberField
-              min={64}
-              max={8192}
-              value={dimensions.height}
-              scrubStep={1}
-              onCommit={(h) => {
-                if (lockAspect) {
-                  const aspect = dimensions.width / Math.max(1, dimensions.height)
-                  const w = Math.max(64, Math.round(h * aspect))
-                  setCustomDimensions(w, h)
-                } else {
-                  setCustomDimensions(dimensions.width, h)
-                }
-              }}
-            />
-          </label>
+          <button
+            type="button"
+            className={`btn ${seamlessSlides ? 'btn--seg-active' : ''}`}
+            onClick={() => setSeamlessSlides(true)}
+            title="Slides butt together and backgrounds flow across all of them — one continuous panorama"
+          >
+            Seamless
+          </button>
         </div>
         <div className="app__spacer" />
-        {/* Preview toggle — when on, hide all editor chrome (grid, center
-            guides, IG safe area, seamless dividers, upscale warnings/ring)
-            so the canvas reads like a final export. Lives on the right
-            side of the header just before the workspace pill, away from
-            the canvas-sizing controls it doesn't affect. */}
-        <button
-          type="button"
-          className={`app__aspect-lock ${previewMode ? 'app__aspect-lock--locked' : ''}`}
-          onClick={() => setPreviewMode(!previewMode)}
-          title={previewMode ? 'Preview ON — click to show editor chrome' : 'Hide grids, guides, dividers and warnings to preview as it will export'}
-          aria-pressed={previewMode}
-        >
-          <Icon.Eye style={{ width: 14, height: 14 }} />
-        </button>
+        {/* Subscription chip — trial countdown on desktop, Upgrade on the
+            free web tier, quiet Pro chip when licensed. Opens the license
+            dialog (activate / manage / deactivate). */}
+        <LicensePill />
         {/* Theme toggle — dark ⇄ light, persisted across sessions. */}
         <button
           type="button"
@@ -1849,206 +1982,78 @@ export default function App() {
             </svg>
           )}
         </button>
-        {/* Workspace pasteboard colour — lives in the header because it's a
-            global view setting, not per-slide. Same pill shape as the export
-            name input so it sits cleanly in the row. The reset button is
-            always rendered (hidden via visibility, not display) so the pill
-            keeps a stable width — changing the colour doesn't shift the
-            Name input next to it. */}
-        {(() => {
-          const isWorkspaceDefault =
-            !workspaceBgColor || workspaceBgColor.toLowerCase() === WORKSPACE_AUTO
-          return (
-            <label
-              className="app__header-pill"
-              title="Workspace background — pasteboard colour around the slides"
-            >
-              <input
-                className="color-swatch"
-                type="color"
-                value={resolveWorkspaceBg(workspaceBgColor, theme)}
-                onChange={(e) => setWorkspaceBgColor(e.target.value)}
-              />
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={(e) => { e.preventDefault(); setWorkspaceBgColor(WORKSPACE_AUTO) }}
-                title={isWorkspaceDefault ? 'Workspace follows the theme — pick a colour to override' : 'Reset workspace colour to follow the theme'}
-                style={{
-                  padding: '2px 6px',
-                  flexDirection: 'row',
-                  gap: 4,
-                  // Stay visible at all times so the pill width never shifts.
-                  // Idle (= already default) reads as a quiet placeholder
-                  // barely above the pill background; once a custom colour
-                  // is picked it brightens to the normal ghost-btn tone so
-                  // the affordance becomes obvious.
-                  color: isWorkspaceDefault
-                    ? 'color-mix(in srgb, var(--ink) 18%, transparent)'
-                    : 'color-mix(in srgb, var(--ink) 55%, transparent)',
-                  transition: 'color var(--dur-fast) var(--ease)',
-                }}
-              >
-                <Icon.Reset style={{ width: 10, height: 10 }} />
-              </button>
-            </label>
-          )
-        })()}
-        <label
-          className="app__export-name"
-          title="Filename prefix used for exported PNGs/MP4s. Defaults to the project name."
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '0 8px',
-            border: '1px solid color-mix(in srgb, var(--ink) 8%, transparent)',
-            borderRadius: 6,
-            background: 'color-mix(in srgb, var(--ink) 3%, transparent)',
-            height: 32,
-          }}
-        >
-          <span style={{ fontSize: 11, color: 'color-mix(in srgb, var(--ink) 50%, transparent)' }}>Name</span>
-          <input
-            type="text"
-            value={exportPrefix}
-            onChange={(e) => setExportPrefix(e.target.value)}
-            placeholder="tiovivo"
-            spellCheck={false}
-            style={{
-              width: 120,
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              color: 'var(--text-bright)',
-              fontSize: 13,
-              fontFamily: 'inherit',
-            }}
-          />
-          {/* Filename-format hint doubles as the Slide-names toggle. Always
-              renders with a visible border + chevron so it reads as a button
-              even when inactive; the active state takes the same blue tint
-              as our segmented toggles for consistency. */}
+        {/* Export — the CTA opens a popover with everything that only
+            matters at export time: filename prefix, the slide-name toggle,
+            and how many slides are enabled. One concept of "name", one
+            place to find it. */}
+        <div className="popover-host">
           <button
             type="button"
-            className={`app__filename-toggle ${includeSlideNameInFilename ? 'app__filename-toggle--on' : ''}`}
-            onClick={(e) => {
-              e.preventDefault()
-              setIncludeSlideNameInFilename((v) => !v)
-            }}
-            // Stop the parent <label> from re-focusing the input on click.
-            onMouseDown={(e) => e.preventDefault()}
-            title={
-              includeSlideNameInFilename
-                ? 'Slide names included in filename — click to remove'
-                : 'Click to include each slide\'s name in its export filename'
-            }
+            className="btn btn--export"
+            disabled={exporting}
+            onClick={() => setExportOpen((v) => !v)}
+            aria-expanded={exportOpen}
           >
-            {includeSlideNameInFilename ? '_SLIDE_NN' : '_NN'}
+            <Icon.Export />
+            {exporting ? 'Exporting…' : 'Export'}
+            <span className="app__chev" aria-hidden>▾</span>
           </button>
-        </label>
-        <button
-          type="button"
-          className="btn btn--export"
-          disabled={exporting}
-          onClick={exportAll}
-        >
-          <Icon.Export />
-          {exporting ? 'Exporting…' : 'Export all'}
-        </button>
+          <Popover open={exportOpen} onClose={() => setExportOpen(false)} alignRight width={288}>
+            <label className="field" style={{ marginTop: 0 }}>
+              <span>Filename prefix</span>
+              <input
+                type="text"
+                value={exportPrefix}
+                onChange={(e) => setExportPrefix(e.target.value)}
+                placeholder="tiovivo"
+                spellCheck={false}
+              />
+            </label>
+            <label className="check" title="Insert each slide's custom name into its export filename. Slides without a name keep the plain numbered form.">
+              <input
+                type="checkbox"
+                checked={includeSlideNameInFilename}
+                onChange={(e) => setIncludeSlideNameInFilename(e.target.checked)}
+              />
+              Slide names in filenames
+            </label>
+            <p className="hint" style={{ marginTop: 2 }}>
+              Files: <code style={{ fontFamily: 'var(--mono)' }}>
+                {(sanitizeFilename(exportPrefix.trim()) || 'tiovivo')}{includeSlideNameInFilename ? '_SLIDE' : ''}_01.png / .mp4
+              </code>
+            </p>
+            <p className="hint">
+              {exportEnabledCount} of {slides.length} slide{slides.length === 1 ? '' : 's'} will export —
+              toggle each slide from its label on the canvas.
+            </p>
+            <button
+              type="button"
+              className="btn btn--export"
+              disabled={exporting || exportEnabledCount === 0}
+              onClick={() => {
+                setExportOpen(false)
+                void exportAll()
+              }}
+              style={{ width: '100%', justifyContent: 'center', marginTop: 12 }}
+            >
+              <Icon.Export />
+              {exporting
+                ? 'Exporting…'
+                : exportEnabledCount === slides.length
+                  ? 'Export all slides'
+                  : `Export ${exportEnabledCount} slide${exportEnabledCount === 1 ? '' : 's'}`}
+            </button>
+          </Popover>
+        </div>
       </header>
 
       <div className="app__body">
+        {/* RIGHT — Inspector: properties of the current focus, priority-
+            ordered. Selection-driven panels first; slide-level Background
+            below them; canvas configuration (Guides & snap) last, collapsed
+            by default. Never empty: with nothing selected it reads as the
+            slide's property sheet. */}
         <aside className="app__sidebar">
-          <input
-            ref={addMediaInputRef}
-            type="file"
-            multiple
-            accept="image/*,video/*"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const files = e.target.files
-              onFiles(files)
-              if (e.target) e.target.value = ''
-            }}
-          />
-          {/* 2-column grid so narrow sidebars don't push the third button
-              off-screen. The grid auto-flows so a future fourth button just
-              fills the empty cell. */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
-            <button
-              type="button"
-              className="btn btn--outline"
-              onClick={() => addMediaInputRef.current?.click()}
-              title="Add images or videos"
-              style={{
-                flexDirection: 'row',
-                gap: 8,
-                padding: '7px 12px',
-                fontSize: '0.78rem',
-                justifyContent: 'center',
-              }}
-            >
-              <Icon.Plus style={{ width: 13, height: 13 }} />
-              Add media
-            </button>
-            <button
-              type="button"
-              className="btn btn--outline"
-              onClick={onAddText}
-              title="Add a text layer"
-              style={{
-                flexDirection: 'row',
-                gap: 8,
-                padding: '7px 12px',
-                fontSize: '0.78rem',
-                justifyContent: 'center',
-              }}
-            >
-              <Icon.Text style={{ width: 13, height: 13 }} />
-              Add text
-            </button>
-            <button
-              type="button"
-              className="btn btn--outline"
-              onClick={() => addShape('rect')}
-              title="Add a shape — rectangle by default. Switch to ellipse or line from the Shape panel after."
-              style={{
-                flexDirection: 'row',
-                gap: 8,
-                padding: '7px 12px',
-                fontSize: '0.78rem',
-                justifyContent: 'center',
-              }}
-            >
-              <Icon.Shape style={{ width: 13, height: 13 }} />
-              Add shape
-            </button>
-            <button
-              ref={gifPickerAnchorRef}
-              type="button"
-              className={`btn btn--outline ${gifPickerOpen ? 'btn--accent' : ''}`}
-              onClick={() => setGifPickerOpen((v) => !v)}
-              title="Search Giphy for GIFs and stickers"
-              style={{
-                flexDirection: 'row',
-                gap: 8,
-                padding: '7px 12px',
-                fontSize: '0.78rem',
-                justifyContent: 'center',
-              }}
-            >
-              <Icon.Gif style={{ width: 13, height: 13 }} />
-              Add GIF
-            </button>
-          </div>
-          <GifPicker
-            open={gifPickerOpen}
-            onClose={() => setGifPickerOpen(false)}
-            onPick={handleGifPick}
-            anchorRef={gifPickerAnchorRef}
-          />
-
           {selectedTextItem && (() => {
             const t = selectedTextItem
             const patch = (p: Partial<PlacedMedia>) => updateItem(t.id, p)
@@ -2662,6 +2667,95 @@ export default function App() {
             )
           })()}
 
+          {/* SLIDE SHEET — properties of the active slide. Click any slide
+              (or its label) on the canvas and this follows. The same
+              actions exist on the canvas labels; a property sheet gives
+              them a stable, discoverable home. */}
+          {activeSlide && (
+            <details className="collapsible" open>
+              <summary>
+                <h2>
+                  <Icon.Slide />
+                  Slide {activeSlideIndex + 1} of {slides.length}
+                </h2>
+              </summary>
+              <div className="collapsible__body">
+                <label className="field">
+                  <span>Name</span>
+                  <input
+                    type="text"
+                    value={activeSlide.name ?? ''}
+                    placeholder={`Slide ${activeSlideIndex + 1}`}
+                    spellCheck={false}
+                    onChange={(e) => setSlideName(activeSlide.id, e.target.value)}
+                    title="Slide name — shows on the canvas label and (optionally) in export filenames"
+                  />
+                </label>
+                <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <span style={{ flex: 1 }}>Background color</span>
+                  <input
+                    className="color-swatch"
+                    type="color"
+                    value={activeSlide.bgColor || '#ffffff'}
+                    onChange={(e) => setSlideBgColor(activeSlide.id, e.target.value)}
+                  />
+                  <span className="field__value">{activeSlide.bgColor || '#ffffff'}</span>
+                </label>
+                <label className="check" title="Off = this slide is skipped by Export. Also toggleable from the slide's canvas label.">
+                  <input
+                    type="checkbox"
+                    checked={activeSlide.exportEnabled !== false}
+                    onChange={(e) => setSlideExport(activeSlide.id, e.target.checked)}
+                  />
+                  Include in export
+                </label>
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn--outline btn--sm"
+                    style={{ flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center' }}
+                    onClick={() => duplicateSlide(activeSlide.id)}
+                    title="Duplicate this slide and everything on it"
+                  >
+                    Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--danger btn--sm"
+                    style={{ flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center' }}
+                    onClick={() => removeSlide(activeSlide.id)}
+                    disabled={slides.length <= 1}
+                    title={slides.length <= 1 ? 'The last slide can\'t be removed' : 'Remove this slide'}
+                  >
+                    <Icon.Trash style={{ width: 11, height: 11 }} />
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </details>
+          )}
+
+          {/* LAYERS — z-order of the active slide, docked (no more floating
+              stacks under every artboard). Drag to reorder; top row = top
+              of the stack. */}
+          {activeSlide && (
+            <details className="collapsible" open>
+              <summary><h2><Icon.Layers />Layers</h2></summary>
+              <div className="collapsible__body">
+                <LayerStack
+                  slideId={activeSlide.id}
+                  slideAbsoluteX={slideAbsoluteXBySlideId.get(activeSlide.id) ?? 0}
+                  slideWidth={dimensions.width}
+                  slideHeight={dimensions.height}
+                  slideAbsoluteXBySlideId={slideAbsoluteXBySlideId}
+                />
+              </div>
+            </details>
+          )}
+
+          {/* SLIDE — background is a property of the slide, so it lives in
+              the inspector (shown whenever it fits under the selection
+              panels; "Sample from Media" still sees the live selection). */}
           <details className="collapsible" open>
             <summary><h2><Icon.Sliders />Background</h2></summary>
             <div className="collapsible__body">
@@ -2677,104 +2771,64 @@ export default function App() {
             </div>
           </details>
 
-          <details className="collapsible" open>
-            <summary><h2><Icon.Grid />Guides & snap</h2></summary>
-            <div className="collapsible__body">
-              <label className="check">
-                <input type="checkbox" checked={seamlessSlides} onChange={(e) => setSeamlessSlides(e.target.checked)} />
-                Seamless slides
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
-                Hidden zone
-              </label>
-              <hr />
-              <label className="check">
-                <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-                Grid
-              </label>
-              {showGrid && (() => {
-                // Detents snap to values that evenly divide the slide; show a
-                // tiny readout describing what the current size produces.
-                const dividesW = dimensions.width % gridSize === 0
-                const dividesH = dimensions.height % gridSize === 0
-                const cols = dividesW ? dimensions.width / gridSize : null
-                const rows = dividesH ? dimensions.height / gridSize : null
-                let badge: string
-                if (cols !== null && rows !== null) badge = `${cols} × ${rows}`
-                else if (cols !== null) badge = `${cols} cols`
-                else if (rows !== null) badge = `${rows} rows`
-                else badge = 'off-grid'
-                return (
-                  <>
-                    <label
-                      className="slider-field"
-                      title="Cell size in px. The slider snaps to values that produce a whole number of grid cells across the slide (the small ticks). Hold Shift while dragging to bypass snapping; double-click to reset."
-                    >
-                      <span className="slider-field__label">
-                        Grid size
-                        <span className="slider-field__value">{gridSize} px · {badge}</span>
-                      </span>
-                      <input
-                        type="range"
-                        list="tiovivo-grid-detents"
-                        min={4}
-                        max={400}
-                        step={1}
-                        value={gridSize}
-                        style={sliderFill((gridSize - 4) / (400 - 4), 0, 1)}
-                        onChange={(e) => setGridSize(snapGridToDetent(Number(e.target.value)))}
-                        onDoubleClick={() => setGridSize(40)}
-                      />
-                      <datalist id="tiovivo-grid-detents">
-                        {gridDetents.map((v) => <option key={v} value={v} />)}
-                      </datalist>
-                    </label>
-                    <label className="slider-field" title="Visibility of the grid overlay on top of media. Double-click to reset.">
-                      <span className="slider-field__label">
-                        Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
-                      </span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        value={gridOpacity}
-                        style={sliderFill(gridOpacity, 0, 1)}
-                        onChange={(e) => setGridOpacity(Number(e.target.value))}
-                        onDoubleClick={() => setGridOpacity(0.1)}
-                      />
-                    </label>
-                  </>
-                )
-              })()}
-              <label className="check">
-                <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
-                Center lines
-              </label>
-              <label className="check" title="Dim the area where Instagram's carousel page-dot indicator and on-canvas chrome sit, so you don't put critical text under them.">
-                <input type="checkbox" checked={showIgSafeArea} onChange={(e) => setShowIgSafeArea(e.target.checked)} />
-                IG safe area
-              </label>
-              <hr />
-              <label className="check">
-                <input type="checkbox" checked={snapGrid} onChange={(e) => setSnapGrid(e.target.checked)} />
-                Snap to grid
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={snapCenter} onChange={(e) => setSnapCenter(e.target.checked)} />
-                Snap to center
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={snapItems} onChange={(e) => setSnapItems(e.target.checked)} />
-                Snap to other media
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={snapMargins} onChange={(e) => setSnapMargins(e.target.checked)} />
-                Snap to margins
-              </label>
-            </div>
-          </details>
+        </aside>
+
+        {/* LEFT — tool rail. Four insert tools, used constantly, needing
+            almost no space. The canvas itself is the slide navigator
+            (labels select/rename/reorder/delete; "+" buttons add), so
+            there is no left sidebar anymore. */}
+        <aside className="app__toolrail">
+          <input
+            ref={addMediaInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = e.target.files
+              onFiles(files)
+              if (e.target) e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            className="toolrail__btn"
+            onClick={() => addMediaInputRef.current?.click()}
+            title="Add media — images or videos"
+          >
+            <Icon.Plus />
+          </button>
+          <button
+            type="button"
+            className="toolrail__btn"
+            onClick={onAddText}
+            title="Add a text layer"
+          >
+            <Icon.Text />
+          </button>
+          <button
+            type="button"
+            className="toolrail__btn"
+            onClick={() => addShape('rect')}
+            title="Add a shape — rectangle by default; switch kind in the Shape panel"
+          >
+            <Icon.Shape />
+          </button>
+          <button
+            ref={gifPickerAnchorRef}
+            type="button"
+            className={`toolrail__btn${gifPickerOpen ? ' toolrail__btn--active' : ''}`}
+            onClick={() => setGifPickerOpen((v) => !v)}
+            title="Add a GIF from Giphy"
+          >
+            <Icon.Gif />
+          </button>
+          <GifPicker
+            open={gifPickerOpen}
+            onClose={() => setGifPickerOpen(false)}
+            onPick={handleGifPick}
+            anchorRef={gifPickerAnchorRef}
+          />
         </aside>
 
         <main className="app__main">
@@ -2846,6 +2900,149 @@ export default function App() {
                 </span>
               </div>
             )}
+
+            {/* View cluster — sits beside the zoom pill because these are
+                properties of the view, not the document: Preview (hide
+                editor chrome) and the View popover (grid, guides, snapping,
+                workspace color). */}
+            <div className="view-hud popover-host">
+              <button
+                type="button"
+                className={`btn btn--sm ${previewMode ? 'btn--seg-active' : ''}`}
+                onClick={() => setPreviewMode(!previewMode)}
+                title={previewMode ? 'Preview ON — click to show editor chrome' : 'Hide grids, guides, dividers and warnings to preview as it will export'}
+                aria-pressed={previewMode}
+              >
+                <Icon.Eye style={{ width: 13, height: 13 }} />
+              </button>
+              <button
+                type="button"
+                className={`btn btn--sm ${viewOpen ? 'btn--seg-active' : ''}`}
+                onClick={() => setViewOpen((v) => !v)}
+                title="Grid, guides, snapping and workspace color"
+                aria-expanded={viewOpen}
+              >
+                View
+              </button>
+              <Popover open={viewOpen} onClose={() => setViewOpen(false)} up alignRight width={264}>
+                <div className="popover__section">Overlays</div>
+                <label className="check">
+                  <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+                  Grid
+                </label>
+                {showGrid && (() => {
+                  // Detents snap to values that evenly divide the slide; show a
+                  // tiny readout describing what the current size produces.
+                  const dividesW = dimensions.width % gridSize === 0
+                  const dividesH = dimensions.height % gridSize === 0
+                  const cols = dividesW ? dimensions.width / gridSize : null
+                  const rows = dividesH ? dimensions.height / gridSize : null
+                  let badge: string
+                  if (cols !== null && rows !== null) badge = `${cols} × ${rows}`
+                  else if (cols !== null) badge = `${cols} cols`
+                  else if (rows !== null) badge = `${rows} rows`
+                  else badge = 'off-grid'
+                  return (
+                    <>
+                      <label
+                        className="slider-field"
+                        title="Cell size in px. The slider snaps to values that produce a whole number of grid cells across the slide (the small ticks). Hold Shift while dragging to bypass snapping; double-click to reset."
+                      >
+                        <span className="slider-field__label">
+                          Grid size
+                          <span className="slider-field__value">{gridSize} px · {badge}</span>
+                        </span>
+                        <input
+                          type="range"
+                          list="tiovivo-grid-detents"
+                          min={4}
+                          max={400}
+                          step={1}
+                          value={gridSize}
+                          style={sliderFill((gridSize - 4) / (400 - 4), 0, 1)}
+                          onChange={(e) => setGridSize(snapGridToDetent(Number(e.target.value)))}
+                          onDoubleClick={() => setGridSize(40)}
+                        />
+                        <datalist id="tiovivo-grid-detents">
+                          {gridDetents.map((v) => <option key={v} value={v} />)}
+                        </datalist>
+                      </label>
+                      <label className="slider-field" title="Visibility of the grid overlay on top of media. Double-click to reset.">
+                        <span className="slider-field__label">
+                          Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={gridOpacity}
+                          style={sliderFill(gridOpacity, 0, 1)}
+                          onChange={(e) => setGridOpacity(Number(e.target.value))}
+                          onDoubleClick={() => setGridOpacity(0.1)}
+                        />
+                      </label>
+                    </>
+                  )
+                })()}
+                <label className="check">
+                  <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
+                  Center lines
+                </label>
+                <label className="check" title="Dim the area where Instagram's carousel page-dot indicator and on-canvas chrome sit, so you don't put critical text under them.">
+                  <input type="checkbox" checked={showIgSafeArea} onChange={(e) => setShowIgSafeArea(e.target.checked)} />
+                  IG safe area
+                </label>
+                <label className="check" title="Show the pasteboard zone around the slides where off-slide media is clipped.">
+                  <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
+                  Hidden zone
+                </label>
+                <div className="popover__section">Snapping</div>
+                <label className="check">
+                  <input type="checkbox" checked={snapGrid} onChange={(e) => setSnapGrid(e.target.checked)} />
+                  Snap to grid
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={snapCenter} onChange={(e) => setSnapCenter(e.target.checked)} />
+                  Snap to center
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={snapItems} onChange={(e) => setSnapItems(e.target.checked)} />
+                  Snap to other media
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={snapMargins} onChange={(e) => setSnapMargins(e.target.checked)} />
+                  Snap to margins
+                </label>
+                <div className="popover__section">Workspace</div>
+                {(() => {
+                  const isWorkspaceDefault =
+                    !workspaceBgColor || workspaceBgColor.toLowerCase() === WORKSPACE_AUTO
+                  return (
+                    <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, margin: '6px 0 2px' }}>
+                      <span style={{ flex: 1 }}>Pasteboard color</span>
+                      <input
+                        className="color-swatch"
+                        type="color"
+                        value={resolveWorkspaceBg(workspaceBgColor, theme)}
+                        onChange={(e) => setWorkspaceBgColor(e.target.value)}
+                        title="Pasteboard color around the slides"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setWorkspaceBgColor(WORKSPACE_AUTO)}
+                        disabled={isWorkspaceDefault}
+                        title={isWorkspaceDefault ? 'Already following the theme' : 'Reset to follow the theme'}
+                        style={{ padding: '2px 6px', flexDirection: 'row' }}
+                      >
+                        <Icon.Reset style={{ width: 10, height: 10 }} />
+                      </button>
+                    </label>
+                  )
+                })()}
+              </Popover>
+            </div>
           </div>
         </main>
       </div>

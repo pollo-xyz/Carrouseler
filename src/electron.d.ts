@@ -18,6 +18,7 @@ export interface ElectronAPI {
   windowMinimize: () => Promise<void>
   windowMaximizeToggle: () => Promise<void>
   windowClose: () => Promise<void>
+  setTitleOverlay: (colors: { color: string; symbolColor: string }) => Promise<void>
 
   writeFile: (options: {
     path: string

@@ -33,6 +33,8 @@ interface Props {
   onRedo: () => void
   onToggleDevTools: () => void
   onReload: () => void
+  showOutlines: boolean
+  onToggleOutlines: () => void
 }
 
 type OpenMenu = 'file' | 'edit' | 'view' | null
@@ -124,6 +126,12 @@ export default function MenuBar(props: Props) {
 
       {open === 'view' && (
         <div className="menubar__dropdown" style={{ left: 72 }}>
+          <MenuItem
+            label="Show CSS outlines"
+            checked={props.showOutlines}
+            onClick={runAndClose(props.onToggleOutlines)}
+          />
+          <MenuSeparator />
           <MenuItem label="Reload" shortcut="Ctrl+R" onClick={runAndClose(props.onReload)} />
           <MenuItem label="Toggle Developer Tools" shortcut="Ctrl+Shift+I" onClick={runAndClose(props.onToggleDevTools)} />
         </div>
@@ -133,13 +141,14 @@ export default function MenuBar(props: Props) {
 }
 
 function MenuItem({
-  label, shortcut, onClick, disabled, title,
+  label, shortcut, onClick, disabled, title, checked,
 }: {
   label: string
   shortcut?: string
   onClick: () => void
   disabled?: boolean
   title?: string
+  checked?: boolean
 }) {
   return (
     <div
@@ -150,6 +159,9 @@ function MenuItem({
       }}
       title={title}
     >
+      {checked !== undefined && (
+        <span className="menubar__item-check" aria-hidden>{checked ? '✓' : ''}</span>
+      )}
       <span className="menubar__item-label">{label}</span>
       {shortcut && <span className="menubar__item-shortcut">{shortcut}</span>}
     </div>

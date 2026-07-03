@@ -75,14 +75,12 @@ function LayerRow({
 
 export default function LayerStack({
   slideId,
-  slideIndex,
   slideAbsoluteX,
   slideWidth,
   slideHeight,
   slideAbsoluteXBySlideId,
 }: {
   slideId: string
-  slideIndex: number
   slideAbsoluteX: number
   slideWidth: number
   slideHeight: number
@@ -131,18 +129,15 @@ export default function LayerStack({
     reorderSlideLayers(slideId, orderedIds)
   }
 
-  if (slideItems.length === 0) return null
+  if (slideItems.length === 0) {
+    return <p className="layer-stack__empty">Nothing on this slide yet.</p>
+  }
 
   return (
     <div
       onMouseDown={(e) => e.stopPropagation()}
       className="layer-stack"
     >
-      <div
-        className="layer-stack__title"
-      >
-        Layers · Slide {slideIndex + 1}
-      </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={displayItems.map((it) => it.id)} strategy={verticalListSortingStrategy}>
           {displayItems.map((it) => (

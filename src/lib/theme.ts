@@ -67,21 +67,67 @@ function readStored(): ThemeName {
   return 'onyx'
 }
 
+/** Where the theme flip's circular reveal grows from (usually the toggle
+ *  button). Falls back to the top-right corner, where the toggle lives. */
+export interface FlipOrigin {
+  x: number
+  y: number
+}
+
+/* toqe's signature theme flip: the new theme sweeps the screen as a crisp
+   expanding circle from the click point, via the View Transitions API.
+   A crisp clip-path circle is GPU-composited; a feathered mask would
+   raster on the main thread and read as jitter. index.css disables the
+   default cross-fade so only this reveal plays. */
+function flipWithReveal(apply: () => void, origin?: FlipOrigin) {
+  const reduced =
+    typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (typeof document === 'undefined' || !document.startViewTransition || reduced) {
+    apply()
+    return
+  }
+  // Freeze CSS transitions for the flip's duration — the wipe must reveal
+  // the FINISHED new theme, not chrome mid-way through its own 280ms fades.
+  document.documentElement.classList.add('theme-flipping')
+  const t = document.startViewTransition(apply)
+  t.finished.finally(() => document.documentElement.classList.remove('theme-flipping'))
+  t.ready
+    .then(() => {
+      const x = origin?.x ?? window.innerWidth - 90
+      const y = origin?.y ?? 28
+      const end = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y))
+      document.documentElement.animate(
+        { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${end}px at ${x}px ${y}px)`] },
+        {
+          duration: 520,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'forwards',
+          pseudoElement: '::view-transition-new(root)',
+        },
+      )
+    })
+    .catch(() => {
+      /* transition skipped (rapid toggling) — the theme is applied either way */
+    })
+}
+
 interface ThemeState {
   theme: ThemeName
-  setTheme: (t: ThemeName) => void
-  toggleTheme: () => void
+  setTheme: (t: ThemeName, origin?: FlipOrigin) => void
+  toggleTheme: (origin?: FlipOrigin) => void
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
   theme: readStored(),
-  setTheme: (t) => {
-    applyToDom(t)
-    if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, t)
-    set({ theme: t })
+  setTheme: (t, origin) => {
+    flipWithReveal(() => {
+      applyToDom(t)
+      if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, t)
+      set({ theme: t })
+    }, origin)
   },
-  toggleTheme: () => {
-    get().setTheme(get().theme === 'onyx' ? 'cream' : 'onyx')
+  toggleTheme: (origin) => {
+    get().setTheme(get().theme === 'onyx' ? 'cream' : 'onyx', origin)
   },
 }))
 

@@ -6,8 +6,8 @@
  *    by seeded noise) painted with a multi-stop radial gradient.
  *  - `ctx.filter = 'blur(...)'` is applied per blob, scaled relative to a
  *    640 px reference width so the look is consistent across slide sizes.
- *  - Grain is per-pixel ImageData generated fresh each render → no tiling
- *    artifacts, looks like real film grain.
+ *  - Grain is seeded per-pixel ImageData at full output res (cached) → no
+ *    tiling artifacts, looks like real film grain, deterministic per seed.
  *
  * Output is an HTMLCanvasElement that Konva paints directly, so live preview
  * and PNG/MP4 export are pixel-identical.
@@ -24,6 +24,14 @@ export interface BgVibe {
   seed: number
   /** 0–200. Mapped to blur(px) ∝ canvas width. */
   blur: number
+  /** 0–60. Post-composite gaussian blur over the finished blob layer (before
+   *  dither/grain), scaled like `blur`. Unlike the per-blob blur it blends
+   *  *across* blobs: it melts the derivative kinks at radial-gradient stops
+   *  (which read as Mach-band "rings"), blob cut edges, and any residual
+   *  structure. Runs before the output-res dither, so its own 8-bit
+   *  re-quantization gets masked. Optional for backwards compatibility with
+   *  vibes saved before this field existed; missing = 0 (off). */
+  soften?: number
   /** 0–1. Grain strength (alpha multiplier). */
   grain: number
   /** Global multiplier on point/blob radius. 1.0 = original baseR (matches
@@ -73,21 +81,22 @@ const REF_WIDTH = 640
  * against the original for visual comparison without touching anything else.
  *
  * When true:
- *   - Grain is generated at half resolution and `drawImage`-stretched to the
- *     target. ~4× cheaper.
+ *   - Grain is generated at FULL output resolution — per-pixel speckle,
+ *     identical character to the original path (a half-res variant was tried
+ *     and read as visibly softer/coarser).
  *   - The grain canvas is keyed by (w, h, seed, grain) and cached, so the
  *     common slider-drag / colour-picker case is a single `drawImage` call.
  *   - PRNG is mulberry32 seeded from `vibe.seed` so the grain is deterministic
- *     given the cache key (and therefore safe to reuse).
+ *     given the cache key (and therefore safe to reuse) — re-renders and
+ *     exports reproduce the exact same grain instead of re-rolling it.
  */
-const GRAIN_OPTIMISED = false
+const GRAIN_OPTIMISED = true
 
-/* Cached half-res grain canvases keyed by `${w}x${h}|${seed}|${grain}`.
- * Entries are evicted FIFO once the cap is hit — 32 is overkill for typical
- * projects (one or two slide sizes; one seed per slide) and still well under
- * 50 MB of total canvas memory at half-res. */
+/* Cached full-res grain canvases keyed by `${w}x${h}|${seed}|${grain}`.
+ * Entries are evicted FIFO once the cap is hit — full-res RGBA runs ~6 MB per
+ * 1080×1440 slide (more for seamless strips), so the cap is kept small. */
 const grainCache = new Map<string, HTMLCanvasElement>()
-const GRAIN_CACHE_MAX = 32
+const GRAIN_CACHE_MAX = 8
 
 /** mulberry32 — tiny deterministic PRNG. Same seed → same sequence, which is
  *  what makes the grain canvas cacheable. */
@@ -112,16 +121,14 @@ function getCachedGrainCanvas(w: number, h: number, vibe: BgVibe): HTMLCanvasEle
     return hit
   }
 
-  // Half-res: each grain pixel becomes a 2×2 output footprint after the
-  // drawImage stretch, which reads as slightly coarser film grain. Pure
-  // throughput win because we generate ~4× fewer pixel values.
-  const hw = Math.max(2, Math.floor(w / 2))
-  const hh = Math.max(2, Math.floor(h / 2))
+  // Full output resolution — per-pixel speckle, same character as the
+  // original uncached path. The win over that path is purely the cache +
+  // deterministic seed, not a resolution cut.
   const c = document.createElement('canvas')
-  c.width = hw
-  c.height = hh
+  c.width = w
+  c.height = h
   const ctx = c.getContext('2d')!
-  const id = ctx.createImageData(hw, hh)
+  const id = ctx.createImageData(w, h)
   const d = id.data
   const g2 = Math.min(1, vibe.grain)
   const alpha = Math.round(g2 * 75)
@@ -144,6 +151,73 @@ function getCachedGrainCanvas(w: number, h: number, vibe: BgVibe): HTMLCanvasEle
   return c
 }
 
+/* Cached dither-noise tiles keyed by seed. A 512×512 tile repeated across
+ * the canvas is indistinguishable from unique noise (white noise has no
+ * structure to reveal the repeat), costs ~2 MB per seed, and works for any
+ * output size including seamless strips. `pos` holds the positive half of
+ * the signed noise (applied with `lighter`), `neg` the magnitude of the
+ * negative half (applied with `difference`). */
+const DITHER_TILE = 512
+const ditherCache = new Map<number, { pos: HTMLCanvasElement; neg: HTMLCanvasElement }>()
+const DITHER_CACHE_MAX = 8
+
+function getDitherTiles(seed: number): { pos: HTMLCanvasElement; neg: HTMLCanvasElement } {
+  const hit = ditherCache.get(seed)
+  if (hit) {
+    ditherCache.delete(seed)
+    ditherCache.set(seed, hit)
+    return hit
+  }
+
+  const T = DITHER_TILE
+  const rnd = mulberry32(seed * 8191 + 31)
+  // Coarse 4×4-correlated layer — see the dither comment in renderBgVibe.
+  const cw = T >> 2
+  const coarse = new Float32Array(cw * cw)
+  for (let i = 0; i < coarse.length; i++) coarse[i] = (rnd() + rnd() - 1) * 1.5
+
+  const mk = () => {
+    const c = document.createElement('canvas')
+    c.width = T
+    c.height = T
+    return c
+  }
+  const pos = mk()
+  const neg = mk()
+  const pctx = pos.getContext('2d')!
+  const nctx = neg.getContext('2d')!
+  const pid = pctx.createImageData(T, T)
+  const nid = nctx.createImageData(T, T)
+  const pd = pid.data
+  const nd = nid.data
+  let p = 0
+  for (let y = 0; y < T; y++) {
+    const crow = (y >> 2) * cw
+    for (let x = 0; x < T; x++) {
+      const n = (rnd() + rnd() - 1) * 2 + coarse[crow + (x >> 2)]!
+      const a = Math.abs(n)
+      if (n >= 0) {
+        pd[p] = a; pd[p + 1] = a; pd[p + 2] = a
+      } else {
+        nd[p] = a; nd[p + 1] = a; nd[p + 2] = a
+      }
+      pd[p + 3] = 255
+      nd[p + 3] = 255
+      p += 4
+    }
+  }
+  pctx.putImageData(pid, 0, 0)
+  nctx.putImageData(nid, 0, 0)
+
+  const entry = { pos, neg }
+  ditherCache.set(seed, entry)
+  if (ditherCache.size > DITHER_CACHE_MAX) {
+    const oldest = ditherCache.keys().next().value
+    if (oldest !== undefined) ditherCache.delete(oldest)
+  }
+  return entry
+}
+
 export function randomSeed(): number {
   return Math.floor(Math.random() * 99999)
 }
@@ -156,6 +230,7 @@ export function defaultBgVibe(): BgVibe {
     pointCount: Math.min(6, p.colors.length),
     seed: randomSeed(),
     blur: 30,
+    soften: 0,
     grain: 0.16,
     size: 1,
     randomSize: false,
@@ -197,29 +272,32 @@ export function bgVibePoints(vibe: BgVibe): { x: number; y: number; color: strin
  * Render a vibe into `target`, sized to (w, h).
  *
  * Pipeline:
- *  1. Draw blobs onto an internal low-res canvas (short side ≈ 480 px) for
- *     speed — the heavy per-blob filter-blur dominates cost at full res.
- *  2. Upscale to (w, h). Bilinear interpolation softens minor low-res artifacts.
- *  3. Generate per-pixel ImageData grain at full output res — no tiling. This
- *     is the expensive pass (~30 ms at 1080×1350) but only runs when the
- *     vibe params actually change.
+ *  1. Draw blobs onto an internal canvas (short side capped at 960 px) —
+ *     the heavy per-blob filter-blur dominates cost at full res.
+ *  2. Upscale to (w, h) — at most ~1.1× for a 1080-wide slide, so
+ *     quantization steps aren't magnified into contour bands.
+ *  3. Seeded two-scale dither at output res to break 8-bit gradient banding.
+ *  4. Overlay-composite grain (cached, seeded — see GRAIN_OPTIMISED).
  */
 export function renderBgVibe(
   target: HTMLCanvasElement,
   vibe: BgVibe,
   w: number,
   h: number,
-  opts: { dither?: boolean } = {},
 ): void {
   target.width = w
   target.height = h
   const ctx = target.getContext('2d')
   if (!ctx) return
 
-  // Internal canvas — 480 px short side keeps the blur cost low without
-  // losing visual fidelity (output upscale blurs further).
-  const SHORT_TARGET = 480
-  const scale = SHORT_TARGET / Math.max(1, Math.min(w, h))
+  // Internal canvas — capped at a 960 px short side. Small targets
+  // (thumbnails) render at native size; big ones upscale at most ~1.1× for a
+  // 1080-wide slide. The previous 480 px cap produced a 2.25×+ bilinear
+  // upscale that magnified 8-bit gradient quantization into wide contour
+  // bands (measured plateaus up to ~220 px of a single colour level) and a
+  // streaky "brushed" texture from the low-res filter blur.
+  const SHORT_TARGET = 960
+  const scale = Math.min(1, SHORT_TARGET / Math.max(1, Math.min(w, h)))
   const iw = Math.max(64, Math.round(w * scale))
   const ih = Math.max(64, Math.round(h * scale))
   const lo = document.createElement('canvas')
@@ -242,7 +320,10 @@ export function renderBgVibe(
   const sizeMul = vibe.size ?? 1
   const baseR = (minDim * 200 * sizeMul) / 450
   // Blur scales with canvas width relative to BLUR's reference (640 px).
-  const blurPx = vibe.blur * (iw / REF_WIDTH)
+  // Floored at ~0.5% of the canvas width: the blob polygon cuts each radial
+  // gradient at ~13–20% alpha, so with zero blur every blob shows a hard rim
+  // mid-fade. A few px of feather keeps low-blur blobs crisp but not aliased.
+  const blurPx = Math.max(vibe.blur * (iw / REF_WIDTH), iw * 0.005)
 
   // Paint order — default is palette order. With randomLayer on, blobs
   // 1..N-1 are seed-shuffled via Fisher-Yates, but blob 0 (palette[0]) is
@@ -320,31 +401,77 @@ export function renderBgVibe(
     lctx.restore()
   }
 
-  // Dither — opt-in pass to break 8-bit gradient quantization on the low-res
-  // blob canvas before upscaling. Smooth radial gradients posterize to a few
-  // hundred distinct values per channel; bilinear upscale then magnifies each
-  // flat step into a visible contour band that shifts as blur changes. Bands
-  // are only visible at large upscale ratios — specifically the wide seamless
-  // strip where the same SHORT_TARGET internal canvas is stretched across
-  // N slides. Single-slide rendering is band-free without this pass and
-  // adding noise there only makes it look subtly worse, so the caller passes
-  // `dither: true` solely for the seamless-strip path.
-  if (opts.dither) {
-    const did = lctx.getImageData(0, 0, iw, ih)
-    const dd = did.data
-    for (let p = 0; p < dd.length; p += 4) {
-      const n = (Math.random() - 0.5) * 4
-      dd[p] = dd[p]! + n
-      dd[p + 1] = dd[p + 1]! + n
-      dd[p + 2] = dd[p + 2]! + n
+  // Soften — optional post-composite gaussian over the whole blob layer.
+  // Where the per-blob blur softens each blob in isolation, this blends
+  // *between* them: it removes the slope discontinuities at radial-gradient
+  // stops (perceived as Mach-band rings even when the values are smooth),
+  // low-blur cut edges, and any residual structure. It runs before the
+  // output-res dither below, so the re-quantization a blur inevitably
+  // produces on an 8-bit canvas is dithered away rather than re-banding.
+  // Edge handling: a naive filter-blur pulls transparency in from outside
+  // the canvas and paints a washed-out vignette rim, so we blur an
+  // edge-extended copy (a stretched fill behind an exact copy) and crop the
+  // centre back out.
+  const soften = vibe.soften ?? 0
+  if (soften > 0.01) {
+    const sPx = soften * (iw / REF_WIDTH)
+    const pad = Math.ceil(sPx * 3) + 2
+    const ext = document.createElement('canvas')
+    ext.width = iw + pad * 2
+    ext.height = ih + pad * 2
+    const ectx = ext.getContext('2d')
+    const soft = document.createElement('canvas')
+    soft.width = ext.width
+    soft.height = ext.height
+    const sctx = soft.getContext('2d')
+    if (ectx && sctx) {
+      ectx.drawImage(lo, 0, 0, ext.width, ext.height)
+      ectx.drawImage(lo, pad, pad)
+      sctx.filter = `blur(${sPx}px)`
+      sctx.drawImage(ext, 0, 0)
+      sctx.filter = 'none'
+      lctx.drawImage(soft, pad, pad, iw, ih, 0, 0, iw, ih)
     }
-    lctx.putImageData(did, 0, 0)
   }
 
   // Upscale — bilinear interp softens any residual low-res character.
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(lo, 0, 0, w, h)
+
+  // Dither — break 8-bit gradient quantization. Smooth radial gradients
+  // posterize to a few hundred distinct values per channel, which reads as
+  // contour banding on slow ramps — worst in dark / low-chroma palettes,
+  // where the eye resolves single-level steps and the grain overlay barely
+  // registers (`overlay` on near-black multiplies toward zero). Details:
+  //   - Runs at OUTPUT resolution, after the upscale: noise added before the
+  //     upscale gets partially averaged away by bilinear interpolation and
+  //     the bands re-emerge.
+  //   - Fine ±2 triangular (TPDF) noise per pixel masks steps at 1:1/export;
+  //     a coarse 4×4-correlated ±1.5 TPDF layer survives the editor's
+  //     zoomed-out downscale, where per-pixel noise is filtered out and the
+  //     display's 8-bit requantization would re-band. Together they stay
+  //     below the visibility threshold on flat colour.
+  //   - Applied as two GPU composites of a cached seeded noise tile
+  //     (`lighter` adds the positive half, `difference` subtracts the
+  //     negative half) — a getImageData round-trip here costs ~250 ms per
+  //     render because it forces a GPU sync; the tile passes cost ~2 ms.
+  //     `difference` mirrors instead of clamping below black, but the error
+  //     is bounded by the noise amplitude on pixels within ~4 levels of
+  //     black — invisible.
+  //   - Seeded so re-renders don't shimmer while the user drags an
+  //     unrelated slider, and exports reproduce the editor exactly.
+  {
+    const { pos, neg } = getDitherTiles(vibe.seed)
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.fillStyle = ctx.createPattern(pos, 'repeat')!
+    ctx.fillRect(0, 0, w, h)
+    ctx.globalCompositeOperation = 'difference'
+    ctx.fillStyle = ctx.createPattern(neg, 'repeat')!
+    ctx.fillRect(0, 0, w, h)
+    ctx.restore()
+  }
 
   // Grain — overlay-composited noise. Two paths:
   //   GRAIN_OPTIMISED=true  → half-res, seeded PRNG, cached by (w,h,seed,grain)
@@ -355,9 +482,7 @@ export function renderBgVibe(
       const gc = getCachedGrainCanvas(w, h, vibe)
       ctx.save()
       ctx.globalCompositeOperation = 'overlay'
-      // Stretch the half-res grain to fit. Bilinear interp softens the
-      // 2× upscale into something visually equivalent to a coarse film grain.
-      ctx.drawImage(gc, 0, 0, w, h)
+      ctx.drawImage(gc, 0, 0)
       ctx.restore()
     } else {
       const g2 = Math.min(1, vibe.grain)
@@ -385,10 +510,10 @@ export function renderBgVibe(
 }
 
 /** Cache key — any change here invalidates the cached canvas. */
-export function bgVibeHash(vibe: BgVibe, w: number, h: number, opts: { dither?: boolean } = {}): string {
+export function bgVibeHash(vibe: BgVibe, w: number, h: number): string {
   const rs = vibe.randomSize ? 1 : 0
   const rl = vibe.randomLayer ? 1 : 0
   const sz = (vibe.size ?? 1).toFixed(2)
-  const d = opts.dither ? 1 : 0
-  return `${w}x${h}|${vibe.seed}|${vibe.pointCount}|${vibe.blur.toFixed(2)}|${vibe.grain.toFixed(3)}|${sz}|${vibe.bgColor}|${rs}${rl}${d}|${vibe.palette.join(',')}`
+  const so = (vibe.soften ?? 0).toFixed(1)
+  return `${w}x${h}|${vibe.seed}|${vibe.pointCount}|${vibe.blur.toFixed(2)}|${so}|${vibe.grain.toFixed(3)}|${sz}|${rs}${rl}|${vibe.palette.join(',')}`
 }

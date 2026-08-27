@@ -8,10 +8,7 @@
  * onnxruntime-web (WASM today, WebGPU on supported machines). No bytes
  * leave the user's machine.
  */
-import {
-  removeBackground as imglyRemoveBackground,
-  type Config,
-} from '@imgly/background-removal'
+import type { Config } from '@imgly/background-removal'
 
 export interface RemoveBgProgress {
   /** Identifier of the current phase ("fetch:model", "compute:inference", …). */
@@ -69,6 +66,10 @@ export async function removeBackground(
       options.onProgress!({ phase, loaded, total })
     }
   }
+  // Dynamic import — the library's JS is a few hundred KB and pulls in the
+  // onnxruntime loader; nobody should pay for that at app startup when it's
+  // only needed the moment a Remove-background button is pressed.
+  const { removeBackground: imglyRemoveBackground } = await import('@imgly/background-removal')
   const raw = await imglyRemoveBackground(source, config)
   if (mode !== 'illustration') return raw
   return hardenAlpha(raw, options.alphaThreshold ?? 128)

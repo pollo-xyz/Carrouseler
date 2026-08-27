@@ -13,7 +13,7 @@ export function ToastHost() {
   return (
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast toast--${t.kind}`}>
+        <div key={t.id} className={`toast toast--${t.kind}${t.leaving ? ' toast--leaving' : ''}`}>
           <span className="toast__icon" aria-hidden>{KIND_ICON[t.kind]}</span>
           <span className="toast__msg">{t.message}</span>
           <button

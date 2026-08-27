@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import EditorStage, { type EditorStageHandle, ARTBOARD_GAP } from './components/EditorStage'
-import LayerStack from './components/LayerStack'
+import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import NumberField from './components/NumberField'
 import MenuBar from './components/MenuBar'
 import FontPicker from './components/FontPicker'
 import GifPicker from './components/GifPicker'
 import { downloadGif, type GiphyItem } from './lib/giphy'
 import { ToastHost, ConfirmHost } from './components/FeedbackHosts'
-import { LicensePill, LicenseGate } from './components/LicenseGate'
+import { TipHost } from './components/TipHost'
+import { Neaticon } from './components/Neaticon'
+import SlideStrip from './components/SlideStrip'
 import { toast, dismissToast, confirmDialog } from './lib/feedback'
 import { useThemeStore, resolveWorkspaceBg, WORKSPACE_AUTO } from './lib/theme'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
@@ -47,106 +48,33 @@ function sanitizeFilenameSegment(name: string): string {
 }
 
 /* ============================================================
-   Tiny inline icon set — keeps bundle small, tunable with CSS
+   Icon set — NeatIcons Pro (the same licensed library toqe uses),
+   inlined via <Neaticon>. Call sites keep the Icon.X names.
    ============================================================ */
+const ni = (name: string) =>
+  function NeaticonGlyph(p: React.SVGProps<SVGSVGElement>) {
+    return <Neaticon name={name} {...p} />
+  }
 const Icon = {
-  Export: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M12 4v12" />
-      <path d="M7 9l5-5 5 5" />
-      <path d="M5 20h14" />
-    </svg>
-  ),
-  Plus: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  ),
-  Grid: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-    </svg>
-  ),
-  Sliders: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <line x1="4" y1="21" x2="4" y2="14" />
-      <line x1="4" y1="10" x2="4" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="12" />
-      <line x1="12" y1="8" x2="12" y2="3" />
-      <line x1="20" y1="21" x2="20" y2="16" />
-      <line x1="20" y1="12" x2="20" y2="3" />
-      <line x1="1" y1="14" x2="7" y2="14" />
-      <line x1="9" y1="8" x2="15" y2="8" />
-      <line x1="17" y1="16" x2="23" y2="16" />
-    </svg>
-  ),
-  Target: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="2" fill="currentColor" />
-    </svg>
-  ),
-  Trash: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M3 6h18" />
-      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-    </svg>
-  ),
-  Reset: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <path d="M3 4v5h5" />
-    </svg>
-  ),
-  Text: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M5 4h14" />
-      <path d="M12 4v16" />
-      <path d="M9 20h6" />
-    </svg>
-  ),
-  Shape: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <rect x="3" y="3" width="11" height="11" rx="2" />
-      <circle cx="16" cy="16" r="5" />
-    </svg>
-  ),
-  Gif: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="M9 9.5h-2.5a1 1 0 0 0-1 1V13a1 1 0 0 0 1 1H9v-2H8.25" />
-      <path d="M12 9.5v5" />
-      <path d="M18.5 9.5H15v5M15 12h2.5" />
-    </svg>
-  ),
-  Eye: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  ),
-  Layers: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M12 2l10 6-10 6L2 8l10-6z" />
-      <path d="M2 16l10 6 10-6" />
-    </svg>
-  ),
-  Slide: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <rect x="4" y="5" width="16" height="14" rx="2" />
-      <path d="M4 16l5-5 4 4 3-3 4 4" />
-    </svg>
-  ),
-  Link: (p: React.SVGProps<SVGSVGElement>) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
-      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5" />
-      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5" />
-    </svg>
-  ),
+  Export: ni('upload'),
+  Plus: ni('plus'),
+  Grid: ni('grid-nine-cell'),
+  Sliders: ni('filter-2'),
+  Palette: ni('paint-palette'),
+  Target: ni('crosshair'),
+  Trash: ni('trash'),
+  Reset: ni('arrow-rotate-left-2'),
+  Text: ni('short-paragraph-1'),
+  Shape: ni('category-basic-shapes'),
+  Gif: ni('play-circle'),
+  Eye: ni('eye'),
+  EyeOff: ni('eye-disable'),
+  Layers: ni('layers.to'),
+  Slide: ni('rectangle-repeat'),
+  Link: ni('link-1'),
+  Sun: ni('sun'),
+  Moon: ni('moon-sparkle'),
+  // The library has no "unlink" — keep the slashed chain as a line glyph.
   LinkOff: (p: React.SVGProps<SVGSVGElement>) => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...p}>
       <path d="M10 13a5 5 0 0 0 7.07 0l1-1" />
@@ -288,6 +216,7 @@ function BackgroundPanel({
             palette: vibe.palette,
             pointCount: vibe.pointCount,
             blur: vibe.blur,
+            soften: vibe.soften ?? 0,
             grain: vibe.grain,
             size: vibe.size ?? 1,
             randomSize: vibe.randomSize ?? false,
@@ -299,6 +228,7 @@ function BackgroundPanel({
               palette: d.palette,
               pointCount: d.pointCount,
               blur: d.blur,
+              soften: d.soften ?? 0,
               grain: d.grain,
               size: d.size ?? 1,
               randomSize: d.randomSize ?? false,
@@ -553,7 +483,7 @@ function BackgroundPanel({
             <div className="palette-actions">
               <button
                 type="button"
-                className="btn btn--outline btn--sm"
+                className="btn btn--sm"
                 onClick={savePaletteAsCustom}
                 title="Save the current palette so it's available in every project"
               >
@@ -561,7 +491,7 @@ function BackgroundPanel({
               </button>
               <button
                 type="button"
-                className="btn btn--outline btn--sm"
+                className="btn btn--sm"
                 onClick={async () => {
                   if (!selectedMediaItem) return
                   // First click on this item = canonical (seed 0); each
@@ -735,6 +665,25 @@ function BackgroundPanel({
               onDoubleClick={() => apply({ blur: 80 })}
             />
           </label>
+          {/* Post-composite gaussian across the whole background — where Blur
+              softens each blob individually, Soften blends between them,
+              melting gradient-stop rings, hard blob edges and any remaining
+              band-like structure. */}
+          <label className="slider-field" title="Blur the finished background as a whole — smooths blob transitions and removes any remaining banding-like rings.">
+            <span className="slider-field__label">
+              Soften<span className="slider-field__value">{Math.round(config.soften ?? 0)}</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={60}
+              step={1}
+              value={config.soften ?? 0}
+              style={sliderFill(config.soften ?? 0, 0, 60)}
+              onChange={(e) => apply({ soften: Number(e.target.value) })}
+              onDoubleClick={() => apply({ soften: 0 })}
+            />
+          </label>
           <label className="slider-field">
             <span className="slider-field__label">
               Grain<span className="slider-field__value">{Math.round(config.grain * 100)}%</span>
@@ -775,22 +724,22 @@ function BackgroundPanel({
           <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
             <button
               type="button"
-              className="btn btn--outline"
+              className="btn"
               onClick={() => randomizeAllSlideVibes()}
               title="Reroll point positions on every slide"
               style={{ flex: 1, flexDirection: 'row', gap: 6, padding: '6px 10px', justifyContent: 'center' }}
             >
-              <Icon.Reset style={{ width: 12, height: 12 }} />
+              <Icon.Reset style={{ width: 13, height: 13 }} />
               Randomize all
             </button>
             <button
               type="button"
-              className="btn btn--outline"
+              className="btn"
               onClick={() => randomizeSlideVibe(activeSlideId)}
               title="Reroll point positions on the active slide only"
               style={{ flex: 1, flexDirection: 'row', gap: 6, padding: '6px 10px', justifyContent: 'center' }}
             >
-              <Icon.Reset style={{ width: 12, height: 12 }} />
+              <Icon.Reset style={{ width: 13, height: 13 }} />
               This slide
             </button>
           </div>
@@ -850,7 +799,7 @@ function RemoveBgButton({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
       <button
         type="button"
-        className="btn btn--outline btn--sm"
+        className="btn btn--sm"
         onClick={() => void run()}
         disabled={busy}
         style={{ alignSelf: 'stretch', gap: 6, flexDirection: 'row', justifyContent: 'center' }}
@@ -1058,9 +1007,6 @@ export default function App() {
   const setSnapMargins = useTiovivoStore((s) => s.setSnapMargins)
   const setSlideName = useTiovivoStore((s) => s.setSlideName)
   const setSlideExport = useTiovivoStore((s) => s.setSlideExport)
-  const setSlideBgColor = useTiovivoStore((s) => s.setSlideBgColor)
-  const duplicateSlide = useTiovivoStore((s) => s.duplicateSlide)
-  const removeSlide = useTiovivoStore((s) => s.removeSlide)
   const setAllSlidesBgVibe = useTiovivoStore((s) => s.setAllSlidesBgVibe)
   const setSlideBgVibe = useTiovivoStore((s) => s.setSlideBgVibe)
   const randomizeAllSlideVibes = useTiovivoStore((s) => s.randomizeAllSlideVibes)
@@ -1749,14 +1695,6 @@ export default function App() {
   /* ---- Active slide (drives the inspector's Slide sheet + Layers) ---- */
   const activeSlide = activeSlideIndex >= 0 ? slides[activeSlideIndex] : undefined
 
-  /* Mirror of the canvas artboard X layout for the docked Layers panel.
-     Pasteboard padding cancels out of LayerStack's overlap math, so a
-     pad-less i × (W + gap) reproduces EditorStage's positions exactly. */
-  const slideAbsoluteXBySlideId = useMemo(() => {
-    const gap = seamlessSlides ? 0 : ARTBOARD_GAP
-    return new Map(slides.map((s, i) => [s.id, i * (dimensions.width + gap)]))
-  }, [slides, seamlessSlides, dimensions.width])
-
   /* ---- Text selection (for properties panel) ---- */
   const selectedTextItem: PlacedMedia | null = useMemo(() => {
     if (selectedIds.length !== 1) return null
@@ -1802,46 +1740,192 @@ export default function App() {
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
 
+  /* View cluster — header controls for how the canvas is DISPLAYED, not
+     what's in the document: Preview hides editor chrome; the View popover
+     holds grid, guides, snapping and the workspace color. Lives in the
+     header beside the theme toggle. */
+  const viewCluster = (
+    <div className="popover-host app__view-cluster">
+      <button
+        type="button"
+        className={`hdr-icon ${previewMode ? 'hdr-icon--on' : ''}`}
+        onClick={() => setPreviewMode(!previewMode)}
+        title={previewMode ? 'Preview ON — click to show editor chrome' : 'Hide grids, guides, dividers and warnings to preview as it will export'}
+        aria-pressed={previewMode}
+      >
+        {previewMode
+          ? <Icon.EyeOff style={{ width: 16, height: 16 }} />
+          : <Icon.Eye style={{ width: 16, height: 16 }} />}
+      </button>
+      <button
+        type="button"
+        className={`btn ${viewOpen ? 'btn--seg-active' : ''}`}
+        onClick={() => setViewOpen((v) => !v)}
+        title="Grid, guides, snapping and workspace color"
+        aria-expanded={viewOpen}
+      >
+        View
+      </button>
+      <Popover open={viewOpen} onClose={() => setViewOpen(false)} alignRight width={264}>
+                <div className="popover__section">Overlays</div>
+                <label className="check">
+                  <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
+                  Grid
+                </label>
+                {showGrid && (() => {
+                  // Detents snap to values that evenly divide the slide; show a
+                  // tiny readout describing what the current size produces.
+                  const dividesW = dimensions.width % gridSize === 0
+                  const dividesH = dimensions.height % gridSize === 0
+                  const cols = dividesW ? dimensions.width / gridSize : null
+                  const rows = dividesH ? dimensions.height / gridSize : null
+                  let badge: string
+                  if (cols !== null && rows !== null) badge = `${cols} × ${rows}`
+                  else if (cols !== null) badge = `${cols} cols`
+                  else if (rows !== null) badge = `${rows} rows`
+                  else badge = 'off-grid'
+                  return (
+                    <>
+                      <label
+                        className="slider-field"
+                        title="Cell size in px. The slider snaps to values that produce a whole number of grid cells across the slide (the small ticks). Hold Shift while dragging to bypass snapping; double-click to reset."
+                      >
+                        <span className="slider-field__label">
+                          Grid size
+                          <span className="slider-field__value">{gridSize} px · {badge}</span>
+                        </span>
+                        <input
+                          type="range"
+                          list="tiovivo-grid-detents"
+                          min={4}
+                          max={400}
+                          step={1}
+                          value={gridSize}
+                          style={sliderFill((gridSize - 4) / (400 - 4), 0, 1)}
+                          onChange={(e) => setGridSize(snapGridToDetent(Number(e.target.value)))}
+                          onDoubleClick={() => setGridSize(40)}
+                        />
+                        <datalist id="tiovivo-grid-detents">
+                          {gridDetents.map((v) => <option key={v} value={v} />)}
+                        </datalist>
+                      </label>
+                      <label className="slider-field" title="Visibility of the grid overlay on top of media. Double-click to reset.">
+                        <span className="slider-field__label">
+                          Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={gridOpacity}
+                          style={sliderFill(gridOpacity, 0, 1)}
+                          onChange={(e) => setGridOpacity(Number(e.target.value))}
+                          onDoubleClick={() => setGridOpacity(0.1)}
+                        />
+                      </label>
+                    </>
+                  )
+                })()}
+                <label className="check">
+                  <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
+                  Center lines
+                </label>
+                <label className="check" title="Dim the area where Instagram's carousel page-dot indicator and on-canvas chrome sit, so you don't put critical text under them.">
+                  <input type="checkbox" checked={showIgSafeArea} onChange={(e) => setShowIgSafeArea(e.target.checked)} />
+                  IG safe area
+                </label>
+                <label className="check" title="Show the pasteboard zone around the slides where off-slide media is clipped.">
+                  <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
+                  Hidden zone
+                </label>
+                <div className="popover__section">Snapping</div>
+                <label className="check">
+                  <input type="checkbox" checked={snapGrid} onChange={(e) => setSnapGrid(e.target.checked)} />
+                  Snap to grid
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={snapCenter} onChange={(e) => setSnapCenter(e.target.checked)} />
+                  Snap to center
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={snapItems} onChange={(e) => setSnapItems(e.target.checked)} />
+                  Snap to other media
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={snapMargins} onChange={(e) => setSnapMargins(e.target.checked)} />
+                  Snap to margins
+                </label>
+                <div className="popover__section">Workspace</div>
+                {(() => {
+                  const isWorkspaceDefault =
+                    !workspaceBgColor || workspaceBgColor.toLowerCase() === WORKSPACE_AUTO
+                  return (
+                    <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, margin: '6px 0 2px' }}>
+                      <span style={{ flex: 1 }}>Pasteboard color</span>
+                      <input
+                        className="color-swatch"
+                        type="color"
+                        value={resolveWorkspaceBg(workspaceBgColor, theme)}
+                        onChange={(e) => setWorkspaceBgColor(e.target.value)}
+                        title="Pasteboard color around the slides"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => setWorkspaceBgColor(WORKSPACE_AUTO)}
+                        disabled={isWorkspaceDefault}
+                        title={isWorkspaceDefault ? 'Already following the theme' : 'Reset to follow the theme'}
+                        style={{ padding: '2px 6px', flexDirection: 'row' }}
+                      >
+                        <Icon.Reset style={{ width: 13, height: 13 }} />
+                      </button>
+                    </label>
+                  )
+                })()}
+      </Popover>
+    </div>
+  )
+
   return (
     <div className={`app${showOutlines ? ' app--outline-debug' : ''}`}>
       <ToastHost />
       <ConfirmHost />
-      {/* Desktop-only blocking overlay once the trial is over; a no-op on
-          the free web tier and while licensed. */}
-      <LicenseGate />
-      {/* In-app menu bar for Windows / Linux. CSS hides it on macOS — Mac
-          uses the native menu strip at the top of the screen instead. */}
-      <MenuBar
-        recents={recents}
-        onNew={handleNew}
-        onOpen={handleOpen}
-        onOpenRecent={(p) => {
-          // Main reads the file and sends app:open-project-file back to us;
-          // loadFromBuffer is wired to that channel via the existing useEffect.
-          window.electronAPI?.openRecent(p)
-        }}
-        onClearRecents={() => {
-          void window.electronAPI?.clearRecents()
-          setRecents([])
-        }}
-        onSave={() => { void handleSave(false) }}
-        onSaveAs={() => { void handleSave(true) }}
-        onUndo={() => useTiovivoStore.getState().undo()}
-        onRedo={() => useTiovivoStore.getState().redo()}
-        onReload={() => location.reload()}
-        showOutlines={showOutlines}
-        onToggleOutlines={() => setShowOutlines((v) => !v)}
-        onToggleDevTools={() => {
-          // No IPC for this yet; rely on the F12 / Ctrl+Shift+I native
-          // accelerator Chromium still honours. The menu item exists as a
-          // discoverability hint.
-        }}
-      />
+      <TipHost />
       <header className="app__header">
+        {/* Brand mark — icon only, leftmost. */}
         <div className="app__brand">
-          <img className="app__brand-mark" src={appIconUrl} alt="" aria-hidden />
-          <span className="app__brand-title">Tiovivo</span>
+          <img className="app__brand-mark" src={appIconUrl} alt="Tiovivo" />
         </div>
+        {/* In-app menus for Windows / Linux — right after the mark (one
+            chrome strip, not two). CSS hides them on macOS, where the
+            native menu bar at the top of the screen takes over. */}
+        <MenuBar
+          recents={recents}
+          onNew={handleNew}
+          onOpen={handleOpen}
+          onOpenRecent={(p) => {
+            // Main reads the file and sends app:open-project-file back to us;
+            // loadFromBuffer is wired to that channel via the existing useEffect.
+            window.electronAPI?.openRecent(p)
+          }}
+          onClearRecents={() => {
+            void window.electronAPI?.clearRecents()
+            setRecents([])
+          }}
+          onSave={() => { void handleSave(false) }}
+          onSaveAs={() => { void handleSave(true) }}
+          onUndo={() => useTiovivoStore.getState().undo()}
+          onRedo={() => useTiovivoStore.getState().redo()}
+          onReload={() => location.reload()}
+          showOutlines={showOutlines}
+          onToggleOutlines={() => setShowOutlines((v) => !v)}
+          onToggleDevTools={() => {
+            // No IPC for this yet; rely on the F12 / Ctrl+Shift+I native
+            // accelerator Chromium still honours. The menu item exists as a
+            // discoverability hint.
+          }}
+        />
         <div className="app__brand-sep" aria-hidden />
         {/* Format — chosen once per project, so it's one chip. Presets,
             custom W/H and the aspect lock live in its popover. */}
@@ -1931,8 +2015,8 @@ export default function App() {
                 aria-pressed={lockAspect}
               >
                 {lockAspect
-                  ? <Icon.Link style={{ width: 12, height: 12 }} />
-                  : <Icon.LinkOff style={{ width: 12, height: 12 }} />}
+                  ? <Icon.Link style={{ width: 13, height: 13 }} />
+                  : <Icon.LinkOff style={{ width: 13, height: 13 }} />}
               </button>
             </div>
           </Popover>
@@ -1960,26 +2044,19 @@ export default function App() {
           </button>
         </div>
         <div className="app__spacer" />
-        {/* Subscription chip — trial countdown on desktop, Upgrade on the
-            free web tier, quiet Pro chip when licensed. Opens the license
-            dialog (activate / manage / deactivate). */}
-        <LicensePill />
-        {/* Theme toggle — dark ⇄ light, persisted across sessions. */}
+        {viewCluster}
+        {/* Theme toggle — dark ⇄ light, persisted across sessions. The new
+            theme sweeps in as a circle growing from the click point. */}
         <button
           type="button"
-          className="app__aspect-lock"
-          onClick={toggleTheme}
+          className="hdr-icon"
+          onClick={(e) => toggleTheme({ x: e.clientX, y: e.clientY })}
           title={theme === 'onyx' ? 'Switch to Cream (light) theme' : 'Switch to Onyx (dark) theme'}
         >
           {theme === 'onyx' ? (
-            <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-            </svg>
+            <Icon.Sun style={{ width: 16, height: 16 }} />
           ) : (
-            <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-            </svg>
+            <Icon.Moon style={{ width: 16, height: 16 }} />
           )}
         </button>
         {/* Export — the CTA opens a popover with everything that only
@@ -2660,7 +2737,7 @@ export default function App() {
                     else if (singleId) removeItem(singleId)
                   }}
                 >
-                  <Icon.Trash style={{ width: 11, height: 11 }} />
+                  <Icon.Trash style={{ width: 13, height: 13 }} />
                   {count > 1 ? `Remove ${count} items` : singleRemoveLabel}
                 </button>
               </div>
@@ -2691,16 +2768,10 @@ export default function App() {
                     title="Slide name — shows on the canvas label and (optionally) in export filenames"
                   />
                 </label>
-                <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <span style={{ flex: 1 }}>Background color</span>
-                  <input
-                    className="color-swatch"
-                    type="color"
-                    value={activeSlide.bgColor || '#ffffff'}
-                    onChange={(e) => setSlideBgColor(activeSlide.id, e.target.value)}
-                  />
-                  <span className="field__value">{activeSlide.bgColor || '#ffffff'}</span>
-                </label>
+                {/* Just name + export membership: background color lives in
+                    the chip under the artboard and the Background panel,
+                    duplicate/remove on the canvas label and deck — one home
+                    per verb, not three. */}
                 <label className="check" title="Off = this slide is skipped by Export. Also toggleable from the slide's canvas label.">
                   <input
                     type="checkbox"
@@ -2709,46 +2780,6 @@ export default function App() {
                   />
                   Include in export
                 </label>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                  <button
-                    type="button"
-                    className="btn btn--outline btn--sm"
-                    style={{ flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center' }}
-                    onClick={() => duplicateSlide(activeSlide.id)}
-                    title="Duplicate this slide and everything on it"
-                  >
-                    Duplicate
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--danger btn--sm"
-                    style={{ flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center' }}
-                    onClick={() => removeSlide(activeSlide.id)}
-                    disabled={slides.length <= 1}
-                    title={slides.length <= 1 ? 'The last slide can\'t be removed' : 'Remove this slide'}
-                  >
-                    <Icon.Trash style={{ width: 11, height: 11 }} />
-                    Remove
-                  </button>
-                </div>
-              </div>
-            </details>
-          )}
-
-          {/* LAYERS — z-order of the active slide, docked (no more floating
-              stacks under every artboard). Drag to reorder; top row = top
-              of the stack. */}
-          {activeSlide && (
-            <details className="collapsible" open>
-              <summary><h2><Icon.Layers />Layers</h2></summary>
-              <div className="collapsible__body">
-                <LayerStack
-                  slideId={activeSlide.id}
-                  slideAbsoluteX={slideAbsoluteXBySlideId.get(activeSlide.id) ?? 0}
-                  slideWidth={dimensions.width}
-                  slideHeight={dimensions.height}
-                  slideAbsoluteXBySlideId={slideAbsoluteXBySlideId}
-                />
               </div>
             </details>
           )}
@@ -2757,7 +2788,7 @@ export default function App() {
               the inspector (shown whenever it fits under the selection
               panels; "Sample from Media" still sees the live selection). */}
           <details className="collapsible" open>
-            <summary><h2><Icon.Sliders />Background</h2></summary>
+            <summary><h2><Icon.Palette />Background</h2></summary>
             <div className="collapsible__body">
               <BackgroundPanel
                 slides={slides}
@@ -2773,64 +2804,6 @@ export default function App() {
 
         </aside>
 
-        {/* LEFT — tool rail. Four insert tools, used constantly, needing
-            almost no space. The canvas itself is the slide navigator
-            (labels select/rename/reorder/delete; "+" buttons add), so
-            there is no left sidebar anymore. */}
-        <aside className="app__toolrail">
-          <input
-            ref={addMediaInputRef}
-            type="file"
-            multiple
-            accept="image/*,video/*"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const files = e.target.files
-              onFiles(files)
-              if (e.target) e.target.value = ''
-            }}
-          />
-          <button
-            type="button"
-            className="toolrail__btn"
-            onClick={() => addMediaInputRef.current?.click()}
-            title="Add media — images or videos"
-          >
-            <Icon.Plus />
-          </button>
-          <button
-            type="button"
-            className="toolrail__btn"
-            onClick={onAddText}
-            title="Add a text layer"
-          >
-            <Icon.Text />
-          </button>
-          <button
-            type="button"
-            className="toolrail__btn"
-            onClick={() => addShape('rect')}
-            title="Add a shape — rectangle by default; switch kind in the Shape panel"
-          >
-            <Icon.Shape />
-          </button>
-          <button
-            ref={gifPickerAnchorRef}
-            type="button"
-            className={`toolrail__btn${gifPickerOpen ? ' toolrail__btn--active' : ''}`}
-            onClick={() => setGifPickerOpen((v) => !v)}
-            title="Add a GIF from Giphy"
-          >
-            <Icon.Gif />
-          </button>
-          <GifPicker
-            open={gifPickerOpen}
-            onClose={() => setGifPickerOpen(false)}
-            onPick={handleGifPick}
-            anchorRef={gifPickerAnchorRef}
-          />
-        </aside>
-
         <main className="app__main">
           <div
             className="app__canvas-host"
@@ -2841,6 +2814,64 @@ export default function App() {
             onDragOver={onCanvasDragOver}
             onDrop={onCanvasDrop}
           >
+            {/* Insert tools — a floating glass toolbar on the canvas's left
+                edge (the originally-planned home). The canvas keeps its full
+                width; hidden in preview mode like all editor chrome. */}
+            <input
+              ref={addMediaInputRef}
+              type="file"
+              multiple
+              accept="image/*,video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const files = e.target.files
+                onFiles(files)
+                if (e.target) e.target.value = ''
+              }}
+            />
+            {!previewMode && (
+              <div className="canvas-tools">
+                <button
+                  type="button"
+                  className="toolrail__btn"
+                  onClick={() => addMediaInputRef.current?.click()}
+                  title="Add media — images or videos"
+                >
+                  <Icon.Plus />
+                </button>
+                <button
+                  type="button"
+                  className="toolrail__btn"
+                  onClick={onAddText}
+                  title="Add a text layer"
+                >
+                  <Icon.Text />
+                </button>
+                <button
+                  type="button"
+                  className="toolrail__btn"
+                  onClick={() => addShape('rect')}
+                  title="Add a shape — rectangle by default; switch kind in the Shape panel"
+                >
+                  <Icon.Shape />
+                </button>
+                <button
+                  ref={gifPickerAnchorRef}
+                  type="button"
+                  className={`toolrail__btn${gifPickerOpen ? ' toolrail__btn--active' : ''}`}
+                  onClick={() => setGifPickerOpen((v) => !v)}
+                  title="Add a GIF from Giphy"
+                >
+                  <Icon.Gif />
+                </button>
+                <GifPicker
+                  open={gifPickerOpen}
+                  onClose={() => setGifPickerOpen(false)}
+                  onPick={handleGifPick}
+                  anchorRef={gifPickerAnchorRef}
+                />
+              </div>
+            )}
             {isDragOver && (
               <div className="drop-overlay">
                 <div className="drop-overlay__content">
@@ -2901,149 +2932,15 @@ export default function App() {
               </div>
             )}
 
-            {/* View cluster — sits beside the zoom pill because these are
-                properties of the view, not the document: Preview (hide
-                editor chrome) and the View popover (grid, guides, snapping,
-                workspace color). */}
-            <div className="view-hud popover-host">
-              <button
-                type="button"
-                className={`btn btn--sm ${previewMode ? 'btn--seg-active' : ''}`}
-                onClick={() => setPreviewMode(!previewMode)}
-                title={previewMode ? 'Preview ON — click to show editor chrome' : 'Hide grids, guides, dividers and warnings to preview as it will export'}
-                aria-pressed={previewMode}
-              >
-                <Icon.Eye style={{ width: 13, height: 13 }} />
-              </button>
-              <button
-                type="button"
-                className={`btn btn--sm ${viewOpen ? 'btn--seg-active' : ''}`}
-                onClick={() => setViewOpen((v) => !v)}
-                title="Grid, guides, snapping and workspace color"
-                aria-expanded={viewOpen}
-              >
-                View
-              </button>
-              <Popover open={viewOpen} onClose={() => setViewOpen(false)} up alignRight width={264}>
-                <div className="popover__section">Overlays</div>
-                <label className="check">
-                  <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
-                  Grid
-                </label>
-                {showGrid && (() => {
-                  // Detents snap to values that evenly divide the slide; show a
-                  // tiny readout describing what the current size produces.
-                  const dividesW = dimensions.width % gridSize === 0
-                  const dividesH = dimensions.height % gridSize === 0
-                  const cols = dividesW ? dimensions.width / gridSize : null
-                  const rows = dividesH ? dimensions.height / gridSize : null
-                  let badge: string
-                  if (cols !== null && rows !== null) badge = `${cols} × ${rows}`
-                  else if (cols !== null) badge = `${cols} cols`
-                  else if (rows !== null) badge = `${rows} rows`
-                  else badge = 'off-grid'
-                  return (
-                    <>
-                      <label
-                        className="slider-field"
-                        title="Cell size in px. The slider snaps to values that produce a whole number of grid cells across the slide (the small ticks). Hold Shift while dragging to bypass snapping; double-click to reset."
-                      >
-                        <span className="slider-field__label">
-                          Grid size
-                          <span className="slider-field__value">{gridSize} px · {badge}</span>
-                        </span>
-                        <input
-                          type="range"
-                          list="tiovivo-grid-detents"
-                          min={4}
-                          max={400}
-                          step={1}
-                          value={gridSize}
-                          style={sliderFill((gridSize - 4) / (400 - 4), 0, 1)}
-                          onChange={(e) => setGridSize(snapGridToDetent(Number(e.target.value)))}
-                          onDoubleClick={() => setGridSize(40)}
-                        />
-                        <datalist id="tiovivo-grid-detents">
-                          {gridDetents.map((v) => <option key={v} value={v} />)}
-                        </datalist>
-                      </label>
-                      <label className="slider-field" title="Visibility of the grid overlay on top of media. Double-click to reset.">
-                        <span className="slider-field__label">
-                          Grid opacity<span className="slider-field__value">{Math.round(gridOpacity * 100)}%</span>
-                        </span>
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={gridOpacity}
-                          style={sliderFill(gridOpacity, 0, 1)}
-                          onChange={(e) => setGridOpacity(Number(e.target.value))}
-                          onDoubleClick={() => setGridOpacity(0.1)}
-                        />
-                      </label>
-                    </>
-                  )
-                })()}
-                <label className="check">
-                  <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
-                  Center lines
-                </label>
-                <label className="check" title="Dim the area where Instagram's carousel page-dot indicator and on-canvas chrome sit, so you don't put critical text under them.">
-                  <input type="checkbox" checked={showIgSafeArea} onChange={(e) => setShowIgSafeArea(e.target.checked)} />
-                  IG safe area
-                </label>
-                <label className="check" title="Show the pasteboard zone around the slides where off-slide media is clipped.">
-                  <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
-                  Hidden zone
-                </label>
-                <div className="popover__section">Snapping</div>
-                <label className="check">
-                  <input type="checkbox" checked={snapGrid} onChange={(e) => setSnapGrid(e.target.checked)} />
-                  Snap to grid
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={snapCenter} onChange={(e) => setSnapCenter(e.target.checked)} />
-                  Snap to center
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={snapItems} onChange={(e) => setSnapItems(e.target.checked)} />
-                  Snap to other media
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={snapMargins} onChange={(e) => setSnapMargins(e.target.checked)} />
-                  Snap to margins
-                </label>
-                <div className="popover__section">Workspace</div>
-                {(() => {
-                  const isWorkspaceDefault =
-                    !workspaceBgColor || workspaceBgColor.toLowerCase() === WORKSPACE_AUTO
-                  return (
-                    <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, margin: '6px 0 2px' }}>
-                      <span style={{ flex: 1 }}>Pasteboard color</span>
-                      <input
-                        className="color-swatch"
-                        type="color"
-                        value={resolveWorkspaceBg(workspaceBgColor, theme)}
-                        onChange={(e) => setWorkspaceBgColor(e.target.value)}
-                        title="Pasteboard color around the slides"
-                      />
-                      <button
-                        type="button"
-                        className="btn btn--ghost btn--sm"
-                        onClick={() => setWorkspaceBgColor(WORKSPACE_AUTO)}
-                        disabled={isWorkspaceDefault}
-                        title={isWorkspaceDefault ? 'Already following the theme' : 'Reset to follow the theme'}
-                        style={{ padding: '2px 6px', flexDirection: 'row' }}
-                      >
-                        <Icon.Reset style={{ width: 10, height: 10 }} />
-                      </button>
-                    </label>
-                  )
-                })()}
-              </Popover>
-            </div>
           </div>
+
+          {/* Slide deck — overview rail under the canvas: click selects,
+              double-click centres the canvas on that slide, drag reorders,
+              "+" appends. Hidden in preview mode so the canvas reads as
+              final output. */}
+          {!previewMode && (
+            <SlideStrip onFocusSlide={(id) => stageRef.current?.centerSlide(id)} />
+          )}
         </main>
       </div>
     </div>

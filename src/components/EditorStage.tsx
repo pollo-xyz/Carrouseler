@@ -16,6 +16,7 @@ import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { createGifAnimator, type GifAnimator } from '../lib/gifAnimator'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
 import { bgVibeHash, renderBgVibe, type BgVibe } from '../lib/bgVibe'
+import LayerStack from './LayerStack'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -33,6 +34,44 @@ const GUIDE_COLOR = '#3d7bfd'
 const GUIDE_COLOR_CENTER = '#6b9dff'
 const MIN_ZOOM = 0.02
 const MAX_ZOOM = 8
+
+/* ------------------------------------------------------------------ */
+/*  Shared media ticker                                               */
+/* ------------------------------------------------------------------ */
+/* ONE rAF loop serves every animated item (videos, GIFs). Subscribers do
+ * their per-node work (filter re-caching) and return their layer; each
+ * distinct layer is then drawn ONCE per frame no matter how many animated
+ * items sit on it — per-item loops used to paint the whole layer N times.
+ * Runs only while subscribers exist.
+ * `.draw()` (not .batchDraw()): forces a paint even when Konva thinks the
+ * layer is clean — required for un-filtered GIFs, whose frames advance
+ * inside the browser's image element without touching the scene graph. */
+type MediaTickFn = () => Konva.Layer | null | undefined
+const mediaTickSubs = new Set<MediaTickFn>()
+let mediaTickRaf: number | null = null
+let mediaTicks = 0
+function mediaTickLoop() {
+  mediaTicks++
+  const layers = new Set<Konva.Layer>()
+  mediaTickSubs.forEach((fn) => {
+    const layer = fn()
+    if (layer) layers.add(layer)
+  })
+  layers.forEach((l) => l.draw())
+  mediaTickRaf = mediaTickSubs.size > 0 ? requestAnimationFrame(mediaTickLoop) : null
+}
+function subscribeMediaTick(fn: MediaTickFn): () => void {
+  mediaTickSubs.add(fn)
+  if (mediaTickRaf === null) mediaTickRaf = requestAnimationFrame(mediaTickLoop)
+  return () => {
+    mediaTickSubs.delete(fn)
+    // Loop self-terminates on the next tick once empty.
+  }
+}
+/* Devtools probe — a climbing value proves the ticker runs. */
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __tiovivoGifTicks?: () => number }).__tiovivoGifTicks = () => mediaTicks
+}
 
 /* ------------------------------------------------------------------ */
 /*  useHtmlMedia                                                      */
@@ -139,14 +178,12 @@ function SlideBackground({
   y,
   width,
   height,
-  dither = false,
 }: {
   slide: Slide
   x: number
   y: number
   width: number
   height: number
-  dither?: boolean
 }) {
   const vibe = slide.bgVibe
   const imageRef = useRef<Konva.Image>(null)
@@ -155,7 +192,7 @@ function SlideBackground({
   // drags a slider or scrubs in the colour picker, onChange can fire dozens
   // of times per frame — collapsing them into a single rAF re-render means
   // we do the expensive renderBgVibe pass once per frame at most.
-  const pendingRef = useRef<{ vibe: BgVibe; w: number; h: number; dither: boolean } | null>(null)
+  const pendingRef = useRef<{ vibe: BgVibe; w: number; h: number } | null>(null)
   const rafIdRef = useRef<number | null>(null)
   // First mount uses a synchronous render so Konva sees a non-empty canvas
   // on its first paint (avoids a one-frame flash of nothing). Subsequent
@@ -164,7 +201,7 @@ function SlideBackground({
 
   const w = Math.max(1, Math.round(width))
   const h = Math.max(1, Math.round(height))
-  const hash = vibe ? bgVibeHash(vibe, w, h, { dither }) : ''
+  const hash = vibe ? bgVibeHash(vibe, w, h) : ''
 
   if (vibe) {
     let c = slideBgCanvases.get(slide.id)
@@ -177,21 +214,21 @@ function SlideBackground({
       if (firstRef.current) {
         // First time we've seen a vibe on this slide — render synchronously
         // so the Image isn't painted blank during React's commit phase.
-        renderBgVibe(c, vibe, w, h, { dither })
+        renderBgVibe(c, vibe, w, h)
         lastHashRef.current = hash
         firstRef.current = false
       } else {
         // Stash the latest params; the rAF callback re-reads from the ref
         // so multiple updates within one frame coalesce to the newest state.
-        pendingRef.current = { vibe, w, h, dither }
+        pendingRef.current = { vibe, w, h }
         if (rafIdRef.current === null) {
           rafIdRef.current = requestAnimationFrame(() => {
             rafIdRef.current = null
             const latest = pendingRef.current
             const cv = slideBgCanvases.get(slide.id)
             if (!latest || !cv) return
-            renderBgVibe(cv, latest.vibe, latest.w, latest.h, { dither: latest.dither })
-            lastHashRef.current = bgVibeHash(latest.vibe, latest.w, latest.h, { dither: latest.dither })
+            renderBgVibe(cv, latest.vibe, latest.w, latest.h)
+            lastHashRef.current = bgVibeHash(latest.vibe, latest.w, latest.h)
             imageRef.current?.getLayer()?.batchDraw()
           })
         }
@@ -328,40 +365,25 @@ function MediaItemView({
   }, [img, hasFilters, item.brightness, item.contrast, item.saturation, item.blur, item.width, item.height, item.type])
 
   useEffect(() => {
-    // Per-frame redraw loop for animated source media. Without this, GIFs
-    // freeze on their first frame (Konva caches the underlying image once
-    // and doesn't know the browser is advancing the GIF behind the scenes).
-    // Videos already needed this for the same reason. ~0.1% of one CPU
-    // core per node when idle since the browser does the actual decoding
-    // — we're just calling layer.draw().
+    // Per-frame redraw for animated source media. Without this, GIFs freeze
+    // on their first frame (Konva caches the underlying image once and
+    // doesn't know the browser is advancing the GIF behind the scenes).
+    // Videos need it for the same reason. All animated items share ONE
+    // ticker (see subscribeMediaTick): each subscriber does its per-node
+    // cache work, then every dirty layer is drawn ONCE per frame — the old
+    // per-item loops each called layer.draw(), so three GIFs painted the
+    // whole layer three times a frame.
     if ((item.type !== 'video' && item.type !== 'gif') || !img) return
     const node = shapeRef.current
     const layer = node?.getLayer()
     if (!node || !layer) return
-    let id: number
-    let ticks = 0
-    const tick = () => {
-      ticks++
+    return subscribeMediaTick(() => {
       // Re-cache each frame so filters apply to the current frame rather
       // than a frozen snapshot taken when filters were first enabled.
       if (hasFilters) node.cache()
       else node.clearCache()
-      // .draw() is synchronous and forces a paint even when no scene-graph
-      // attribute changed. .batchDraw() can skip when Konva thinks the layer
-      // is clean — fine for video (whose .cache() call dirties the node)
-      // but bad for un-filtered GIFs.
-      layer.draw()
-      id = requestAnimationFrame(tick)
-    }
-    id = requestAnimationFrame(tick)
-    if (item.type === 'gif') {
-      // Debug counter the user can poll from devtools to confirm the loop
-      // is actually running:  document.querySelector('canvas')  → ok
-      //   __tiovivoGifTicks ← shows current tick count
-      // Increments per rAF, so a value that climbs proves the loop runs.
-      ;(window as unknown as { __tiovivoGifTicks?: () => number }).__tiovivoGifTicks = () => ticks
-    }
-    return () => cancelAnimationFrame(id)
+      return layer
+    })
   }, [item.type, img, hasFilters])
 
   // Loop preview playback within trim window
@@ -1458,7 +1480,7 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
       </label>
       <button
         type="button"
-        className="btn btn--outline btn--sm"
+        className="btn btn--sm"
         style={{ alignSelf: 'flex-start', gap: 6, flexDirection: 'row', marginTop: 4 }}
         onClick={() => updateItem(item.id, { brightness: 0, contrast: 0, saturation: 1, blur: 0 })}
       >
@@ -1477,14 +1499,27 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
 
   useEffect(() => {
     let raf: number
+    // Poll every frame (cheap ref reads) but only setState ~8×/s or when a
+    // play/mute flag flips — the readout shows whole seconds and the
+    // scrubber can't resolve more; 60Hz React updates were pure waste.
+    let lastStamp = -1
+    let lastPlaying: boolean | null = null
+    let lastMuted: boolean | null = null
     const tick = () => {
       const v = videoElements.get(itemId)
       if (v) {
-        setReady(true)
-        setCurrentTime(v.currentTime)
-        setIsPlaying(!v.paused)
-        setMuted(v.muted)
-        if (isFinite(v.duration)) setDuration(v.duration)
+        const stamp = Math.floor(v.currentTime * 8)
+        const playing = !v.paused
+        if (stamp !== lastStamp || playing !== lastPlaying || v.muted !== lastMuted) {
+          lastStamp = stamp
+          lastPlaying = playing
+          lastMuted = v.muted
+          setReady(true)
+          setCurrentTime(v.currentTime)
+          setIsPlaying(playing)
+          setMuted(v.muted)
+          if (isFinite(v.duration)) setDuration(v.duration)
+        }
       } else {
         setReady(false)
       }
@@ -2122,6 +2157,9 @@ export interface EditorStageHandle {
     onPreviewFrame?: (dataUrl: string) => void,
   ) => Promise<string | null>
   fitToScreen: () => void
+  /** Centre one slide in the viewport, zoomed to fit it — the slide
+   *  deck's double-click action. */
+  centerSlide: (slideId: string) => void
   applyCrop: () => void
 }
 
@@ -2207,6 +2245,14 @@ const EditorStage = forwardRef<
     }))
   }, [slides, W, artboardGap, pasteboardPad])
 
+  /* Slide id → absolute X, for the floating per-slide Layers stacks (their
+     overlap math decides which items belong to which slide). */
+  const slideAbsoluteXBySlideId = useMemo(() => {
+    const m = new Map<string, number>()
+    slides.forEach((s, j) => m.set(s.id, artboardPositions[j]!.x))
+    return m
+  }, [slides, artboardPositions])
+
   /* ---- "hidden" zone around slides: media inside here is clipped by slide masks ---- */
   const hiddenZone = useMemo(() => {
     if (!artboardPositions.length) return null
@@ -2221,10 +2267,21 @@ const EditorStage = forwardRef<
     }
   }, [artboardPositions, W, H])
 
+  /* ---- evict cached bg-vibe canvases for slides that no longer exist ----
+   * Each entry pins a full-resolution canvas (~6 MB at 1080×1440), so
+   * without this the map grows for the whole session as slides are
+   * deleted. */
+  useEffect(() => {
+    const ids = new Set(slides.map((s) => s.id))
+    for (const key of slideBgCanvases.keys()) {
+      if (!ids.has(key)) slideBgCanvases.delete(key)
+    }
+  }, [slides])
+
   /* ---- zoom & pan (single state to prevent tearing) ---- */
   const [camera, setCamera] = useState({ zoom: 1, x: 0, y: 0 })
   const zoom = camera.zoom
-  const panOffset = { x: camera.x, y: camera.y }
+  const panOffset = useMemo(() => ({ x: camera.x, y: camera.y }), [camera.x, camera.y])
   const setPanOffset = useCallback((v: { x: number; y: number } | ((p: { x: number; y: number }) => { x: number; y: number })) => {
     setCamera((c) => {
       const nv = typeof v === 'function' ? v({ x: c.x, y: c.y }) : v
@@ -2296,6 +2353,23 @@ const EditorStage = forwardRef<
     itemId: string; slideIdx: number; x: number; y: number; width: number; height: number
   } | null>(null)
 
+  /* rAF flush for the drag's React mirror (dragLive + snap guides). Konva
+   * nodes move per input event; the component-wide re-render happens at
+   * most once per frame. */
+  const pendingDragRef = useRef<{
+    live: { itemId: string; slideIdx: number; x: number; y: number; width: number; height: number }
+    guides: { slideIdx: number; guides: GuideLine[] } | null
+  } | null>(null)
+  const dragRafRef = useRef<number | null>(null)
+  const flushDragLive = useCallback(() => {
+    dragRafRef.current = null
+    const p = pendingDragRef.current
+    if (!p) return
+    pendingDragRef.current = null
+    setDragLive(p.live)
+    setActiveGuides(p.guides)
+  }, [])
+
   /* ---- fit to screen ---- */
   const fitToScreen = useCallback(() => {
     if (W <= 0 || H <= 0 || maxViewWidth <= 0 || maxViewHeight <= 0) return
@@ -2316,6 +2390,29 @@ const EditorStage = forwardRef<
       y: maxViewHeight / 2 + yShift - contentCy * fitZoom,
     })
   }, [W, H, maxViewWidth, maxViewHeight, slides.length, artboardGap, pasteboardPad])
+
+  /* Same math as fitToScreen, scoped to ONE slide — the deck's
+   * double-click jump. Slightly larger pad so neighbours peek in at the
+   * edges, keeping the sense of a filmstrip. */
+  const centerSlide = useCallback((slideId: string) => {
+    if (W <= 0 || H <= 0 || maxViewWidth <= 0 || maxViewHeight <= 0) return
+    const idx = slides.findIndex((s) => s.id === slideId)
+    if (idx < 0) return
+    const CHROME_TOP = 34
+    const CHROME_BOT = 36
+    const pad = 44
+    const availW = maxViewWidth - pad * 2
+    const availH = maxViewHeight - pad * 2 - CHROME_TOP - CHROME_BOT
+    const fitZoom = Math.min(availW / W, availH / H, 2)
+    const cx = pasteboardPad + idx * (W + artboardGap) + W / 2
+    const cy = pasteboardPad + H / 2
+    const yShift = (CHROME_TOP - CHROME_BOT) / 2
+    setCamera({
+      zoom: fitZoom,
+      x: maxViewWidth / 2 - cx * fitZoom,
+      y: maxViewHeight / 2 + yShift - cy * fitZoom,
+    })
+  }, [W, H, maxViewWidth, maxViewHeight, slides, artboardGap, pasteboardPad])
 
   /**
    * Snap zoom to exactly 100% and recentre on the current content centroid.
@@ -2361,28 +2458,54 @@ const EditorStage = forwardRef<
     return () => { window.removeEventListener('keydown', onDown); window.removeEventListener('keyup', onUp); document.body.style.cursor = '' }
   }, [])
 
-  /* ---- wheel zoom (native listener, single atomic camera update) ---- */
+  /* ---- wheel zoom (native listener, single atomic camera update) ----
+   * rAF-coalesced: trackpads and fast wheels can report several times per
+   * displayed frame, and every setCamera re-renders this whole component.
+   * We accumulate the multiplicative factor + last cursor position and
+   * apply once per frame — visually identical, a fraction of the work. */
+  const wheelAccumRef = useRef({ factor: 1, mx: 0, my: 0 })
+  const wheelRafRef = useRef<number | null>(null)
   useEffect(() => {
     const wrap = wrapRef.current
     if (!wrap) return
     const handler = (e: WheelEvent) => {
       e.preventDefault()
       const rect = wrap.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-      const my = e.clientY - rect.top
-      setCamera((cam) => {
-        const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08
-        const nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, cam.zoom * factor))
-        const wx = (mx - cam.x) / cam.zoom
-        const wy = (my - cam.y) / cam.zoom
-        return { zoom: nz, x: mx - wx * nz, y: my - wy * nz }
+      const acc = wheelAccumRef.current
+      acc.factor *= e.deltaY < 0 ? 1.08 : 1 / 1.08
+      acc.mx = e.clientX - rect.left
+      acc.my = e.clientY - rect.top
+      if (wheelRafRef.current !== null) return
+      wheelRafRef.current = requestAnimationFrame(() => {
+        wheelRafRef.current = null
+        const { factor, mx, my } = wheelAccumRef.current
+        wheelAccumRef.current.factor = 1
+        setCamera((cam) => {
+          const nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, cam.zoom * factor))
+          const wx = (mx - cam.x) / cam.zoom
+          const wy = (my - cam.y) / cam.zoom
+          return { zoom: nz, x: mx - wx * nz, y: my - wy * nz }
+        })
       })
     }
     wrap.addEventListener('wheel', handler, { passive: false })
-    return () => wrap.removeEventListener('wheel', handler)
+    return () => {
+      wrap.removeEventListener('wheel', handler)
+      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current)
+    }
   }, [])
 
-  /* ---- pointer pan ---- */
+  /* ---- pointer pan ----
+   * Same rAF coalescing: gaming mice report 500–1000×/s; deltas accumulate
+   * in a ref and flush as ONE state update per frame. */
+  const panAccumRef = useRef({ dx: 0, dy: 0 })
+  const panRafRef = useRef<number | null>(null)
+  const flushPan = useCallback(() => {
+    panRafRef.current = null
+    const { dx, dy } = panAccumRef.current
+    panAccumRef.current = { dx: 0, dy: 0 }
+    if (dx !== 0 || dy !== 0) setPanOffset((p) => ({ x: p.x + dx, y: p.y + dy }))
+  }, [setPanOffset])
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (spaceDownRef.current || e.button === 1) {
       e.preventDefault(); isPanningRef.current = true
@@ -2393,17 +2516,22 @@ const EditorStage = forwardRef<
   }, [])
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!isPanningRef.current) return
-    const dx = e.clientX - lastPointerRef.current.x
-    const dy = e.clientY - lastPointerRef.current.y
+    panAccumRef.current.dx += e.clientX - lastPointerRef.current.x
+    panAccumRef.current.dy += e.clientY - lastPointerRef.current.y
     lastPointerRef.current = { x: e.clientX, y: e.clientY }
-    setPanOffset((p) => ({ x: p.x + dx, y: p.y + dy }))
-  }, [])
+    if (panRafRef.current === null) panRafRef.current = requestAnimationFrame(flushPan)
+  }, [flushPan])
   const onPointerUp = useCallback(() => {
+    // Apply any un-flushed pan delta so the view never snaps back a frame.
+    if (panRafRef.current !== null) {
+      cancelAnimationFrame(panRafRef.current)
+      flushPan()
+    }
     if (isPanningRef.current) {
       isPanningRef.current = false
       document.body.style.cursor = spaceDownRef.current ? 'grab' : ''
     }
-  }, [])
+  }, [flushPan])
 
   /* ---- which artboard is at a workspace point ---- */
   const getSlideAtPoint = useCallback(
@@ -2423,7 +2551,7 @@ const EditorStage = forwardRef<
       }
       return { slideId: slides[bestIdx]!.id, slideIdx: bestIdx }
     },
-    [slides, artboardPositions, W, H],
+    [slides, artboardPositions, artboardGap, W, H],
   )
 
   /* ---- multi-drag state: captured at drag start for co-movement ---- */
@@ -2519,21 +2647,32 @@ const EditorStage = forwardRef<
         }
       }
 
-      setDragLive({
-        itemId: item.id,
-        slideIdx: target.slideIdx,
-        x: result.x, y: result.y,
-        width: bw, height: bh,
-      })
-
-      if (result.guides.length > 0) setActiveGuides({ slideIdx: target.slideIdx, guides: result.guides })
-      else setActiveGuides(null)
+      // rAF-coalesced React mirror: Konva already moved the nodes above
+      // (per-event, for precision) — the React state that re-renders the
+      // whole component flushes at most once per frame.
+      pendingDragRef.current = {
+        live: {
+          itemId: item.id,
+          slideIdx: target.slideIdx,
+          x: result.x, y: result.y,
+          width: bw, height: bh,
+        },
+        guides: result.guides.length > 0 ? { slideIdx: target.slideIdx, guides: result.guides } : null,
+      }
+      if (dragRafRef.current === null) dragRafRef.current = requestAnimationFrame(flushDragLive)
     },
-    [artboardPositions, getSlideAtPoint, items, W, H, gridSize, marginPx, snapGrid, snapCenter, snapItems, snapMargins],
+    [artboardPositions, getSlideAtPoint, items, W, H, gridSize, marginPx, snapGrid, snapCenter, snapItems, snapMargins, flushDragLive],
   )
 
   const handleDragEnd = useCallback(
     (node: Konva.Image, item: PlacedMedia) => {
+      // Drop any queued drag frame so it can't resurrect dragLive after
+      // this end handler clears it.
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
+      pendingDragRef.current = null
       setActiveGuides(null)
       setDragLive(null)
       const group = node.getParent()
@@ -3173,8 +3312,9 @@ const EditorStage = forwardRef<
     exportSlidePng,
     exportSlideVideo,
     fitToScreen,
+    centerSlide,
     applyCrop: () => { cropApplyRef.current?.() },
-  }), [exportSlidePng, exportSlideVideo, fitToScreen])
+  }), [exportSlidePng, exportSlideVideo, fitToScreen, centerSlide])
 
   /* ---- render ---- */
   // Chrome (slide labels, action buttons, zoom indicator) sits over the
@@ -3366,8 +3506,9 @@ const EditorStage = forwardRef<
               {/* Slide label — mousedown to start reorder. The currently-
                   active slide gets a subtle accent pill so it's visible at
                   a glance even when the artboards are far apart or zoomed
-                  out. */}
-              <div
+                  out. Hidden in preview mode — the canvas reads as final
+                  output, headers are editor chrome. */}
+              {!previewMode && <div
                 className={[
                   'artboard-label',
                   isActive ? 'artboard-label--active' : '',
@@ -3541,7 +3682,7 @@ const EditorStage = forwardRef<
                     ✕
                   </button>
                 )}
-              </div>
+              </div>}
 
               {/* Drop indicator line — left edge of drop target */}
               {isDropTarget && (
@@ -3577,7 +3718,7 @@ const EditorStage = forwardRef<
                   slide is in Vibe mode, since bgColor is unused and the
                   picker would be misleading clutter; the Background panel's
                   palette is the source of truth in that case. */}
-              {!slide.bgVibe && (
+              {!slide.bgVibe && !previewMode && (
                 <div
                   className="artboard-bg-chip"
                   style={{
@@ -3649,53 +3790,88 @@ const EditorStage = forwardRef<
                   )
                 })}
 
-              {/* + button AFTER this artboard — hidden in seamless mode */}
+              {/* Empty-slide hint — quiet first-step guidance centred on
+                  artboards with nothing on them. Screen-space text so it
+                  stays readable at any zoom; never intercepts the mouse. */}
+              {!previewMode && !items.some((it) => it.slideId === slide.id) && (
+                <div
+                  className="artboard-empty-hint"
+                  style={{
+                    position: 'absolute',
+                    left: screenX,
+                    top: screenY,
+                    width: screenW,
+                    height: screenH,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <span>Drop media here, or start from the tools on the left</span>
+                </div>
+              )}
+
+              {/* Layers — floating stack under each artboard (below the bg
+                  chip). Every slide shows its own z-order at a glance; drag
+                  to reorder, click to select. Hidden in preview mode. */}
+              {!previewMode && (
+                <div
+                  className="layer-stack-anchor"
+                  style={{
+                    position: 'absolute',
+                    left: screenX,
+                    top: screenY + screenH + 38,
+                    width: Math.max(200, screenW),
+                    pointerEvents: 'auto',
+                  }}
+                >
+                  <LayerStack
+                    slideId={slide.id}
+                    slideIndex={i}
+                    slideAbsoluteX={ap.x}
+                    slideWidth={W}
+                    slideHeight={H}
+                    slideAbsoluteXBySlideId={slideAbsoluteXBySlideId}
+                  />
+                </div>
+              )}
+
               {/* "+" button between slides. Hidden in seamless mode for
                   inner slides (those dividers would visually break the
-                  flush layout), but ALWAYS shown after the last slide so
-                  there's still a way to append a new one. */}
-              {(!seamlessSlides || i === slides.length - 1) && <button
-                type="button"
-                className="artboard-add-btn"
-                title="Add slide"
-                onClick={(e) => { e.stopPropagation(); addSlide(i) }}
-                style={{
-                  position: 'absolute',
-                  // In seamless mode artboardGap is 0, so the natural button
-                  // position sits exactly on the slide's right edge with half
-                  // of itself overlapping the slide content. Add a fixed
-                  // screen-space offset (button radius + breathing room) so
-                  // the button is clearly OUTSIDE the slide in that case.
-                  left: screenX + screenW + (seamlessSlides ? 24 : (artboardGap * zoom) / 2),
-                  top: screenY + screenH / 2,
-                  transform: 'translate(-50%, -50%)',
-                  pointerEvents: 'auto',
-                  width: 28, height: 28, borderRadius: '50%',
-                  border: '1.5px solid rgba(241,242,245,0.2)',
-                  background: 'rgba(21,21,20,0.85)',
-                  color: 'rgba(241,242,245,0.5)',
-                  cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  transition: 'border-color 0.15s, color 0.15s, background 0.15s',
-                }}
-                onMouseEnter={(e) => {
-                  const b = e.currentTarget
-                  b.style.borderColor = '#3d7bfd'
-                  b.style.color = '#f1f2f5'
-                  b.style.background = '#3d7bfd'
-                }}
-                onMouseLeave={(e) => {
-                  const b = e.currentTarget
-                  b.style.borderColor = 'rgba(241,242,245,0.2)'
-                  b.style.color = 'rgba(241,242,245,0.5)'
-                  b.style.background = 'rgba(21,21,20,0.85)'
-                }}
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-                  <rect x="4.5" y="0" width="1" height="10" />
-                  <rect x="0" y="4.5" width="10" height="1" />
-                </svg>
-              </button>}
+                  flush layout) — but ALWAYS shown after the last slide so
+                  there's still a way to append — and hidden entirely in
+                  preview mode. Scales with zoom (clamped so it stays
+                  clickable when far out, sane when close in). */}
+              {!previewMode && (!seamlessSlides || i === slides.length - 1) && (() => {
+                const addSize = Math.round(Math.max(16, Math.min(40, 28 * zoom)))
+                const glyph = Math.max(8, Math.round(addSize * 0.36))
+                return <button
+                  type="button"
+                  className="artboard-add-btn"
+                  title="Add slide"
+                  onClick={(e) => { e.stopPropagation(); addSlide(i) }}
+                  style={{
+                    position: 'absolute',
+                    // In seamless mode artboardGap is 0, so the natural button
+                    // position sits exactly on the slide's right edge with half
+                    // of itself overlapping the slide content. Add a fixed
+                    // screen-space offset (button radius + breathing room) so
+                    // the button is clearly OUTSIDE the slide in that case.
+                    left: screenX + screenW + (seamlessSlides ? 24 : (artboardGap * zoom) / 2),
+                    top: screenY + screenH / 2,
+                    transform: 'translate(-50%, -50%)',
+                    pointerEvents: 'auto',
+                    width: addSize,
+                    height: addSize,
+                  }}
+                >
+                  <svg width={glyph} height={glyph} viewBox="0 0 10 10" fill="currentColor">
+                    <rect x="4.5" y="0" width="1" height="10" />
+                    <rect x="0" y="4.5" width="10" height="1" />
+                  </svg>
+                </button>
+              })()}
             </div>
           )
         })}
@@ -3721,13 +3897,6 @@ const EditorStage = forwardRef<
           }
           const stx = (sap.x + cx) * zoom + panOffset.x
           const sty = (sap.y + topY) * zoom + panOffset.y
-
-          const btnBase: React.CSSProperties = {
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 32, height: 28, border: 'none', borderRadius: 5,
-            background: 'transparent', color: 'rgba(241,242,245,0.7)',
-            cursor: 'pointer', transition: 'background 0.12s, color 0.12s',
-          }
 
           const itemCenterX = (sap.x + effX + effW / 2) * zoom + panOffset.x
           const itemScreenW = effW * zoom
@@ -3756,9 +3925,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setCropMode(selectedId) }}
                     title="Crop image"
-                    style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
+                    className="ftb-btn"
                   >
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                       <path d="M4.5 1v10.5H15" />
@@ -3770,9 +3937,7 @@ const EditorStage = forwardRef<
                       type="button"
                       onClick={(e) => { e.stopPropagation(); resetCropAction(selectedId) }}
                       title="Reset crop"
-                      style={btnBase}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
+                      className="ftb-btn"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="1 4 1 10 7 10" />
@@ -3784,9 +3949,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); fitItemToSlide(selectedId!) }}
                     title="Fit to slide"
-                    style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
+                    className="ftb-btn"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="1.5" />
@@ -3797,9 +3960,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); fillItemToSlide(selectedId!) }}
                     title="Fill slide"
-                    style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
+                    className="ftb-btn"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="1.5" />
@@ -3813,9 +3974,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); resetItemScale(selectedId!) }}
                     title="Reset to 100%"
-                    style={btnBase}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.7)' }}
+                    className="ftb-btn"
                   >
                     <span style={{ fontFamily: 'var(--mono, monospace)', fontSize: 11, fontWeight: 700, letterSpacing: -0.3 }}>1:1</span>
                   </button>
@@ -3823,16 +3982,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setRotateMode((v) => !v) }}
                     title="Enable rotation"
-                    style={{
-                      ...btnBase,
-                      background: rotateMode ? 'rgba(241,242,245,0.1)' : 'transparent',
-                      color: rotateMode ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = rotateMode ? 'rgba(241,242,245,0.1)' : 'transparent'
-                      e.currentTarget.style.color = rotateMode ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
-                    }}
+                    className={`ftb-btn${rotateMode ? ' ftb-btn--on' : ''}`}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="23 4 23 10 17 10" />
@@ -3843,16 +3993,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); updateItem(selectedId!, { flipX: !sel.flipX }) }}
                     title="Mirror horizontal"
-                    style={{
-                      ...btnBase,
-                      background: sel.flipX ? 'rgba(241,242,245,0.1)' : 'transparent',
-                      color: sel.flipX ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = sel.flipX ? 'rgba(241,242,245,0.1)' : 'transparent'
-                      e.currentTarget.style.color = sel.flipX ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
-                    }}
+                    className={`ftb-btn${sel.flipX ? ' ftb-btn--on' : ''}`}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M12 3v18" />
@@ -3864,16 +4005,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); updateItem(selectedId!, { flipY: !sel.flipY }) }}
                     title="Mirror vertical"
-                    style={{
-                      ...btnBase,
-                      background: sel.flipY ? 'rgba(241,242,245,0.1)' : 'transparent',
-                      color: sel.flipY ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = sel.flipY ? 'rgba(241,242,245,0.1)' : 'transparent'
-                      e.currentTarget.style.color = sel.flipY ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
-                    }}
+                    className={`ftb-btn${sel.flipY ? ' ftb-btn--on' : ''}`}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M3 12h18" />
@@ -3885,16 +4017,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setShowCorrections((v) => !v); setShowCoverFrame(false); setShowTrim(false); setRotateMode(false) }}
                     title="Color corrections"
-                    style={{
-                      ...btnBase,
-                      background: showCorrections ? 'rgba(241,242,245,0.1)' : 'transparent',
-                      color: showCorrections ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = showCorrections ? 'rgba(241,242,245,0.1)' : 'transparent'
-                      e.currentTarget.style.color = showCorrections ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
-                    }}
+                    className={`ftb-btn${showCorrections ? ' ftb-btn--on' : ''}`}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                       <line x1="4" y1="7" x2="20" y2="7" />
@@ -3910,16 +4033,7 @@ const EditorStage = forwardRef<
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setShowCoverFrame((v) => !v); setShowCorrections(false); setShowTrim(false); setRotateMode(false) }}
                       title="Cover frame"
-                      style={{
-                        ...btnBase,
-                        background: showCoverFrame ? 'rgba(241,242,245,0.1)' : 'transparent',
-                        color: showCoverFrame ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = showCoverFrame ? 'rgba(241,242,245,0.1)' : 'transparent'
-                        e.currentTarget.style.color = showCoverFrame ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
-                      }}
+                      className={`ftb-btn${showCoverFrame ? ' ftb-btn--on' : ''}`}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                         <rect x="1" y="3" width="14" height="10" rx="1.5" />
@@ -3937,16 +4051,7 @@ const EditorStage = forwardRef<
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setShowTrim((v) => !v); setShowCorrections(false); setShowCoverFrame(false); setRotateMode(false) }}
                       title="Trim video"
-                      style={{
-                        ...btnBase,
-                        background: showTrim ? 'rgba(241,242,245,0.1)' : 'transparent',
-                        color: showTrim ? '#f1f2f5' : 'rgba(241,242,245,0.7)',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.1)'; e.currentTarget.style.color = '#f1f2f5' }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = showTrim ? 'rgba(241,242,245,0.1)' : 'transparent'
-                        e.currentTarget.style.color = showTrim ? '#f1f2f5' : 'rgba(241,242,245,0.7)'
-                      }}
+                      className={`ftb-btn${showTrim ? ' ftb-btn--on' : ''}`}
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                         <circle cx="6" cy="6" r="3" />
@@ -3983,15 +4088,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setCropMode(null) }}
                     title="Cancel (Esc)"
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 4,
-                      padding: '4px 10px', border: 'none', borderRadius: 5,
-                      background: 'transparent', color: 'rgba(241,242,245,0.6)',
-                      cursor: 'pointer', fontSize: 12, fontWeight: 500,
-                      transition: 'background 0.12s, color 0.12s',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(241,242,245,0.08)'; e.currentTarget.style.color = '#f1f2f5' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(241,242,245,0.6)' }}
+                    className="ftb-btn ftb-btn--wide"
                   >
                     Cancel
                   </button>
@@ -4168,7 +4265,6 @@ const EditorStage = forwardRef<
                         y={ap0.y}
                         width={W * slides.length}
                         height={H}
-                        dither
                       />
                     )
                   }

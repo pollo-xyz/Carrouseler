@@ -9,6 +9,12 @@ const require = createRequire(import.meta.url)
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// Module-scope so IPC handlers can use it too. The window-set-title-overlay
+// handler used to reference a function-local isMac from here — a runtime
+// ReferenceError that silently killed every retint (the classic "black
+// window buttons on the light theme").
+const isMac = process.platform === 'darwin'
+
 // Resolve ffmpeg binary path
 function getFfmpegPath(): string {
   try {
@@ -221,16 +227,43 @@ ipcMain.handle('window-close', async () => {
 
 // Retint the native window-control overlay (min/max/close) to match the app
 // theme. No-op on macOS (native traffic lights auto-theme) and if the window
-// wasn't created with a titleBarOverlay.
+// wasn't created with a titleBarOverlay. The colors are also persisted so the
+// NEXT launch creates the window already themed — without this, a light-theme
+// user gets a black button corner until the renderer's retint IPC lands.
 ipcMain.handle('window-set-title-overlay', async (_e, colors: { color: string; symbolColor: string }) => {
   if (isMac) return
+  writeOverlayColors(colors)
   const w = BrowserWindow.getFocusedWindow() ?? win
   try {
-    w?.setTitleBarOverlay?.({ color: colors.color, symbolColor: colors.symbolColor, height: 34 })
+    w?.setTitleBarOverlay?.({ color: colors.color, symbolColor: colors.symbolColor, height: 55 })
   } catch {
     /* overlay not available on this platform/window */
   }
 })
+
+/* Persisted overlay colors — written on every theme change, read at window
+ * creation so the min/max/close corner never flashes the wrong theme. */
+const overlayColorsPath = () => path.join(app.getPath('userData'), 'title-overlay.json')
+
+function readOverlayColors(): { color: string; symbolColor: string } {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(overlayColorsPath(), 'utf8'))
+    if (typeof parsed?.color === 'string' && typeof parsed?.symbolColor === 'string') {
+      return { color: parsed.color, symbolColor: parsed.symbolColor }
+    }
+  } catch {
+    /* first launch or corrupt file — fall through to the Onyx default */
+  }
+  return { color: '#151514', symbolColor: '#f2f1ee' }
+}
+
+function writeOverlayColors(colors: { color: string; symbolColor: string }) {
+  try {
+    fs.writeFileSync(overlayColorsPath(), JSON.stringify(colors))
+  } catch {
+    /* best-effort */
+  }
+}
 
 ipcMain.handle('get-encoder-diagnostics', async (): Promise<EncoderDiagnostics | null> => {
   // Ensure the probe has completed (or run it now if it somehow hasn't).
@@ -341,7 +374,9 @@ function createWindow() {
   // at build time by electron-builder (see package.json build.icon) to
   // generate the multi-resolution .ico / .icns.
   const iconPath = path.join(__dirname, '..', 'resources', 'tiovivo_appicon_small.png')
-  const isMac = process.platform === 'darwin'
+  // Last theme's overlay colors, persisted by the retint IPC — the window is
+  // born already matching the user's theme instead of defaulting dark.
+  const overlay = readOverlayColors()
   win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -354,15 +389,18 @@ function createWindow() {
     //      top-right; the rest of the bar is ours to paint (custom menus,
     //      drag region).
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
-    // Warm editorial defaults; the renderer retints these on theme change via
-    // the 'window:set-title-overlay' IPC below.
+    // 55, not 56: the header is 56px border-box INCLUDING its 1px bottom
+    // hairline — an opaque 56px overlay would paint over the hairline in
+    // the window-buttons corner.
     titleBarOverlay: isMac ? undefined : {
-      color: '#171310',
-      symbolColor: '#f4f1ec',
-      height: 34,
+      color: overlay.color,
+      symbolColor: overlay.symbolColor,
+      height: 55,
     },
     trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
-    backgroundColor: '#0d0b0a',
+    // Match the overlay bar so the pre-paint window doesn't flash a
+    // mismatched ground on either theme.
+    backgroundColor: overlay.color,
     icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),

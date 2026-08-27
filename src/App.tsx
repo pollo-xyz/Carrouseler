@@ -992,6 +992,8 @@ export default function App() {
   const snapMargins = useTiovivoStore((s) => s.snapMargins)
   const seamlessSlides = useTiovivoStore((s) => s.seamlessSlides)
   const setSeamlessSlides = useTiovivoStore((s) => s.setSeamlessSlides)
+  const slideRows = useTiovivoStore((s) => s.slideRows)
+  const setSlideRows = useTiovivoStore((s) => s.setSlideRows)
   const showHiddenZone = useTiovivoStore((s) => s.showHiddenZone)
   const setShowHiddenZone = useTiovivoStore((s) => s.setShowHiddenZone)
   const showIgSafeArea = useTiovivoStore((s) => s.showIgSafeArea)
@@ -1767,6 +1769,30 @@ export default function App() {
         View
       </button>
       <Popover open={viewOpen} onClose={() => setViewOpen(false)} alignRight width={264}>
+                <div className="popover__section">Layout</div>
+                {/* Wrap the filmstrip into rows — pure view preference, the
+                    document itself is untouched. Seamless mode is one
+                    continuous strip, so rows don't apply there. */}
+                <label
+                  className="field"
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 10, margin: '6px 0 2px' }}
+                  title={seamlessSlides ? 'Rows are unavailable in Seamless mode — the panorama is one continuous strip.' : 'Arrange the slides into rows on the canvas — just for viewing, the exported carousel is unchanged.'}
+                >
+                  <span style={{ flex: 1 }}>Rows</span>
+                  <div className="app__presets" role="group" aria-label="Slide rows">
+                    {([1, 2, 3, 4] as const).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={`btn ${slideRows === n ? 'btn--seg-active' : ''}`}
+                        disabled={seamlessSlides}
+                        onClick={() => setSlideRows(n)}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </label>
                 <div className="popover__section">Overlays</div>
                 <label className="check">
                   <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
@@ -2569,6 +2595,19 @@ export default function App() {
                       style={sliderFill((m.blur ?? 0) / 50, 0, 1)}
                       onChange={(e) => patch({ blur: Number(e.target.value) })}
                       onDoubleClick={() => patch({ blur: 0 })}
+                    />
+                  </label>
+                  <label className="slider-field" title="Whole-item transparency — applies in the editor and in exports. Double-click to reset.">
+                    <span className="slider-field__label">
+                      Opacity<span className="slider-field__value">{Math.round((m.opacity ?? 1) * 100)}%</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={0} max={1} step={0.01}
+                      value={m.opacity ?? 1}
+                      style={sliderFill(m.opacity ?? 1, 0, 1)}
+                      onChange={(e) => patch({ opacity: Number(e.target.value) })}
+                      onDoubleClick={() => patch({ opacity: 1 })}
                     />
                   </label>
                 </div>

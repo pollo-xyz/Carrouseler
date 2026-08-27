@@ -77,16 +77,18 @@ export default function LayerStack({
   slideId,
   slideIndex,
   slideAbsoluteX,
+  slideAbsoluteY,
   slideWidth,
   slideHeight,
-  slideAbsoluteXBySlideId,
+  slideAbsolutePosBySlideId,
 }: {
   slideId: string
   slideIndex: number
   slideAbsoluteX: number
+  slideAbsoluteY: number
   slideWidth: number
   slideHeight: number
-  slideAbsoluteXBySlideId: Map<string, number>
+  slideAbsolutePosBySlideId: Map<string, { x: number; y: number }>
 }) {
   const items = useTiovivoStore((s) => s.items)
   const reorderSlideLayers = useTiovivoStore((s) => s.reorderSlideLayers)
@@ -95,21 +97,25 @@ export default function LayerStack({
   const setActiveSlide = useTiovivoStore((s) => s.setActiveSlide)
   const selectedIds = useTiovivoStore((s) => s.selectedIds)
 
-  // Items that visually overlap this slide's region (both X and Y).
-  // All slides share the same Y range, so Y overlap is: item.y..item.y+h vs 0..slideHeight.
+  // Items that visually overlap this slide's region — fully 2D, so slides
+  // in different ROWS never claim each other's items even when they share
+  // the same X range.
   const slideItems = useMemo(() => {
     const slideLeft = slideAbsoluteX
     const slideRight = slideAbsoluteX + slideWidth
+    const slideTop = slideAbsoluteY
+    const slideBottom = slideAbsoluteY + slideHeight
     return items.filter((it) => {
-      const homeX = slideAbsoluteXBySlideId.get(it.slideId)
-      if (homeX === undefined) return false
-      const itemLeft = homeX + it.x
+      const home = slideAbsolutePosBySlideId.get(it.slideId)
+      if (home === undefined) return false
+      const itemLeft = home.x + it.x
       const itemRight = itemLeft + it.width
-      const xOverlap = itemRight > slideLeft && itemLeft < slideRight
-      const yOverlap = it.y + it.height > 0 && it.y < slideHeight
-      return xOverlap && yOverlap
+      const itemTop = home.y + it.y
+      const itemBottom = itemTop + it.height
+      return itemRight > slideLeft && itemLeft < slideRight &&
+        itemBottom > slideTop && itemTop < slideBottom
     })
-  }, [items, slideAbsoluteX, slideWidth, slideHeight, slideAbsoluteXBySlideId])
+  }, [items, slideAbsoluteX, slideAbsoluteY, slideWidth, slideHeight, slideAbsolutePosBySlideId])
 
   // Top of list = top of z-stack = last in global array.
   const displayItems = useMemo(() => slideItems.slice().reverse(), [slideItems])

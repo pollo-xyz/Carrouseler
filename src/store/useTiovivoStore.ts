@@ -92,6 +92,9 @@ export interface PlacedMedia {
   textBgPadding?: number    // px
   textBgCornerRadius?: number // px
   textBgOpacity?: number    // 0..1
+  /** Whole-item opacity for media (images / videos / GIFs). 0..1; missing
+   *  = 1 (fully opaque). Applied at render, thumbnail and export time. */
+  opacity?: number
 
   // Shape-only fields (only populated when type === 'shape')
   shapeKind?: ShapeKind
@@ -166,6 +169,10 @@ interface TiovivoState {
   marginPct: number
   showCenterGuides: boolean
   seamlessSlides: boolean
+  /** Wrap the artboards into N rows on the canvas — a pure view preference
+   *  (1 = the classic single filmstrip). Ignored in seamless mode, which is
+   *  inherently one continuous row. Persisted in localStorage, not .vpost. */
+  slideRows: number
   showHiddenZone: boolean
   /** Dim overlay marking where Instagram paints its chrome (page-dot indicator
    *  at the bottom-center) so designers don't put critical text there. */
@@ -222,6 +229,7 @@ interface TiovivoState {
   refreshAllThumbnails: () => void
 
   setSeamlessSlides: (v: boolean) => void
+  setSlideRows: (n: number) => void
   setShowHiddenZone: (v: boolean) => void
   setShowIgSafeArea: (v: boolean) => void
   setPreviewMode: (v: boolean) => void
@@ -408,6 +416,12 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   marginPct: 4,
   showCenterGuides: false,
   seamlessSlides: false,
+  slideRows: (() => {
+    // View preference — survives restarts but never travels in the file.
+    if (typeof localStorage === 'undefined') return 1
+    const n = Number(localStorage.getItem('tiovivo-slide-rows'))
+    return Number.isFinite(n) && n >= 1 && n <= 4 ? n : 1
+  })(),
   showHiddenZone: true,
   showIgSafeArea: false,
   previewMode: false,
@@ -872,6 +886,12 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   setSnapCenter: (v) => set({ snapCenter: v, isDirty: true }),
   setSnapItems: (v) => set({ snapItems: v, isDirty: true }),
   setSeamlessSlides: (v) => set({ seamlessSlides: v, isDirty: true }),
+  setSlideRows: (n) => {
+    const rows = Math.max(1, Math.min(4, Math.round(n)))
+    if (typeof localStorage !== 'undefined') localStorage.setItem('tiovivo-slide-rows', String(rows))
+    // View-only — doesn't touch isDirty (nothing changes in the document).
+    set({ slideRows: rows })
+  },
   setShowHiddenZone: (v) => set({ showHiddenZone: v, isDirty: true }),
   setShowIgSafeArea: (v) => set({ showIgSafeArea: v, isDirty: true }),
   // Preview mode is a transient view toggle — does NOT mark the document

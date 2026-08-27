@@ -17,6 +17,7 @@ import { createGifAnimator, type GifAnimator } from '../lib/gifAnimator'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
 import { bgVibeHash, renderBgVibe, type BgVibe } from '../lib/bgVibe'
 import LayerStack from './LayerStack'
+import { Neaticon } from './Neaticon'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -34,6 +35,10 @@ const GUIDE_COLOR = '#3d7bfd'
 const GUIDE_COLOR_CENTER = '#6b9dff'
 const MIN_ZOOM = 0.02
 const MAX_ZOOM = 8
+/* Screen-px clearance reserved under each artboard ROW (multi-row layout)
+ * for the chrome that hangs there in screen space: bg chip (~32), floating
+ * layer stack (~170 for a few layers), and the next row's label (~34). */
+const ROW_CLEARANCE = 260
 
 /* ------------------------------------------------------------------ */
 /*  Shared media ticker                                               */
@@ -450,6 +455,7 @@ function MediaItemView({
       offsetX={flipped ? rw : 0}
       offsetY={flippedY ? rh : 0}
       crop={cropObj}
+      opacity={item.opacity ?? 1}
       name="media"
       draggable={!isCropping}
       filters={filters}
@@ -1432,11 +1438,11 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
         zIndex: 3,
         width: 240,
         padding: '8px 10px',
-        background: 'rgba(21,21,20,0.97)',
+        background: 'var(--surface-3)',
         borderRadius: 8,
-        border: '1px solid rgba(241,242,245,0.1)',
+        border: '1px solid var(--border-strong)',
         boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
-        backdropFilter: 'blur(12px)',
+        
         display: 'flex',
         flexDirection: 'column',
         gap: 2,
@@ -1551,7 +1557,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
 
   const btn: React.CSSProperties = {
     width: 26, height: 26, padding: 0, border: 'none', borderRadius: 5,
-    background: 'transparent', color: 'rgba(241,242,245,0.85)', cursor: 'pointer',
+    background: 'transparent', color: 'var(--text-bright)', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   }
 
@@ -1567,11 +1573,11 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
         pointerEvents: 'auto',
         zIndex: 2,
         padding: '4px 8px',
-        background: 'rgba(21,21,20,0.95)',
+        background: 'var(--surface-3)',
         borderRadius: 8,
-        border: '1px solid rgba(241,242,245,0.1)',
+        border: '1px solid var(--border-strong)',
         boxShadow: '0 2px 12px rgba(10,11,15,0.4)',
-        backdropFilter: 'blur(12px)',
+        
         display: 'flex',
         alignItems: 'center',
         gap: 6,
@@ -1599,7 +1605,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
         disabled={!ready || !duration}
         style={{ flex: 1, minWidth: 60 }}
       />
-      <span style={{ fontSize: 10, color: 'rgba(241,242,245,0.55)', fontFamily: 'var(--mono)', minWidth: 68, textAlign: 'right' }}>
+      <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--mono)', minWidth: 68, textAlign: 'right' }}>
         {fmt(currentTime)} / {fmt(duration)}
       </span>
       <button type="button" onClick={toggleMute} disabled={!ready} title={muted ? 'Unmute' : 'Mute'} style={btn}>
@@ -1712,17 +1718,17 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
         zIndex: 3,
         width: 220,
         padding: 12,
-        background: 'rgba(21,21,20,0.97)',
+        background: 'var(--surface-3)',
         borderRadius: 8,
-        border: '1px solid rgba(241,242,245,0.1)',
+        border: '1px solid var(--border-strong)',
         boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
-        backdropFilter: 'blur(12px)',
+        
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
       }}
     >
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(241,242,245,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cover</span>
       {usingImage ? (
         <img
           src={item.coverImageSrc}
@@ -1748,7 +1754,7 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
             onTouchEnd={handleScrubEnd}
             style={{ flex: 1 }}
           />
-          <span style={{ fontSize: 10, color: 'rgba(241,242,245,0.4)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--mono)', minWidth: 52, textAlign: 'right' }}>
             {fmt(currentTime)}
           </span>
         </div>
@@ -1767,9 +1773,9 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
           fontSize: 11,
           padding: '6px 8px',
           borderRadius: 4,
-          border: '1px solid rgba(241,242,245,0.15)',
-          background: 'rgba(241,242,245,0.05)',
-          color: 'rgba(241,242,245,0.85)',
+          border: '1px solid var(--border-bright)',
+          background: 'color-mix(in srgb, var(--ink) 6%, transparent)',
+          color: 'var(--text-bright)',
           cursor: 'pointer',
         }}
       >
@@ -1978,26 +1984,26 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         zIndex: 3,
         width: TRIM_STRIP_WIDTH + 24,
         padding: 12,
-        background: 'rgba(21,21,20,0.97)',
+        background: 'var(--surface-3)',
         borderRadius: 8,
-        border: '1px solid rgba(241,242,245,0.1)',
+        border: '1px solid var(--border-strong)',
         boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
-        backdropFilter: 'blur(12px)',
+        
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(241,242,245,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Trim</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Trim</span>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: 'rgba(241,242,245,0.55)', fontFamily: 'var(--mono)' }}>
+          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--mono)' }}>
             {fmt(start)} → {fmt(end)} · {fmt(Math.max(0, (end || duration) - start))}
           </span>
           <button
             type="button"
             onClick={onReset}
-            style={{ padding: '2px 6px', border: 'none', borderRadius: 4, background: 'transparent', color: 'rgba(241,242,245,0.5)', cursor: 'pointer', fontSize: 10 }}
+            style={{ padding: '2px 6px', border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 10 }}
           >Reset</button>
         </div>
       </div>
@@ -2067,7 +2073,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
                 backgroundImage: thumbs[i] ? `url(${thumbs[i]})` : undefined,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
-                backgroundColor: thumbs[i] ? undefined : 'rgba(241,242,245,0.04)',
+                backgroundColor: thumbs[i] ? undefined : 'color-mix(in srgb, var(--ink) 5%, transparent)',
                 borderRight: i < TRIM_THUMB_COUNT - 1 ? '1px solid rgba(10,11,15,0.2)' : undefined,
               }}
             />
@@ -2111,7 +2117,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             borderRadius: '4px 0 0 4px',
           }}
         >
-          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="rgba(241,242,245,0.85)" strokeWidth="1.5" strokeLinecap="round">
+          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="var(--text-bright)" strokeWidth="1.5" strokeLinecap="round">
             <line x1="2" y1="5" x2="2" y2="19" />
             <line x1="4" y1="5" x2="4" y2="19" />
           </svg>
@@ -2130,7 +2136,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             borderRadius: '0 4px 4px 0',
           }}
         >
-          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="rgba(241,242,245,0.85)" strokeWidth="1.5" strokeLinecap="round">
+          <svg width="6" height="24" viewBox="0 0 6 24" fill="none" stroke="var(--text-bright)" strokeWidth="1.5" strokeLinecap="round">
             <line x1="2" y1="5" x2="2" y2="19" />
             <line x1="4" y1="5" x2="4" y2="19" />
           </svg>
@@ -2238,32 +2244,51 @@ const EditorStage = forwardRef<
   const pasteboardPad = Math.max(PASTEBOARD_PAD_BASE, Math.max(W, H) * PASTEBOARD_PAD_FACTOR)
 
   /* ---- artboard layout ---- */
+  /* Camera lives up here because the row gap below is zoom-dependent. */
+  const [camera, setCamera] = useState({ zoom: 1, x: 0, y: 0 })
+  const zoom = camera.zoom
+
+  /* Rows are a pure view arrangement (slideRows in the store). Seamless
+     mode is inherently one continuous strip, so rows are ignored there.
+     The vertical gap reserves a SCREEN-constant clearance under each row
+     for the screen-space chrome that hangs there (bg chip + floating layer
+     stack) plus the next row's label — world-space gaps alone shrink into
+     collisions as you zoom out. */
+  const slideRows = useTiovivoStore((s) => s.slideRows)
+  const layoutRows = seamlessSlides ? 1 : Math.max(1, Math.min(slideRows, slides.length))
+  const layoutCols = Math.ceil(slides.length / layoutRows)
+  const rowGap = artboardGap + ROW_CLEARANCE / Math.max(zoom, MIN_ZOOM)
+
   const artboardPositions = useMemo(() => {
     return slides.map((_, i) => ({
-      x: pasteboardPad + i * (W + artboardGap),
-      y: pasteboardPad,
+      x: pasteboardPad + (i % layoutCols) * (W + artboardGap),
+      y: pasteboardPad + Math.floor(i / layoutCols) * (H + rowGap),
     }))
-  }, [slides, W, artboardGap, pasteboardPad])
+  }, [slides, W, H, artboardGap, rowGap, pasteboardPad, layoutCols])
 
-  /* Slide id → absolute X, for the floating per-slide Layers stacks (their
-     overlap math decides which items belong to which slide). */
-  const slideAbsoluteXBySlideId = useMemo(() => {
-    const m = new Map<string, number>()
-    slides.forEach((s, j) => m.set(s.id, artboardPositions[j]!.x))
+  /* Slide id → absolute position, for the floating per-slide Layers stacks
+     (their overlap math decides which items belong to which slide). */
+  const slideAbsolutePosBySlideId = useMemo(() => {
+    const m = new Map<string, { x: number; y: number }>()
+    slides.forEach((s, j) => m.set(s.id, artboardPositions[j]!))
     return m
   }, [slides, artboardPositions])
 
   /* ---- "hidden" zone around slides: media inside here is clipped by slide masks ---- */
   const hiddenZone = useMemo(() => {
     if (!artboardPositions.length) return null
-    const first = artboardPositions[0]!
-    const last = artboardPositions[artboardPositions.length - 1]!
+    // Bounding box over every artboard — row layouts included.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const ap of artboardPositions) {
+      minX = Math.min(minX, ap.x); minY = Math.min(minY, ap.y)
+      maxX = Math.max(maxX, ap.x + W); maxY = Math.max(maxY, ap.y + H)
+    }
     const pad = Math.min(W, H) * 0.8
     return {
-      x: first.x - pad,
-      y: first.y - pad,
-      width: (last.x + W) - first.x + pad * 2,
-      height: H + pad * 2,
+      x: minX - pad,
+      y: minY - pad,
+      width: maxX - minX + pad * 2,
+      height: maxY - minY + pad * 2,
     }
   }, [artboardPositions, W, H])
 
@@ -2278,9 +2303,7 @@ const EditorStage = forwardRef<
     }
   }, [slides])
 
-  /* ---- zoom & pan (single state to prevent tearing) ---- */
-  const [camera, setCamera] = useState({ zoom: 1, x: 0, y: 0 })
-  const zoom = camera.zoom
+  /* ---- pan plumbing (camera state itself is declared above the layout) ---- */
   const panOffset = useMemo(() => ({ x: camera.x, y: camera.y }), [camera.x, camera.y])
   const setPanOffset = useCallback((v: { x: number; y: number } | ((p: { x: number; y: number }) => { x: number; y: number })) => {
     setCamera((c) => {
@@ -2376,12 +2399,21 @@ const EditorStage = forwardRef<
     const CHROME_TOP = 34  // screen-space: label above artboard
     const CHROME_BOT = 36  // screen-space: color picker below artboard
     const pad = 30
-    const totalW = slides.length * W + (slides.length - 1) * artboardGap
+    // Row-aware content bounds. The row gap carries a SCREEN-constant
+    // clearance (ROW_CLEARANCE / zoom in world units), so solve for zoom
+    // analytically: screenHeight = worldBase·z + (rows−1)·CLEARANCE.
+    const totalW = layoutCols * W + (layoutCols - 1) * artboardGap
+    const worldBaseH = layoutRows * H + (layoutRows - 1) * artboardGap
+    const clearTotal = (layoutRows - 1) * ROW_CLEARANCE
     const availW = maxViewWidth - pad * 2
     const availH = maxViewHeight - pad * 2 - CHROME_TOP - CHROME_BOT
-    const fitZoom = Math.min(availW / totalW, availH / H, 2)
+    const fitZoom = Math.max(
+      MIN_ZOOM,
+      Math.min(availW / totalW, Math.max(1, availH - clearTotal) / worldBaseH, 2),
+    )
+    const totalHAtFit = worldBaseH + clearTotal / fitZoom
     const contentCx = pasteboardPad + totalW / 2
-    const contentCy = pasteboardPad + H / 2
+    const contentCy = pasteboardPad + totalHAtFit / 2
     // Offset Y so label+artboard+picker are centered in available area
     const yShift = (CHROME_TOP - CHROME_BOT) / 2
     setCamera({
@@ -2389,7 +2421,7 @@ const EditorStage = forwardRef<
       x: maxViewWidth / 2 - contentCx * fitZoom,
       y: maxViewHeight / 2 + yShift - contentCy * fitZoom,
     })
-  }, [W, H, maxViewWidth, maxViewHeight, slides.length, artboardGap, pasteboardPad])
+  }, [W, H, maxViewWidth, maxViewHeight, layoutCols, layoutRows, artboardGap, pasteboardPad])
 
   /* Same math as fitToScreen, scoped to ONE slide — the deck's
    * double-click jump. Slightly larger pad so neighbours peek in at the
@@ -2404,15 +2436,140 @@ const EditorStage = forwardRef<
     const availW = maxViewWidth - pad * 2
     const availH = maxViewHeight - pad * 2 - CHROME_TOP - CHROME_BOT
     const fitZoom = Math.min(availW / W, availH / H, 2)
-    const cx = pasteboardPad + idx * (W + artboardGap) + W / 2
-    const cy = pasteboardPad + H / 2
+    const ap = artboardPositions[idx]!
+    const cx = ap.x + W / 2
+    const cy = ap.y + H / 2
     const yShift = (CHROME_TOP - CHROME_BOT) / 2
     setCamera({
       zoom: fitZoom,
       x: maxViewWidth / 2 - cx * fitZoom,
       y: maxViewHeight / 2 + yShift - cy * fitZoom,
     })
-  }, [W, H, maxViewWidth, maxViewHeight, slides, artboardGap, pasteboardPad])
+  }, [W, H, maxViewWidth, maxViewHeight, slides, artboardPositions])
+
+  /* ---- eraser mode: brush pixels out of the selected image ----
+   * Same architecture as crop mode: the floating toolbar swaps to erase
+   * controls, a full-canvas overlay owns the pointer, Enter applies and
+   * Escape cancels. Strokes hit an offscreen copy of the image at its
+   * NATURAL resolution (destination-out, round caps); the Konva node shows
+   * that canvas live. Apply commits through the same path as Remove
+   * background — one undoable src swap in the store. */
+  const [eraseItemId, setEraseItemId] = useState<string | null>(null)
+  const [eraseBrush, setEraseBrush] = useState(48)
+  const eraseCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const eraseOriginalRef = useRef<CanvasImageSource | null>(null)
+  const eraseLastRef = useRef<{ x: number; y: number } | null>(null)
+  const eraseDrawingRef = useRef(false)
+  const eraseCursorRef = useRef<HTMLDivElement | null>(null)
+
+  const eraseNode = useCallback((): Konva.Image | null => {
+    if (!eraseItemId) return null
+    return (stageRef.current?.findOne(`#media-${eraseItemId}`) as Konva.Image | undefined) ?? null
+  }, [eraseItemId])
+
+  const startErase = useCallback((id: string) => {
+    const node = stageRef.current?.findOne(`#media-${id}`) as Konva.Image | undefined
+    const source = node?.image()
+    if (!node || !source) return
+    const natW = (source as HTMLImageElement).naturalWidth || (source as HTMLCanvasElement).width
+    const natH = (source as HTMLImageElement).naturalHeight || (source as HTMLCanvasElement).height
+    if (!natW || !natH) return
+    const c = document.createElement('canvas')
+    c.width = natW
+    c.height = natH
+    c.getContext('2d')!.drawImage(source as CanvasImageSource, 0, 0)
+    eraseOriginalRef.current = source as CanvasImageSource
+    eraseCanvasRef.current = c
+    node.image(c)
+    if (node.isCached()) node.cache()
+    node.getLayer()?.batchDraw()
+    eraseLastRef.current = null
+    eraseDrawingRef.current = false
+    setEraseItemId(id)
+  }, [])
+
+  const endErase = useCallback((commit: boolean) => {
+    const id = eraseItemId
+    const node = eraseNode()
+    const c = eraseCanvasRef.current
+    if (commit && id && c) {
+      c.toBlob((blob) => {
+        // The node keeps showing the working canvas until React reloads the
+        // img element from the new src — identical pixels, no flash.
+        if (blob) updateItem(id, { src: URL.createObjectURL(blob) })
+      }, 'image/png')
+    } else if (!commit && node && eraseOriginalRef.current) {
+      node.image(eraseOriginalRef.current)
+      if (node.isCached()) node.cache()
+      node.getLayer()?.batchDraw()
+    }
+    eraseCanvasRef.current = null
+    eraseOriginalRef.current = null
+    eraseLastRef.current = null
+    eraseDrawingRef.current = false
+    setEraseItemId(null)
+  }, [eraseItemId, eraseNode, updateItem])
+
+  const eraseStrokeTo = useCallback((e: { clientX: number; clientY: number }) => {
+    const node = eraseNode()
+    const c = eraseCanvasRef.current
+    const wrap = wrapRef.current
+    if (!node || !c || !wrap) return
+    const rect = wrap.getBoundingClientRect()
+    // Inverse absolute transform → node-local coords. Covers camera pan/
+    // zoom, item position, rotation and flips in one step.
+    const local = node.getAbsoluteTransform().copy().invert().point({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    })
+    // Node-local → source pixels, honouring any crop window.
+    const cropW = node.cropWidth() || c.width
+    const cropH = node.cropHeight() || c.height
+    const sx = (node.cropX() || 0) + (local.x / node.width()) * cropW
+    const sy = (node.cropY() || 0) + (local.y / node.height()) * cropH
+    // Brush is sized in SCREEN px — convert through display scale.
+    const absScale = Math.abs(node.getAbsoluteScale().x) || 1
+    const lineW = Math.max(2, (eraseBrush * (cropW / node.width())) / absScale)
+    const ctx = c.getContext('2d')!
+    ctx.save()
+    ctx.globalCompositeOperation = 'destination-out'
+    ctx.lineWidth = lineW
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = '#000'
+    ctx.fillStyle = '#000'
+    ctx.beginPath()
+    const last = eraseLastRef.current
+    if (last) {
+      ctx.moveTo(last.x, last.y)
+      ctx.lineTo(sx, sy)
+      ctx.stroke()
+    } else {
+      ctx.arc(sx, sy, lineW / 2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.restore()
+    eraseLastRef.current = { x: sx, y: sy }
+    if (node.isCached()) node.cache()
+    node.getLayer()?.batchDraw()
+  }, [eraseNode, eraseBrush])
+
+  // Leave erase mode when the selection moves on, the item disappears, or
+  // preview starts — reverting, never silently committing.
+  useEffect(() => {
+    if (eraseItemId && (selectedId !== eraseItemId || previewMode)) endErase(false)
+  }, [eraseItemId, selectedId, previewMode, endErase])
+
+  // Enter applies, Escape cancels — mirrors crop mode.
+  useEffect(() => {
+    if (!eraseItemId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); endErase(false) }
+      else if (e.key === 'Enter') { e.preventDefault(); endErase(true) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [eraseItemId, endErase])
 
   /**
    * Snap zoom to exactly 100% and recentre on the current content centroid.
@@ -2422,15 +2579,17 @@ const EditorStage = forwardRef<
    */
   const zoomTo100 = useCallback(() => {
     if (W <= 0 || H <= 0 || maxViewWidth <= 0 || maxViewHeight <= 0) return
-    const totalW = slides.length * W + (slides.length - 1) * artboardGap
+    const totalW = layoutCols * W + (layoutCols - 1) * artboardGap
+    // At zoom 1 the screen-constant clearance IS its world size.
+    const totalH = layoutRows * H + (layoutRows - 1) * (artboardGap + ROW_CLEARANCE)
     const contentCx = pasteboardPad + totalW / 2
-    const contentCy = pasteboardPad + H / 2
+    const contentCy = pasteboardPad + totalH / 2
     setCamera({
       zoom: 1,
       x: maxViewWidth / 2 - contentCx,
       y: maxViewHeight / 2 - contentCy,
     })
-  }, [W, H, maxViewWidth, maxViewHeight, slides.length, artboardGap, pasteboardPad])
+  }, [W, H, maxViewWidth, maxViewHeight, layoutCols, layoutRows, artboardGap, pasteboardPad])
 
   // Only fit on first mount, not every time slides change
   const hasFitRef = useRef(false)
@@ -3468,15 +3627,17 @@ const EditorStage = forwardRef<
           const rect = wrapRef.current?.getBoundingClientRect()
           if (!rect) return
           const mx = e.clientX - rect.left
-          // Find which gap (or end) the mouse is closest to for insertion
+          const my = e.clientY - rect.top
+          // Nearest slide centre in BOTH axes — with row layouts, x-distance
+          // alone would snap the drop to the wrong row.
           let bestTarget: string | null = null
           let bestDist = Infinity
           for (let j = 0; j < slides.length; j++) {
             if (slides[j]!.id === reorderDragRef.current) continue
             const ap = artboardPositions[j]!
-            const sx = ap.x * zoom + panOffset.x
-            const cx = sx + (W * zoom) / 2
-            const dist = Math.abs(mx - cx)
+            const cx = ap.x * zoom + panOffset.x + (W * zoom) / 2
+            const cy = ap.y * zoom + panOffset.y + (H * zoom) / 2
+            const dist = Math.hypot(mx - cx, my - cy)
             if (dist < bestDist) { bestDist = dist; bestTarget = slides[j]!.id }
           }
           setReorderDropTarget(bestTarget)
@@ -3830,9 +3991,10 @@ const EditorStage = forwardRef<
                     slideId={slide.id}
                     slideIndex={i}
                     slideAbsoluteX={ap.x}
+                    slideAbsoluteY={ap.y}
                     slideWidth={W}
                     slideHeight={H}
-                    slideAbsoluteXBySlideId={slideAbsoluteXBySlideId}
+                    slideAbsolutePosBySlideId={slideAbsolutePosBySlideId}
                   />
                 </div>
               )}
@@ -3844,8 +4006,10 @@ const EditorStage = forwardRef<
                   preview mode. Scales with zoom (clamped so it stays
                   clickable when far out, sane when close in). */}
               {!previewMode && (!seamlessSlides || i === slides.length - 1) && (() => {
-                const addSize = Math.round(Math.max(16, Math.min(40, 28 * zoom)))
-                const glyph = Math.max(8, Math.round(addSize * 0.36))
+                // Comfortable floor of 24px — zoomed out it stays an easy
+                // target; zoomed in it grows with the canvas up to 44px.
+                const addSize = Math.round(Math.max(24, Math.min(44, 32 * zoom)))
+                const glyph = Math.max(9, Math.round(addSize * 0.36))
                 return <button
                   type="button"
                   className="artboard-add-btn"
@@ -3919,7 +4083,39 @@ const EditorStage = forwardRef<
                 zIndex: 2,
               }}
             >
-              {!cropItemId ? (
+              {eraseItemId ? (
+                <>
+                  <span style={{ fontSize: 11, color: 'var(--text)', fontFamily: 'var(--meta)', padding: '0 2px 0 6px' }}>Brush</span>
+                  <input
+                    type="range"
+                    min={8}
+                    max={160}
+                    step={1}
+                    value={eraseBrush}
+                    onChange={(e) => setEraseBrush(Number(e.target.value))}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{ width: 96 }}
+                    title="Brush size"
+                  />
+                  <button
+                    type="button"
+                    className="ftb-btn ftb-btn--wide"
+                    style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 600 }}
+                    onClick={(e) => { e.stopPropagation(); endErase(true) }}
+                    title="Apply (Enter)"
+                  >
+                    Done
+                  </button>
+                  <button
+                    type="button"
+                    className="ftb-btn ftb-btn--wide"
+                    onClick={(e) => { e.stopPropagation(); endErase(false) }}
+                    title="Cancel (Esc)"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : !cropItemId ? (
                 <>
                   <button
                     type="button"
@@ -3932,6 +4128,16 @@ const EditorStage = forwardRef<
                       <path d="M11.5 15V4.5H1" />
                     </svg>
                   </button>
+                  {sel.type === 'image' && (
+                    <button
+                      type="button"
+                      className="ftb-btn"
+                      onClick={(e) => { e.stopPropagation(); startErase(selectedId!) }}
+                      title="Erase — brush away parts of the image"
+                    >
+                      <Neaticon name="eraser" style={{ width: 16, height: 16 }} />
+                    </button>
+                  )}
                   {sel.cropW > 0 && (
                     <button
                       type="button"
@@ -4915,6 +5121,52 @@ const EditorStage = forwardRef<
           </Layer>
         </Stage>
       </div>
+
+      {/* Eraser overlay — owns every pointer while erase mode is active
+          (z1: above the canvas, below the floating toolbar at z2 so Done /
+          Cancel stay clickable). The circle is the brush cursor. */}
+      {eraseItemId && (
+        <div
+          style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'auto', cursor: 'none', touchAction: 'none' }}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return
+            e.stopPropagation()
+            eraseDrawingRef.current = true
+            eraseLastRef.current = null
+            ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+            eraseStrokeTo(e)
+          }}
+          onPointerMove={(e) => {
+            const el = eraseCursorRef.current
+            const rect = wrapRef.current?.getBoundingClientRect()
+            if (el && rect) {
+              el.style.left = `${e.clientX - rect.left}px`
+              el.style.top = `${e.clientY - rect.top}px`
+            }
+            if (eraseDrawingRef.current) eraseStrokeTo(e)
+          }}
+          onPointerUp={() => {
+            eraseDrawingRef.current = false
+            eraseLastRef.current = null
+          }}
+        >
+          <div
+            ref={eraseCursorRef}
+            style={{
+              position: 'absolute',
+              left: -200,
+              top: -200,
+              width: eraseBrush,
+              height: eraseBrush,
+              borderRadius: '50%',
+              border: '1.5px solid rgba(241, 242, 245, 0.95)',
+              boxShadow: '0 0 0 1px rgba(10, 11, 15, 0.55)',
+              transform: 'translate(-50%, -50%)',
+              pointerEvents: 'none',
+            }}
+          />
+        </div>
+      )}
 
       {/* Inline text editor — positioned over the Konva.Text node, sized
           to match what the user was seeing before they double-clicked. */}

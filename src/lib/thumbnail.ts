@@ -146,6 +146,7 @@ export async function generateThumbnail(
                 width: item.width * ratio,
                 height: item.height * ratio,
                 rotation: item.rotation,
+                opacity: item.opacity ?? 1,
               }),
             )
             v.removeEventListener('seeked', onLoaded)
@@ -170,6 +171,7 @@ export async function generateThumbnail(
               width: item.width * ratio,
               height: item.height * ratio,
               rotation: item.rotation,
+              opacity: item.opacity ?? 1,
             }),
           )
           resolve()

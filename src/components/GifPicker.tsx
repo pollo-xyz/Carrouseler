@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   trending as giphyTrending,
   search as giphySearch,
@@ -58,10 +59,15 @@ export default function GifPicker({ open, onClose, onPick, anchorRef }: Props) {
       // is 380 px wide, so clamp so it never falls off the right edge of
       // the window.
       const w = 380
-      let left = r.left
-      if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8
-      if (left < 8) left = 8
-      setPos({ left, top: r.bottom + 8 })
+      const maxH = 480
+      // The anchor lives on the canvas's left tool rail — open BESIDE it,
+      // vertically near the button, clamped inside the window.
+      let left = r.right + 10
+      if (left + w > window.innerWidth - 8) left = Math.max(8, r.left - w - 10)
+      let top = r.top - 60
+      if (top + maxH > window.innerHeight - 8) top = Math.max(8, window.innerHeight - maxH - 8)
+      if (top < 8) top = 8
+      setPos({ left, top })
     }
     place()
     window.addEventListener('resize', place)
@@ -147,7 +153,10 @@ export default function GifPicker({ open, onClose, onPick, anchorRef }: Props) {
 
   if (!open) return null
 
-  return (
+  // Portal to <body>: the picker is position:fixed, and any transformed
+  // ancestor (the floating canvas toolbar) would hijack fixed positioning
+  // and re-anchor it inside the toolbar.
+  return createPortal(
     <div
       className="gif-picker"
       ref={containerRef}
@@ -206,6 +215,7 @@ export default function GifPicker({ open, onClose, onPick, anchorRef }: Props) {
         )}
       </div>
       <div className="gif-picker__footer">Powered by GIPHY</div>
-    </div>
+    </div>,
+    document.body,
   )
 }

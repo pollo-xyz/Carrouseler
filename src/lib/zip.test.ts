@@ -52,6 +52,29 @@ describe('createZip / readZip round-trip', () => {
   })
 })
 
+describe('createZip size limits (no zip64)', () => {
+  // Stand-in for a >4 GiB Blob: createZip must refuse on `size` alone,
+  // before it ever tries to read the bytes.
+  const hugeBlob = (size: number) =>
+    ({
+      size,
+      arrayBuffer: () => Promise.reject(new Error('must not read an oversized entry')),
+    }) as unknown as Blob
+
+  it('refuses a single entry larger than 4 GiB', async () => {
+    await expect(createZip([{ name: 'big.mp4', data: hugeBlob(2 ** 32) }])).rejects.toThrow(/too large/)
+  })
+
+  it('refuses when the running offset would pass 4 GiB', async () => {
+    await expect(
+      createZip([
+        { name: 'a.bin', data: new Blob([new Uint8Array(16)]) },
+        { name: 'b.bin', data: hugeBlob(0xffffffff - 40) },
+      ]),
+    ).rejects.toThrow(/too large/)
+  })
+})
+
 describe('readZip error handling', () => {
   it('throws on garbage input', () => {
     const junk = new Uint8Array(100).fill(0xab)

@@ -21,6 +21,7 @@
       "output": "release"
     },
     "icon": "resources/tiovivo_appicon.png",
+    "beforePack": "scripts/before-pack.cjs",
     "files": [
       "dist/**",
       "dist-electron/**",

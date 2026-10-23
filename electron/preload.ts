@@ -112,14 +112,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
    *  why a hardware encoder wasn't selected. */
   getEncoderDiagnostics: () => ipcRenderer.invoke('get-encoder-diagnostics'),
 
-  /** Extract a single frame from an encoded video as a PNG */
-  extractCoverFrame: (options: {
-    videoPath: string
-    time: number
-    outputPath: string
-    width: number
-    height: number
-  }) => ipcRenderer.invoke('extract-cover-frame', options),
+  /** Abandon an encoding session: kills ffmpeg and deletes the partial file. */
+  abortVideoEncode: (options: {
+    sessionId: string
+  }) => ipcRenderer.invoke('abort-video-encode', options),
+
+  /** Toggle Chromium DevTools (Windows/Linux have no native menu for it). */
+  toggleDevTools: () => ipcRenderer.invoke('toggle-dev-tools'),
 
   /** Subscribe to Edit → Undo / Redo menu events from main. Returns an unsubscribe fn. */
   onUndo: (cb: () => void) => {

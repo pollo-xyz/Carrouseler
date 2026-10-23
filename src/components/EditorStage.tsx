@@ -11,7 +11,7 @@ import { Arc, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Transformer } fr
 import Konva from 'konva'
 import { Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import { useTiovivoStore, type PlacedMedia, type Slide } from '../store/useTiovivoStore'
-import { useThemeStore, resolveWorkspaceBg } from '../lib/theme'
+import { useThemeStore, resolveWorkspaceBg, type ThemeName } from '../lib/theme'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
 import { createGifAnimator, type GifAnimator } from '../lib/gifAnimator'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
@@ -29,16 +29,85 @@ const PASTEBOARD_PAD_FACTOR = 2 // pasteboard extends this × max(W,H) beyond sl
    artboard X layout (i × (W + gap)) to decide which items overlap the
    active slide. Pasteboard padding cancels out of that comparison. */
 export const ARTBOARD_GAP = 120
-/* Editor-chrome accent — signal blue, matching --hot in index.css. Guides,
-   transformer borders, and trim handles all speak the one accent color. */
-const GUIDE_COLOR = '#3d7bfd'
-const GUIDE_COLOR_CENTER = '#6b9dff'
+/* Editor-chrome accent — signal blue, matching --hot / --hot-hi in
+   index.css per theme (Konva can't read CSS variables). Guides, transformer
+   borders, and trim handles all speak the one accent color. */
+const CHROME_ACCENT: Record<ThemeName, { hot: string; hotHi: string; edge: string }> = {
+  onyx: { hot: '#3d7bfd', hotHi: '#6b9dff', edge: '#1d4ed8' },
+  cream: { hot: '#1a56db', hotHi: '#1447b8', edge: '#1447b8' },
+}
+/* Name tag for editor-only nodes that must live inside the content layer
+   (crop overlay, multi-select borders, video-master placeholders) — exports
+   and the pixel inspector hide every node carrying it. */
+const EDITOR_CHROME = 'editor-chrome'
 const MIN_ZOOM = 0.02
 const MAX_ZOOM = 8
 /* Screen-px clearance reserved under each artboard ROW (multi-row layout)
  * for the chrome that hangs there in screen space: bg chip (~32), floating
  * layer stack (~170 for a few layers), and the next row's label (~34). */
 const ROW_CLEARANCE = 260
+
+/** Bitmap-backed items (image / video / GIF) — the only kinds with a natural
+ *  size, crop, flips and colour corrections. Text and shapes have none. */
+function isMediaItem(item: PlacedMedia): boolean {
+  return item.type === 'image' || item.type === 'video' || item.type === 'gif'
+}
+
+/** Line shapes: Konva derives a Line's height from its points (0 for our
+ *  horizontal line), so geometry reads must use the stored height. */
+function isLineItem(item: PlacedMedia): boolean {
+  return item.type === 'shape' && item.shapeKind === 'line'
+}
+
+/** Source pixels behind an item's box — the crop window when cropped, else
+ *  the natural size. What the upscale warning has to compare against. */
+function sourcePixels(item: PlacedMedia): { w: number; h: number } {
+  return item.cropW > 0 && item.cropH > 0
+    ? { w: item.cropW, h: item.cropH }
+    : { w: item.naturalWidth, h: item.naturalHeight }
+}
+
+/** True when a key event is aimed at a text field — window-level canvas
+ *  shortcuts (Space pan, crop / erase Enter + Esc) must not eat typing.
+ *  Sliders, checkboxes and colour swatches don't take text, so a focused
+ *  one still lets Space pan. */
+const NON_TEXT_INPUTS = new Set(['range', 'checkbox', 'radio', 'color', 'button', 'submit', 'reset', 'file', 'image'])
+function isTypingTarget(t: EventTarget | null): boolean {
+  if (t instanceof HTMLInputElement) return !NON_TEXT_INPUTS.has(t.type)
+  if (!(t instanceof HTMLElement)) return false
+  return t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+}
+
+/** A KEYBOARD-focused control that Space activates (button, menu item,
+ *  checkbox, a collapsible's <summary>…). Space-to-pan must leave those
+ *  alone or keyboard users can't press anything. A control focused by a
+ *  mouse click (no :focus-visible) still pans — click a tool, then hold
+ *  Space, is the normal canvas workflow. */
+const SPACE_ACTIVATED = 'button, a[href], summary, input[type="checkbox"], input[type="radio"], ' +
+  '[role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="option"], [role="tab"], [role="switch"], [role="checkbox"]'
+function isSpaceActivatable(t: EventTarget | null): boolean {
+  return t instanceof Element && t.matches(':focus-visible') && !!t.closest(SPACE_ACTIVATED)
+}
+
+/** True when a wheel event belongs to HTML chrome over the canvas (a form
+ *  control, a popover, anything that scrolls) rather than to the canvas. */
+function wheelOwnedByChrome(target: EventTarget | null, wrap: HTMLElement): boolean {
+  let el = target instanceof Element ? target : null
+  while (el && el !== wrap) {
+    if (el.matches('textarea, input, select, [data-wheel-chrome]')) return true
+    if (el instanceof HTMLElement && el.scrollHeight > el.clientHeight) {
+      const oy = getComputedStyle(el).overflowY
+      if (oy === 'auto' || oy === 'scroll') return true
+    }
+    el = el.parentElement
+  }
+  return false
+}
+
+/* Videos whose preview trim-loop (MediaItemView's timeupdate handler) is
+   suspended — video export seeks / plays them itself and a rewind mid-capture
+   would derail it. */
+const trimLoopSuspended = new Set<HTMLVideoElement>()
 
 /* ------------------------------------------------------------------ */
 /*  Shared media ticker                                               */
@@ -153,14 +222,18 @@ function useHtmlMedia(
         setNode(null)
       }
     }
+    // Cancel flag: a slow load for a previous src must not land after (and
+    // overwrite) the newer one.
+    let cancelled = false
     const img = new window.Image()
-    img.onload = () => setNode(img)
+    img.onload = () => { if (!cancelled) setNode(img) }
     img.onerror = () => {
+      if (cancelled) return
       console.error('[useHtmlMedia] image load failed', { src, itemId })
       setNode(null)
     }
     img.src = src
-    return () => { setNode(null) }
+    return () => { cancelled = true; setNode(null) }
   }, [src, type, itemId])
   return node
 }
@@ -311,6 +384,28 @@ function makeSaturationFilter(amount: number) {
   }
 }
 
+/** Konva filter chain for an item's colour corrections. `hasFilters` means
+ *  the node must be cached for the filters to draw at all. Shared by the
+ *  home-slide view and master ghosts so both render the same corrections. */
+function useCorrectionFilters(item: PlacedMedia) {
+  const satAmount = item.saturation ?? 1
+  const hasSatChange = Math.abs(satAmount - 1) > 0.001
+  const blurAmount = item.blur ?? 0
+  const hasBlur = blurAmount > 0.001
+  const hasFilters = item.brightness !== 0 || item.contrast !== 0 || hasSatChange || hasBlur
+  const satFilter = useMemo(() => makeSaturationFilter(satAmount), [satAmount])
+  const filters = useMemo(() => {
+    type FilterFn = (imageData: ImageData) => void
+    const f: FilterFn[] = []
+    if (item.brightness !== 0) f.push(Konva.Filters.Brighten as unknown as FilterFn)
+    if (item.contrast !== 0) f.push(Konva.Filters.Contrast as unknown as FilterFn)
+    if (hasSatChange) f.push(satFilter as FilterFn)
+    if (hasBlur) f.push(Konva.Filters.Blur as unknown as FilterFn)
+    return f.length > 0 ? f : undefined
+  }, [item.brightness, item.contrast, hasSatChange, satFilter, hasBlur])
+  return { filters, hasFilters, blurAmount }
+}
+
 /* ------------------------------------------------------------------ */
 /*  MediaItemView                                                     */
 /* ------------------------------------------------------------------ */
@@ -336,22 +431,10 @@ function MediaItemView({
   const shapeRef = useRef<Konva.Image>(null)
 
   // Apply Konva filters when image loads or filter values change
-  const satAmount = item.saturation ?? 1
-  const hasSatChange = Math.abs(satAmount - 1) > 0.001
-  const blurAmount = item.blur ?? 0
-  const hasBlur = blurAmount > 0.001
-  const hasFilters = item.brightness !== 0 || item.contrast !== 0 || hasSatChange || hasBlur
-  const satFilter = useMemo(() => makeSaturationFilter(satAmount), [satAmount])
-  const filters = useMemo(() => {
-    type FilterFn = (imageData: ImageData) => void
-    const f: FilterFn[] = []
-    if (item.brightness !== 0) f.push(Konva.Filters.Brighten as unknown as FilterFn)
-    if (item.contrast !== 0) f.push(Konva.Filters.Contrast as unknown as FilterFn)
-    if (hasSatChange) f.push(satFilter as FilterFn)
-    if (hasBlur) f.push(Konva.Filters.Blur as unknown as FilterFn)
-    return f.length > 0 ? f : undefined
-  }, [item.brightness, item.contrast, hasSatChange, satFilter, hasBlur])
+  const { filters, hasFilters, blurAmount } = useCorrectionFilters(item)
 
+  // The crop window and crop mode change what the node draws, so they're
+  // deps too — otherwise the cached bitmap goes stale.
   useEffect(() => {
     const node = shapeRef.current
     if (!node || !img) return
@@ -367,7 +450,8 @@ function MediaItemView({
       node.clearCache()
       node.getLayer()?.batchDraw()
     }
-  }, [img, hasFilters, item.brightness, item.contrast, item.saturation, item.blur, item.width, item.height, item.type])
+  }, [img, hasFilters, item.brightness, item.contrast, item.saturation, item.blur, item.width, item.height, item.type,
+      item.cropX, item.cropY, item.cropW, item.cropH, isCropping])
 
   useEffect(() => {
     // Per-frame redraw for animated source media. Without this, GIFs freeze
@@ -397,6 +481,7 @@ function MediaItemView({
     const v = videoElements.get(item.id)
     if (!v) return
     const onTime = () => {
+      if (trimLoopSuspended.has(v)) return // video export owns playback
       const end = item.trimEnd && item.trimEnd > 0 ? item.trimEnd : v.duration
       if (v.currentTime >= end - 0.02) v.currentTime = item.trimStart || 0
       else if (v.currentTime < (item.trimStart || 0) - 0.02) v.currentTime = item.trimStart || 0
@@ -416,11 +501,14 @@ function MediaItemView({
       coverImageElements.delete(item.id)
       return
     }
+    // Cancel flag: a slow load of a previous cover must not overwrite the
+    // registry entry for the current one.
+    let cancelled = false
     const im = new window.Image()
     im.crossOrigin = 'anonymous'
-    im.onload = () => coverImageElements.set(item.id, im)
+    im.onload = () => { if (!cancelled) coverImageElements.set(item.id, im) }
     im.src = item.coverImageSrc
-    return () => { coverImageElements.delete(item.id) }
+    return () => { cancelled = true; coverImageElements.delete(item.id) }
   }, [item.id, item.type, item.coverImageSrc])
 
   if (!img) return null
@@ -707,6 +795,36 @@ function fitBalancedWrap(opts: {
   }
 }
 
+type TextLayoutInput = Pick<PlacedMedia,
+  'fillMode' | 'text' | 'fontFamily' | 'fontSize' | 'bold' | 'italic' |
+  'width' | 'height' | 'lineHeight' | 'letterSpacing'>
+
+/**
+ * Font size + text a text item actually draws. Fill mode derives the size
+ * from the box — balanced wrap first (pre-broken text, drawn with
+ * wrap="none"), greedy-wrap fitFontSize as the fallback; off mode passes the
+ * stored size and text through. Shared by TextItemView, master ghosts and
+ * the inline editor so all three agree on the size.
+ */
+function textLayout(t: TextLayoutInput): { fontSize: number; text: string; balanced: boolean } {
+  const text = t.text || ''
+  if (!t.fillMode) return { fontSize: t.fontSize || 64, text, balanced: false }
+  const opts = {
+    text,
+    fontFamily: t.fontFamily || 'Inter',
+    fontStyle: fontStyleString(t.bold, t.italic),
+    boxWidth: t.width,
+    boxHeight: t.height,
+    lineHeight: t.lineHeight ?? 1.15,
+    letterSpacing: t.letterSpacing ?? 0,
+    min: 4,
+    max: 4000,
+  }
+  const fitted = fitBalancedWrap(opts)
+  if (fitted) return { fontSize: fitted.fontSize, text: fitted.text, balanced: true }
+  return { fontSize: fitFontSize(opts), text, balanced: false }
+}
+
 /** Pick a foreground stroke/grid color that contrasts with a hex bg. */
 function contrastStrokeFor(bgColor: string, alpha = 0.22): string {
   const hex = (bgColor || '#ffffff').replace('#', '')
@@ -737,7 +855,8 @@ function TextItemView({
   onDragEnd: (node: Konva.Text) => void
 }) {
   const shapeRef = useRef<Konva.Text>(null)
-  const updateItem = useTiovivoStore((s) => s.updateItem)
+  const bgRef = useRef<Konva.Rect>(null)
+  const syncItemMeasurements = useTiovivoStore((s) => s.syncItemMeasurements)
   const fillMode = !!item.fillMode
 
   const fontStyle = fontStyleString(item.bold, item.italic)
@@ -752,59 +871,35 @@ function TextItemView({
   // line, which lets a larger font fit AND produces more visually-balanced
   // lines. We fall back to greedy wrap when the user has explicit \n line
   // breaks (we don't want to override their intent), when there's only one
-  // word, or when the algorithm declines (degenerate input).
-  const fitted = useMemo(() => {
-    if (!fillMode) return null
-    return fitBalancedWrap({
-      text: item.text || '',
-      fontFamily: item.fontFamily || 'Inter',
-      fontStyle,
-      boxWidth: item.width,
-      boxHeight: item.height,
-      lineHeight,
-      letterSpacing,
-      min: 4,
-      max: 4000,
-    })
-  }, [fillMode, item.text, item.fontFamily, fontStyle, item.width, item.height,
-      lineHeight, letterSpacing])
-
-  const renderedFontSize = useMemo(() => {
-    if (!fillMode) return item.fontSize || 64
-    if (fitted) return fitted.fontSize
-    return fitFontSize({
-      text: item.text || '',
-      fontFamily: item.fontFamily || 'Inter',
-      fontStyle,
-      boxWidth: item.width,
-      boxHeight: item.height,
-      lineHeight,
-      letterSpacing,
-      min: 4,
-      max: 4000,
-    })
-  }, [fillMode, fitted, item.text, item.fontFamily, fontStyle, item.width, item.height,
-      lineHeight, letterSpacing, item.fontSize])
-
-  // Text the Konva node actually draws: in fillMode, prefer the balanced
-  // wrap's pre-broken text so Konva renders our chosen line breaks instead
-  // of its greedy ones. Outside fillMode we always pass through the original.
-  const renderedText = (fillMode && fitted) ? fitted.text : (item.text || '')
+  // word, or when the algorithm declines (degenerate input). Konva draws the
+  // balanced result's pre-broken text verbatim (wrap="none").
+  const { text: rawText, fontFamily, fontSize, bold, italic, width, height } = item
+  const layout = useMemo(
+    () => textLayout({
+      fillMode, text: rawText, fontFamily, fontSize, bold, italic, width, height,
+      lineHeight, letterSpacing,
+    }),
+    [fillMode, rawText, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing],
+  )
+  const renderedFontSize = layout.fontSize
+  const renderedText = layout.text
 
   // In off mode, the rendered text's height determines the item's height —
   // sync it back so selection / snap / transformer match what's drawn.
   // In fill mode, height is user-controlled (the target), so we don't sync.
+  // Derived value → no undo entry: an undo that re-triggers this sync must
+  // not push history (it would wipe the redo stack).
   useEffect(() => {
     if (fillMode) return
     const n = shapeRef.current
     if (!n) return
     const measured = n.height()
     if (measured > 0 && Math.abs(measured - item.height) > 1) {
-      updateItem(item.id, { height: measured })
+      syncItemMeasurements(item.id, { height: measured })
     }
   }, [fillMode, item.id, item.text, item.fontFamily, item.fontSize, item.bold,
       item.italic, item.textAlign, item.lineHeight, item.letterSpacing,
-      item.width, item.height, updateItem])
+      item.width, item.height, syncItemMeasurements])
 
   // Optional rounded-rect background ("text pill"). The Rect sits behind the
   // text and tracks the item's bounding box with configurable padding +
@@ -830,17 +925,21 @@ function TextItemView({
     <>
       {hasTextBg && (
         <Rect
-          x={item.x - bgPadding}
-          y={item.y - bgPadding}
+          ref={bgRef}
+          // Multi-drag moves sibling pills by this id (see handleDragMove).
+          id={`textbg-${item.id}`}
+          // Anchored at the text's origin and pushed out by the padding via
+          // offset, so rotation pivots around the same point as the text.
+          x={item.x}
+          y={item.y}
+          offsetX={bgPadding}
+          offsetY={bgPadding}
           width={item.width + bgPadding * 2}
           height={item.height + bgPadding * 2}
           fill={item.textBgColor}
           opacity={item.textBgOpacity ?? 1}
           cornerRadius={item.textBgCornerRadius ?? 8}
           rotation={item.rotation}
-          // Rotate around the same origin as the text so they pivot together.
-          offsetX={0}
-          offsetY={0}
           listening={false}
           perfectDrawEnabled={false}
         />
@@ -869,7 +968,7 @@ function TextItemView({
       {...strokeProps}
       // When we've pre-broken the text via balanced wrap, ask Konva to honour
       // those breaks verbatim rather than re-wrapping greedily on top of them.
-      wrap={(fillMode && fitted) ? 'none' : 'word'}
+      wrap={layout.balanced ? 'none' : 'word'}
       visible={!isEditing}
       draggable
       perfectDrawEnabled={false}
@@ -883,7 +982,12 @@ function TextItemView({
       onDblClick={(e) => { e.cancelBubble = true; onRequestEdit() }}
       onDblTap={(e) => { e.cancelBubble = true; onRequestEdit() }}
       onDragStart={(e) => onDragStart(e.target as Konva.Text)}
-      onDragMove={(e) => onDragMove(e.target as Konva.Text)}
+      onDragMove={(e) => {
+        const n = e.target as Konva.Text
+        onDragMove(n)
+        // Keep the pill under the text mid-drag (after snapping moved it).
+        bgRef.current?.position(n.position())
+      }}
       onDragEnd={(e) => onDragEnd(e.target as Konva.Text)}
       onTransformEnd={() => {
         const n = shapeRef.current
@@ -937,12 +1041,14 @@ function TextItemView({
 function ShapeItemView({
   item,
   onSelect,
+  onChange,
   onDragStart,
   onDragMove,
   onDragEnd,
 }: {
   item: PlacedMedia
   onSelect: (additive: boolean) => void
+  onChange: (patch: Partial<PlacedMedia>) => void
   onDragStart: (node: Konva.Node) => void
   onDragMove: (node: Konva.Node) => void
   onDragEnd: (node: Konva.Node) => void
@@ -969,6 +1075,32 @@ function ShapeItemView({
     onDragStart: (e: Konva.KonvaEventObject<DragEvent>) => onDragStart(e.target),
     onDragMove: (e: Konva.KonvaEventObject<DragEvent>) => onDragMove(e.target),
     onDragEnd: (e: Konva.KonvaEventObject<DragEvent>) => onDragEnd(e.target),
+    // Fold the Transformer's scale into width / height, like MediaItemView.
+    // A leftover node scale would desync the store (and drag-end, which
+    // reads node size × scale, would multiply it in again). Scale is taken
+    // against the stored size so every kind works: ellipse width comes from
+    // its radius, a line's height isn't in its points at all. A negative
+    // scale (dragged past the opposite edge) moves the top-left to the new
+    // visual corner — the shapes themselves are symmetric.
+    onTransformEnd: (e: Konva.KonvaEventObject<Event>) => {
+      const n = e.target
+      const sxRaw = n.scaleX(), syRaw = n.scaleY()
+      const rad = (n.rotation() * Math.PI) / 180
+      const dx = sxRaw < 0 ? item.width * sxRaw : 0
+      const dy = syRaw < 0 ? item.height * syRaw : 0
+      const x = n.x() + dx * Math.cos(rad) - dy * Math.sin(rad)
+      const y = n.y() + dx * Math.sin(rad) + dy * Math.cos(rad)
+      const w = Math.max(1, item.width * Math.abs(sxRaw))
+      const h = Math.max(1, item.height * Math.abs(syRaw))
+      // Apply the final geometry imperatively too, so nothing draws at
+      // scale 1 / old size while React commits (same as MediaItemView).
+      n.scale({ x: 1, y: 1 })
+      n.position({ x, y })
+      if (kind === 'ellipse') n.setAttrs({ radiusX: w / 2, radiusY: h / 2, offsetX: -w / 2, offsetY: -h / 2 })
+      else if (kind === 'line') n.setAttrs({ points: [0, h / 2, w, h / 2] })
+      else n.setAttrs({ width: w, height: h })
+      onChange({ x, y, width: w, height: h, rotation: n.rotation() })
+    },
   }
 
   if (kind === 'ellipse') {
@@ -1036,7 +1168,7 @@ function ShapeItemView({
 /*  goes to the home copy.                                            */
 /* ------------------------------------------------------------------ */
 
-function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) {
+function MasterGhost({ item, slideId, chromeColor }: { item: PlacedMedia; slideId: string; chromeColor: string }) {
   // Unique-per-(item, slide) id so findOne('#media-…') / Transformer hooks
   // never accidentally retarget a ghost instead of the home-slide instance.
   const ghostId = `master-${item.id}-${slideId}`
@@ -1046,6 +1178,26 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
   const media = useHtmlMedia(
     item.type === 'image' || item.type === 'gif' ? item.src : '',
     item.type === 'image' || item.type === 'gif' ? item.type : 'text',
+  )
+  // Colour corrections, mirrored from MediaItemView for static images. GIF
+  // ghosts skip them: a filtered node must be re-cached every frame, and the
+  // shared ticker only does that for the home-slide instance.
+  const imageRef = useRef<Konva.Image>(null)
+  const { filters, hasFilters, blurAmount } = useCorrectionFilters(item)
+  const applyFilters = item.type === 'image' && hasFilters
+  useEffect(() => {
+    const node = imageRef.current
+    if (!node || !media) return
+    if (applyFilters) node.cache()
+    else node.clearCache()
+    node.getLayer()?.batchDraw()
+  }, [media, applyFilters, item.brightness, item.contrast, item.saturation, item.blur,
+      item.width, item.height, item.cropX, item.cropY, item.cropW, item.cropH])
+  // Text ghosts draw the same fitted size / balanced breaks as the home copy.
+  const { fillMode, text, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing } = item
+  const layout = useMemo(
+    () => textLayout({ fillMode, text, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing }),
+    [fillMode, text, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing],
   )
   const common = {
     id: ghostId,
@@ -1079,8 +1231,12 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
             id={`${ghostId}-bg`}
             name="master-ghost"
             listening={false}
-            x={item.x - bgPadding}
-            y={item.y - bgPadding}
+            // Same origin + offset as TextItemView's pill so it pivots with
+            // the text under rotation.
+            x={item.x}
+            y={item.y}
+            offsetX={bgPadding}
+            offsetY={bgPadding}
             width={item.width + bgPadding * 2}
             height={item.height + bgPadding * 2}
             fill={item.textBgColor}
@@ -1095,10 +1251,11 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
           x={item.x}
           y={item.y}
           width={item.width}
+          height={item.fillMode ? item.height : undefined}
           rotation={item.rotation}
-          text={item.text || ''}
+          text={layout.text}
           fontFamily={item.fontFamily || 'Inter'}
-          fontSize={item.fontSize || 64}
+          fontSize={layout.fontSize}
           fontStyle={fontStyleString(item.bold, item.italic)}
           fill={item.textColor || '#ffffff'}
           align={item.textAlign || 'left'}
@@ -1106,7 +1263,7 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
           letterSpacing={item.letterSpacing ?? 0}
           {...shadowProps}
           {...strokeProps}
-          wrap="word"
+          wrap={layout.balanced ? 'none' : 'word'}
         />
       </>
     )
@@ -1171,26 +1328,21 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
   // regular image masters get an HTMLImageElement. Konva.Image accepts both.
   if ((item.type === 'image' || item.type === 'gif')
       && (media instanceof HTMLImageElement || media instanceof HTMLCanvasElement)) {
+    // Same as MediaItemView outside crop mode: the crop window is drawn into
+    // the item's own box — not on top of the full-image rect.
     const hasCrop = item.cropW > 0 && item.cropH > 0
-    let rx = item.x
-    let ry = item.y
-    let rw = item.width
-    let rh = item.height
-    let cropObj: { x: number; y: number; width: number; height: number } | undefined
-    if (hasCrop) {
-      cropObj = { x: item.cropX, y: item.cropY, width: item.cropW, height: item.cropH }
-      const sc = item.width / item.cropW
-      rx = item.x - item.cropX * sc
-      ry = item.y - item.cropY * sc
-      rw = item.naturalWidth * sc
-      rh = item.naturalHeight * sc
-    }
+    const cropObj = hasCrop
+      ? { x: item.cropX, y: item.cropY, width: item.cropW, height: item.cropH }
+      : undefined
+    const rw = item.width
+    const rh = item.height
     return (
       <KonvaImage
         {...common}
+        ref={imageRef}
         image={media}
-        x={rx}
-        y={ry}
+        x={item.x}
+        y={item.y}
         width={rw}
         height={rh}
         rotation={item.rotation}
@@ -1199,19 +1351,26 @@ function MasterGhost({ item, slideId }: { item: PlacedMedia; slideId: string }) 
         scaleY={item.flipY ? -1 : 1}
         offsetX={item.flipX ? rw : 0}
         offsetY={item.flipY ? rh : 0}
+        opacity={item.opacity ?? 1}
+        filters={applyFilters ? filters : undefined}
+        brightness={item.brightness}
+        contrast={item.contrast}
+        blurRadius={blurAmount}
       />
     )
   }
   // Video master or media not loaded yet — outlined placeholder so the user
-  // sees the footprint.
+  // sees the footprint. Editor chrome only: exports hide it, so it never
+  // lands in another slide's PNG / MP4.
   return (
     <Rect
       {...common}
+      name={`master-ghost ${EDITOR_CHROME}`}
       x={item.x}
       y={item.y}
       width={item.width}
       height={item.height}
-      stroke="rgba(241,242,245,0.4)"
+      stroke={chromeColor}
       dash={[6, 4]}
       strokeWidth={1.5}
       strokeScaleEnabled={false}
@@ -1233,6 +1392,7 @@ function CropOverlay({
 }) {
   const applyCropAction = useTiovivoStore((s) => s.applyCrop)
   const setCropMode = useTiovivoStore((s) => s.setCropMode)
+  const accent = CHROME_ACCENT[useThemeStore((s) => s.theme)]
 
   const cropRectRef = useRef<Konva.Rect>(null)
   const cropTrRef = useRef<Konva.Transformer>(null)
@@ -1298,12 +1458,13 @@ function CropOverlay({
     const ny = (node.y() - fy) / s
     const nw = Math.abs(node.width() * node.scaleX()) / s
     const nh = Math.abs(node.height() * node.scaleY()) / s
-    return {
-      x: Math.max(0, Math.round(nx)),
-      y: Math.max(0, Math.round(ny)),
-      w: Math.min(item.naturalWidth, Math.round(nw)),
-      h: Math.min(item.naturalHeight, Math.round(nh)),
-    }
+    // Clamp both EDGES to the image, then derive the size — clamping x and w
+    // independently let x + w run past the right / bottom edge (resizing the
+    // rect beyond the image isn't bounded by dragBoundFunc).
+    const clampTo = (v: number, max: number) => Math.min(max, Math.max(0, Math.round(v)))
+    const x0 = clampTo(nx, item.naturalWidth), x1 = clampTo(nx + nw, item.naturalWidth)
+    const y0 = clampTo(ny, item.naturalHeight), y1 = clampTo(ny + nh, item.naturalHeight)
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
   }, [fx, fy, s, item.naturalWidth, item.naturalHeight])
 
   const doApply = useCallback(() => {
@@ -1322,6 +1483,7 @@ function CropOverlay({
   // Keyboard: Enter to apply, Escape to cancel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return
       if (e.key === 'Enter') { e.preventDefault(); doApply() }
       if (e.key === 'Escape') { e.preventDefault(); setCropMode(null) }
     }
@@ -1333,7 +1495,9 @@ function CropOverlay({
   const THIRDS = 'rgba(241,242,245,0.2)'
 
   return (
-    <>
+    // Lives in the content layer (it must sit right above the image), so
+    // it's tagged as editor chrome for exports to hide.
+    <Group name={EDITOR_CHROME}>
       {/* Dark overlay bands */}
       <Rect ref={topRef} fill={OVERLAY} listening={false} />
       <Rect ref={botRef} fill={OVERLAY} listening={false} />
@@ -1398,14 +1562,14 @@ function CropOverlay({
         ]}
         boundBoxFunc={(old, nw) => (nw.width < 20 || nw.height < 20 ? old : nw)}
         anchorSize={12}
-        anchorFill={GUIDE_COLOR}
-        anchorStroke="#1d4ed8"
+        anchorFill={accent.hot}
+        anchorStroke={accent.edge}
         anchorStrokeWidth={1.5}
         anchorCornerRadius={2}
-        borderStroke={GUIDE_COLOR}
+        borderStroke={accent.hot}
         borderStrokeWidth={1.5}
       />
-    </>
+    </Group>
   )
 }
 
@@ -1418,7 +1582,7 @@ function sliderFill(value: number, min: number, max: number) {
   return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
 }
 
-function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
+function CorrectionsPopover({ item, left, top, below = false }: { item: PlacedMedia; left: number; top: number; below?: boolean }) {
   const updateItem = useTiovivoStore((s) => s.updateItem)
   const b = item.brightness ?? 0
   const c = item.contrast ?? 0
@@ -1428,12 +1592,14 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
     <div
       onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
+      // The canvas wheel-zoom (a native listener) skips marked chrome.
+      data-wheel-chrome
       style={{
         position: 'absolute',
         left, top,
         // Popover anchors its BOTTOM to the given top coordinate,
         // so it always sits above the corrections button regardless of height.
-        transform: 'translate(-50%, -100%)',
+        transform: below ? 'translateX(-50%)' : 'translate(-50%, -100%)',
         pointerEvents: 'auto',
         zIndex: 3,
         width: 240,
@@ -1441,7 +1607,7 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
         background: 'var(--surface-3)',
         borderRadius: 8,
         border: '1px solid var(--border-strong)',
-        boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
+        boxShadow: 'var(--shadow-lg)',
         
         display: 'flex',
         flexDirection: 'column',
@@ -1450,7 +1616,7 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
     >
       <label className="slider-field" style={{ margin: 0, gap: 2 }}>
         <span className="slider-field__label">
-          Exposure<span className="slider-field__value">{b.toFixed(2)}</span>
+          Brightness<span className="slider-field__value">{b.toFixed(2)}</span>
         </span>
         <input type="range" min={-1} max={1} step={0.01} value={b}
           style={sliderFill(b, -1, 1)}
@@ -1477,7 +1643,7 @@ function CorrectionsPopover({ item, left, top }: { item: PlacedMedia; left: numb
       </label>
       <label className="slider-field" style={{ margin: 0, gap: 2 }}>
         <span className="slider-field__label">
-          Blur<span className="slider-field__value">{Math.round(blur)}</span>
+          Blur<span className="slider-field__value">{Math.round(blur)} px</span>
         </span>
         <input type="range" min={0} max={200} step={1} value={blur}
           style={sliderFill(blur, 0, 200)}
@@ -1565,6 +1731,8 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
     <div
       onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
+      // The canvas wheel-zoom (a native listener) skips marked chrome.
+      data-wheel-chrome
       style={{
         position: 'absolute',
         left, top,
@@ -1576,7 +1744,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
         background: 'var(--surface-3)',
         borderRadius: 8,
         border: '1px solid var(--border-strong)',
-        boxShadow: '0 2px 12px rgba(10,11,15,0.4)',
+        boxShadow: 'var(--shadow)',
         
         display: 'flex',
         alignItems: 'center',
@@ -1626,7 +1794,7 @@ function PlaybackBar({ itemId, left, top, width }: { itemId: string; left: numbe
   )
 }
 
-function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
+function CoverFramePopover({ item, left, top, below = false }: { item: PlacedMedia; left: number; top: number; below?: boolean }) {
   const updateItem = useTiovivoStore((s) => s.updateItem)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -1677,15 +1845,14 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
-    // Revoke any previous custom cover URL so we don't leak blob references.
-    if (item.coverImageSrc) URL.revokeObjectURL(item.coverImageSrc)
+    // Don't revoke the previous cover URL — undo can restore it. The store
+    // keeps blob URLs alive for history and revokes them on project replace.
     const url = URL.createObjectURL(f)
     updateItem(item.id, { coverImageSrc: url })
     e.target.value = ''
   }
 
   const handleClearImage = () => {
-    if (item.coverImageSrc) URL.revokeObjectURL(item.coverImageSrc)
     updateItem(item.id, { coverImageSrc: undefined })
   }
 
@@ -1710,10 +1877,12 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
     <div
       onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
+      // The canvas wheel-zoom (a native listener) skips marked chrome.
+      data-wheel-chrome
       style={{
         position: 'absolute',
         left, top,
-        transform: 'translate(-50%, -100%)',
+        transform: below ? 'translateX(-50%)' : 'translate(-50%, -100%)',
         pointerEvents: 'auto',
         zIndex: 3,
         width: 220,
@@ -1721,7 +1890,7 @@ function CoverFramePopover({ item, left, top }: { item: PlacedMedia; left: numbe
         background: 'var(--surface-3)',
         borderRadius: 8,
         border: '1px solid var(--border-strong)',
-        boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
+        boxShadow: 'var(--shadow-lg)',
         
         display: 'flex',
         flexDirection: 'column',
@@ -1790,7 +1959,7 @@ const TRIM_STRIP_HEIGHT = 72
 const TRIM_THUMB_COUNT = 14
 const TRIM_HANDLE_W = 14
 
-function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top: number }) {
+function TrimPopover({ item, left, top, below = false }: { item: PlacedMedia; left: number; top: number; below?: boolean }) {
   const updateItem = useTiovivoStore((s) => s.updateItem)
   const [duration, setDuration] = useState(0)
   const [start, setStart] = useState(item.trimStart || 0)
@@ -1801,6 +1970,16 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
   const liveRef = useRef({ start: item.trimStart || 0, end: item.trimEnd || 0, duration: 0 })
   const [dragPreview, setDragPreview] = useState<{ x: number; t: number } | null>(null)
   const previewCanvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Re-sync the local handles when the stored trim changes underneath us
+  // (undo / redo) — adjusted during render, React's "derive from props"
+  // pattern. A commit from this popover lands here too, with equal values.
+  const [syncedTrim, setSyncedTrim] = useState({ start: item.trimStart, end: item.trimEnd })
+  if (syncedTrim.start !== item.trimStart || syncedTrim.end !== item.trimEnd) {
+    setSyncedTrim({ start: item.trimStart, end: item.trimEnd })
+    setStart(item.trimStart || 0)
+    setEnd(item.trimEnd > 0 ? item.trimEnd : duration)
+  }
 
   // Generate filmstrip thumbnails
   useEffect(() => {
@@ -1976,10 +2155,12 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
     <div
       onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
+      // The canvas wheel-zoom (a native listener) skips marked chrome.
+      data-wheel-chrome
       style={{
         position: 'absolute',
         left, top,
-        transform: 'translate(-50%, -100%)',
+        transform: below ? 'translateX(-50%)' : 'translate(-50%, -100%)',
         pointerEvents: 'auto',
         zIndex: 3,
         width: TRIM_STRIP_WIDTH + 24,
@@ -1987,7 +2168,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         background: 'var(--surface-3)',
         borderRadius: 8,
         border: '1px solid var(--border-strong)',
-        boxShadow: '0 4px 16px rgba(10,11,15,0.5)',
+        boxShadow: 'var(--shadow-lg)',
         
         display: 'flex',
         flexDirection: 'column',
@@ -2045,7 +2226,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
                   width: pW, height: pH,
                   borderRadius: 4,
                   background: '#111110',
-                  border: '2px solid #3d7bfd',
+                  border: '2px solid var(--hot)',
                   boxShadow: '0 4px 12px rgba(10,11,15,0.6)',
                   display: 'block',
                 }}
@@ -2097,7 +2278,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
         <div style={{
           position: 'absolute', top: 0, left: startX, height: '100%',
           width: Math.max(0, endX - startX),
-          border: '2px solid #3d7bfd',
+          border: '2px solid var(--hot)',
           borderLeft: 'none',
           borderRight: 'none',
           pointerEvents: 'none',
@@ -2111,7 +2292,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             top: 0, height: '100%',
             left: Math.max(0, Math.min(TRIM_STRIP_WIDTH - TRIM_HANDLE_W, startX - TRIM_HANDLE_W)),
             width: TRIM_HANDLE_W,
-            background: '#3d7bfd',
+            background: 'var(--hot)',
             cursor: 'ew-resize',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             borderRadius: '4px 0 0 4px',
@@ -2130,7 +2311,7 @@ function TrimPopover({ item, left, top }: { item: PlacedMedia; left: number; top
             top: 0, height: '100%',
             left: Math.max(0, Math.min(TRIM_STRIP_WIDTH - TRIM_HANDLE_W, endX)),
             width: TRIM_HANDLE_W,
-            background: '#3d7bfd',
+            background: 'var(--hot)',
             cursor: 'ew-resize',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             borderRadius: '0 4px 4px 0',
@@ -2180,6 +2361,7 @@ const EditorStage = forwardRef<
   const veilLayerRef = useRef<Konva.Layer>(null)
   const overlayLayerRef = useRef<Konva.Layer>(null)
   const igSafeAreaLayerRef = useRef<Konva.Layer>(null)
+  const selectionLayerRef = useRef<Konva.Layer>(null)
   const trRef = useRef<Konva.Transformer>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const cropApplyRef = useRef<(() => void) | null>(null)
@@ -2197,7 +2379,6 @@ const EditorStage = forwardRef<
   const toggleSelected = useTiovivoStore((s) => s.toggleSelected)
   const updateItem = useTiovivoStore((s) => s.updateItem)
   const updateItems = useTiovivoStore((s) => s.updateItems)
-  const moveItemToSlide = useTiovivoStore((s) => s.moveItemToSlide)
   const addSlide = useTiovivoStore((s) => s.addSlide)
   const duplicateSlide = useTiovivoStore((s) => s.duplicateSlide)
   const removeSlide = useTiovivoStore((s) => s.removeSlide)
@@ -2209,6 +2390,7 @@ const EditorStage = forwardRef<
   const thumbnails = useTiovivoStore((s) => s.thumbnails)
   const workspaceBgColorRaw = useTiovivoStore((s) => s.workspaceBgColor)
   const theme = useThemeStore((s) => s.theme)
+  const accent = CHROME_ACCENT[theme]
   // Resolved against the theme — the "auto" sentinel follows Onyx/Cream.
   // Everything below (pasteboard fill, chrome luminance, seam veil) uses
   // the resolved hex.
@@ -2333,10 +2515,13 @@ const EditorStage = forwardRef<
     // scales with max(W, H) and shifts every slide's absolute X/Y).
     const prevPad = Math.max(PASTEBOARD_PAD_BASE, Math.max(prevW, prevH) * PASTEBOARD_PAD_FACTOR)
     const newPad = Math.max(PASTEBOARD_PAD_BASE, Math.max(W, H) * PASTEBOARD_PAD_FACTOR)
-    const oldCx = prevPad + idx * (prevW + artboardGap) + prevW / 2
-    const oldCy = prevPad + prevH / 2
-    const newCx = newPad + idx * (W + artboardGap) + W / 2
-    const newCy = newPad + H / 2
+    // Grid cell of the active slide (multi-row layout); the column count and
+    // row gap don't depend on W/H, so only the slide size changes here.
+    const col = idx % layoutCols, row = Math.floor(idx / layoutCols)
+    const oldCx = prevPad + col * (prevW + artboardGap) + prevW / 2
+    const oldCy = prevPad + row * (prevH + rowGap) + prevH / 2
+    const newCx = newPad + col * (W + artboardGap) + W / 2
+    const newCy = newPad + row * (H + rowGap) + H / 2
 
     setPanOffset((p) => ({
       x: p.x + (oldCx - newCx) * zoom,
@@ -2370,6 +2555,21 @@ const EditorStage = forwardRef<
   const [rotateMode, setRotateMode] = useState(false)
   const [showTrim, setShowTrim] = useState(false)
   useEffect(() => { setShowCorrections(false); setShowCoverFrame(false); setShowTrim(false); setRotateMode(false) }, [selectedId, cropItemId])
+
+  /* Measured width of the floating selection toolbar — lets it clamp inside
+     the viewport instead of hanging off-screen when its item is wider than
+     the canvas or panned against an edge. Width changes with the item kind
+     and mode (crop / erase), so a ResizeObserver tracks it. */
+  const [ftbSize, setFtbSize] = useState({ w: 0, h: 0 })
+  const ftbRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const w = el.offsetWidth, h = el.offsetHeight
+      setFtbSize((s) => (s.w === w && s.h === h ? s : { w, h }))
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   /* ---- live drag position (so floating controls track the dragged item) ---- */
   const [dragLive, setDragLive] = useState<{
@@ -2435,7 +2635,9 @@ const EditorStage = forwardRef<
     const pad = 44
     const availW = maxViewWidth - pad * 2
     const availH = maxViewHeight - pad * 2 - CHROME_TOP - CHROME_BOT
-    const fitZoom = Math.min(availW / W, availH / H, 2)
+    // Clamped like fitToScreen — a tiny viewport would otherwise give a
+    // zero / negative zoom.
+    const fitZoom = Math.max(MIN_ZOOM, Math.min(availW / W, availH / H, 2))
     const ap = artboardPositions[idx]!
     const cx = ap.x + W / 2
     const cy = ap.y + H / 2
@@ -2564,6 +2766,7 @@ const EditorStage = forwardRef<
   useEffect(() => {
     if (!eraseItemId) return
     const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return
       if (e.key === 'Escape') { e.preventDefault(); endErase(false) }
       else if (e.key === 'Enter') { e.preventDefault(); endErase(true) }
     }
@@ -2603,7 +2806,9 @@ const EditorStage = forwardRef<
   /* ---- space key ---- */
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !e.repeat) {
+      // Spaces typed into a field (inspector, slide name, export prefix…)
+      // are text, not a pan request.
+      if (e.code === 'Space' && !e.repeat && !isTypingTarget(e.target) && !isSpaceActivatable(e.target)) {
         e.preventDefault(); spaceDownRef.current = true; document.body.style.cursor = 'grab'
       }
     }
@@ -2628,6 +2833,10 @@ const EditorStage = forwardRef<
     const wrap = wrapRef.current
     if (!wrap) return
     const handler = (e: WheelEvent) => {
+      // Popovers, the inline text editor and scrollable chrome keep their
+      // wheel — their React onWheel stopPropagation can't stop this native
+      // listener, which runs first.
+      if (wheelOwnedByChrome(e.target, wrap)) return
       e.preventDefault()
       const rect = wrap.getBoundingClientRect()
       const acc = wheelAccumRef.current
@@ -2714,10 +2923,8 @@ const EditorStage = forwardRef<
   )
 
   /* ---- multi-drag state: captured at drag start for co-movement ---- */
-  const dragMultiRef = useRef<{
-    primary: string
-    items: { id: string; slideId: string; initialLocalX: number; initialLocalY: number }[]
-  } | null>(null)
+  type DragSibling = { id: string; slideId: string; initialLocalX: number; initialLocalY: number; hasTextBg: boolean }
+  const dragMultiRef = useRef<{ primary: string; items: DragSibling[] } | null>(null)
 
   const handleDragStart = useCallback(
     (_node: Konva.Image, item: PlacedMedia) => {
@@ -2732,7 +2939,7 @@ const EditorStage = forwardRef<
       }
       const snap = useTiovivoStore.getState()
       const all = snap.items
-      const captured: { id: string; slideId: string; initialLocalX: number; initialLocalY: number }[] = []
+      const captured: DragSibling[] = []
       for (const id of selectedIds) {
         const it = all.find((x) => x.id === id)
         if (!it) continue
@@ -2741,6 +2948,7 @@ const EditorStage = forwardRef<
           slideId: it.slideId,
           initialLocalX: it.x,
           initialLocalY: it.y,
+          hasTextBg: it.type === 'text' && !!it.textBgColor,
         })
       }
       dragMultiRef.current = { primary: item.id, items: captured }
@@ -2755,7 +2963,10 @@ const EditorStage = forwardRef<
       if (!group) return
       const groupX = group.x(), groupY = group.y()
       const itemWsX = groupX + node.x(), itemWsY = groupY + node.y()
-      const bw = node.width() * node.scaleX(), bh = node.height() * node.scaleY()
+      // abs(): a mirrored media node carries scale -1. Lines keep their
+      // stored height — Konva derives a Line's height from its points (0).
+      const bw = node.width() * Math.abs(node.scaleX())
+      const bh = isLineItem(item) ? item.height : node.height() * Math.abs(node.scaleY())
       const itemWsCx = itemWsX + bw / 2, itemWsCy = itemWsY + bh / 2
 
       const target = getSlideAtPoint(itemWsCx, itemWsCy)
@@ -2783,23 +2994,26 @@ const EditorStage = forwardRef<
       node.x(ap.x + result.x - groupX)
       node.y(ap.y + result.y - groupY)
 
-      // Move sibling selected items by the same slide-local delta. Computing
-      // the delta in slide-local coords (not world-space) means cross-slide
-      // selections stay put in their own slides instead of being shoved by
-      // the inter-artboard gap each drag — which used to compound visibly.
+      // Move sibling selected items by the primary's delta, measured in its
+      // ORIGINAL slide's coords — the node stays parented to that slide's
+      // Group for the whole drag, so node.x() is exactly that. (Measuring
+      // against the slide under the pointer made siblings jump by W + gap
+      // the moment the primary crossed into another slide.) Each sibling
+      // applies the delta in its own slide's coords.
       if (multi && multi.primary === item.id) {
         const primaryInit = multi.items.find((x) => x.id === item.id)
         if (primaryInit) {
-          const dXLocal = result.x - primaryInit.initialLocalX
-          const dYLocal = result.y - primaryInit.initialLocalY
+          const dX = node.x() - primaryInit.initialLocalX
+          const dY = node.y() - primaryInit.initialLocalY
           const stage = stageRef.current
           if (stage) {
             for (const sib of multi.items) {
               if (sib.id === item.id) continue
               const sibNode = stage.findOne(`#media-${sib.id}`) as Konva.Image | null
               if (!sibNode) continue
-              sibNode.x(sib.initialLocalX + dXLocal)
-              sibNode.y(sib.initialLocalY + dYLocal)
+              sibNode.x(sib.initialLocalX + dX)
+              sibNode.y(sib.initialLocalY + dY)
+              if (sib.hasTextBg) stage.findOne(`#textbg-${sib.id}`)?.position(sibNode.position())
             }
             stage.batchDraw()
           }
@@ -2837,7 +3051,9 @@ const EditorStage = forwardRef<
       const group = node.getParent()
       if (!group) return
       const groupX = group.x(), groupY = group.y()
-      const bw = node.width() * Math.abs(node.scaleX()), bh = node.height() * Math.abs(node.scaleY())
+      const bw = node.width() * Math.abs(node.scaleX())
+      // Lines keep their stored height (Konva's Line height is 0).
+      const bh = isLineItem(item) ? item.height : node.height() * Math.abs(node.scaleY())
       const itemWsCx = groupX + node.x() + bw / 2
       const itemWsCy = groupY + node.y() + bh / 2
       const target = getSlideAtPoint(itemWsCx, itemWsCy)
@@ -2847,31 +3063,54 @@ const EditorStage = forwardRef<
       const localY = groupY + node.y() - ap.y
       const crossSlide = target.slideId !== item.slideId
 
-      // Commit sibling positions for multi-drag, then clear state. Use the
-      // primary's slide-local delta — same correction as in handleDragMove.
+      // The whole gesture commits as ONE updateItems call → one undo step.
+      const patches: { id: string; patch: Partial<PlacedMedia> }[] = []
+      // Sibling positions for multi-drag, using the same original-slide
+      // delta as handleDragMove.
       const multi = dragMultiRef.current
       if (multi && multi.primary === item.id) {
         const primaryInit = multi.items.find((x) => x.id === item.id)
         if (primaryInit) {
-          const dXLocal = localX - primaryInit.initialLocalX
-          const dYLocal = localY - primaryInit.initialLocalY
-          const patches = multi.items
-            .filter((s) => s.id !== item.id)
-            .map((s) => ({ id: s.id, patch: { x: s.initialLocalX + dXLocal, y: s.initialLocalY + dYLocal } }))
-          if (patches.length) updateItems(patches)
+          const dX = node.x() - primaryInit.initialLocalX
+          const dY = node.y() - primaryInit.initialLocalY
+          for (const s of multi.items) {
+            if (s.id !== item.id) patches.push({ id: s.id, patch: { x: s.initialLocalX + dX, y: s.initialLocalY + dY } })
+          }
         }
         dragMultiRef.current = null
       }
       // Same-slide: node.x is already correct (in this group's coords). No imperative
       // update needed. Cross-slide: we MUST NOT write new-slide-local coords while
       // the node is still parented to the old slide's Group — that would place it
-      // at old_ap + localX for one frame (the sideways flash). Let React reparent
-      // + reposition atomically in its next commit instead.
-      if (crossSlide) moveItemToSlide(item.id, target.slideId)
-      updateItem(item.id, { x: localX, y: localY, width: bw, height: bh })
+      // at old_ap + localX for one frame (the sideways flash). The slideId rides
+      // in the same patch, so React reparents + repositions atomically.
+      patches.push({
+        id: item.id,
+        patch: { x: localX, y: localY, width: bw, height: bh, ...(crossSlide ? { slideId: target.slideId } : {}) },
+      })
+      updateItems(patches)
     },
-    [artboardPositions, getSlideAtPoint, moveItemToSlide, updateItem, updateItems],
+    [artboardPositions, getSlideAtPoint, updateItems],
   )
+
+  /* ---- transform commit ----
+   * A multi-select resize fires transformend on every attached node in the
+   * same tick; each item view reports its patch here and they flush as ONE
+   * store update (one undo step) in a microtask. A lone item keeps
+   * updateItem, which also remembers text style (e.g. a corner-scaled
+   * fontSize) for the next text box. */
+  const pendingTransformRef = useRef<{ id: string; patch: Partial<PlacedMedia> }[]>([])
+  const commitTransform = useCallback((id: string, patch: Partial<PlacedMedia>) => {
+    const queue = pendingTransformRef.current
+    queue.push({ id, patch })
+    if (queue.length > 1) return
+    queueMicrotask(() => {
+      const batch = pendingTransformRef.current
+      pendingTransformRef.current = []
+      if (batch.length === 1) updateItem(batch[0]!.id, batch[0]!.patch)
+      else updateItems(batch)
+    })
+  }, [updateItem, updateItems])
 
   // Force the Transformer to redraw when rotate mode or camera changes so the
   // anchor layout (which uses absolute/screen-space sizing) stays aligned with
@@ -2908,28 +3147,54 @@ const EditorStage = forwardRef<
     return () => clearInterval(interval)
   }, [selectedIds, items, cropItemId])
 
+  /* ---- capture chrome ----
+   * Everything that's editor chrome rather than slide content: the overlay
+   * layers (guides, snap guides, veil, grid, IG safe area, selection
+   * handles) plus the EDITOR_CHROME nodes that have to live inside the
+   * content layer. Hidden for exports and pixel sampling; returns the
+   * restore, which re-shows only what was visible before. */
+  const hideChromeForCapture = useCallback((): (() => void) => {
+    const hidden: Konva.Node[] = []
+    const hide = (n: Konva.Node | null | undefined) => {
+      if (n && n.visible()) { n.hide(); hidden.push(n) }
+    }
+    for (const r of [guidesLayerRef, snapGuidesLayerRef, veilLayerRef, overlayLayerRef, igSafeAreaLayerRef, selectionLayerRef]) {
+      hide(r.current)
+    }
+    stageRef.current?.find(`.${EDITOR_CHROME}`).forEach(hide)
+    return () => hidden.forEach((n) => n.show())
+  }, [])
+
   /* ---- pixel inspector ---- */
   const LOUPE_SRC = 11 // pixels sampled from artboard
   const LOUPE_PX = 8   // rendered size per pixel
   const LOUPE_SIZE = LOUPE_SRC * LOUPE_PX
   const loupeCanvasRef = useRef<HTMLCanvasElement>(null)
   const [pixelInfo, setPixelInfo] = useState<{ x: number; y: number; color: string; screenX: number; screenY: number } | null>(null)
-  const altDownRef = useRef(false)
 
+  // The move handler reads e.altKey rather than tracking key state: an
+  // Alt keyup that lands in another window (Alt+Tab) would otherwise leave
+  // the magnifier stuck on. Blur clears it for the same reason.
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') { e.preventDefault(); altDownRef.current = true }
+      if (e.key === 'Alt') e.preventDefault()
     }
     const onUp = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') { altDownRef.current = false; setPixelInfo(null) }
+      if (e.key === 'Alt') setPixelInfo(null)
     }
+    const onBlur = () => setPixelInfo(null)
     window.addEventListener('keydown', onDown, true)
     window.addEventListener('keyup', onUp, true)
-    return () => { window.removeEventListener('keydown', onDown, true); window.removeEventListener('keyup', onUp, true) }
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onDown, true)
+      window.removeEventListener('keyup', onUp, true)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [])
 
   const handlePixelInspect = useCallback((e: React.MouseEvent) => {
-    if (!altDownRef.current || !stageRef.current || !wrapRef.current) {
+    if (!e.altKey || !stageRef.current || !wrapRef.current) {
       if (pixelInfo) setPixelInfo(null)
       return
     }
@@ -2944,17 +3209,15 @@ const EditorStage = forwardRef<
         const half = Math.floor(LOUPE_SRC / 2)
         const sx = Math.floor(wsX) - half
         const sy = Math.floor(wsY) - half
-        // Hide overlay layers so we sample artboard content only — the
-        // hidden-zone veil uses destination-out hole-punching that doesn't
+        // Hide overlay layers + chrome so we sample artboard content only —
+        // the hidden-zone veil uses destination-out hole-punching that doesn't
         // composite cleanly through Stage.toCanvas, leaving black over slides.
         // Also temporarily reset the stage transform so toCanvas's x/y/width/height
         // are interpreted in artboard (world) coords at 1:1, independent of zoom.
         const stage = stageRef.current
-        const overlays = [veilLayerRef.current, guidesLayerRef.current, snapGuidesLayerRef.current, overlayLayerRef.current, igSafeAreaLayerRef.current]
-        const wasVisible = overlays.map((l) => l?.visible() ?? true)
         const prevX = stage.x(), prevY = stage.y()
         const prevSX = stage.scaleX(), prevSY = stage.scaleY()
-        overlays.forEach((l) => l?.visible(false))
+        const restoreChrome = hideChromeForCapture()
         stage.position({ x: 0, y: 0 })
         stage.scale({ x: 1, y: 1 })
         let srcCanvas: HTMLCanvasElement
@@ -2963,7 +3226,7 @@ const EditorStage = forwardRef<
         } finally {
           stage.position({ x: prevX, y: prevY })
           stage.scale({ x: prevSX, y: prevSY })
-          overlays.forEach((l, k) => l?.visible(wasVisible[k]!))
+          restoreChrome()
         }
         const srcCtx = srcCanvas.getContext('2d')
         if (srcCtx) {
@@ -2999,7 +3262,7 @@ const EditorStage = forwardRef<
       }
     }
     setPixelInfo(null)
-  }, [zoom, panOffset, slides, artboardPositions, W, H, pixelInfo, LOUPE_SRC, LOUPE_PX, LOUPE_SIZE])
+  }, [zoom, panOffset, slides, artboardPositions, W, H, pixelInfo, LOUPE_SRC, LOUPE_PX, LOUPE_SIZE, hideChromeForCapture])
 
   /* ---- grid lines ---- */
   const gridLines = useMemo(() => {
@@ -3013,21 +3276,32 @@ const EditorStage = forwardRef<
   /* ---- export ---- */
   const exportSlidePng = useCallback(
     async (slideId: string) => {
-      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current, igl = igSafeAreaLayerRef.current
+      const stage = stageRef.current
       if (!stage) return null
       const idx = slides.findIndex((s) => s.id === slideId)
       if (idx < 0) return null
       const ap = artboardPositions[idx]!
+      // Crop mode draws the item uncropped at full size — leave it (a
+      // cancel, as Esc would) and let React commit before capturing.
+      // The drag-out export reaches here mid-edit.
+      if (useTiovivoStore.getState().cropItemId) {
+        useTiovivoStore.getState().setCropMode(null)
+        await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+      }
       const ps = stage.scaleX(), pp = stage.position()
       stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-      if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide(); if (igl) igl.hide()
-      stage.draw()
-      const blob = (await stage.toBlob({ x: ap.x, y: ap.y, width: W, height: H, pixelRatio: 1, mimeType: 'image/png', quality: 1 })) as Blob | null
-      if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show(); if (igl) igl.show()
-      stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
-      return blob
+      // Selection handles + in-layer chrome too — the drag-out export never
+      // clears the selection the way the main export path does.
+      const restoreChrome = hideChromeForCapture()
+      try {
+        stage.draw()
+        return (await stage.toBlob({ x: ap.x, y: ap.y, width: W, height: H, pixelRatio: 1, mimeType: 'image/png', quality: 1 })) as Blob | null
+      } finally {
+        restoreChrome()
+        stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
+      }
     },
-    [slides, artboardPositions, W, H],
+    [slides, artboardPositions, W, H, hideChromeForCapture],
   )
 
   /* ---- drag-out export ---- */
@@ -3101,7 +3375,7 @@ const EditorStage = forwardRef<
       onPreviewFrame?: (dataUrl: string) => void,
     ): Promise<string | null> => {
       if (!window.electronAPI) return null
-      const stage = stageRef.current, gl = guidesLayerRef.current, sgl = snapGuidesLayerRef.current, vl = veilLayerRef.current, ol = overlayLayerRef.current, igl = igSafeAreaLayerRef.current
+      const stage = stageRef.current
       if (!stage) return null
       const st = useTiovivoStore.getState()
       const idx = st.slides.findIndex((s) => s.id === slideId)
@@ -3163,7 +3437,7 @@ const EditorStage = forwardRef<
           })
           const ps = stage.scaleX(), pp = stage.position()
           stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-          if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide(); if (igl) igl.hide()
+          const restoreChrome = hideChromeForCapture()
           try {
             const startMs = performance.now()
             let pendingWrite: Promise<void> = Promise.resolve()
@@ -3190,11 +3464,14 @@ const EditorStage = forwardRef<
             const result = await window.electronAPI.endVideoEncode({ sessionId })
             return result
           } finally {
-            if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show(); if (igl) igl.show()
+            restoreChrome()
             stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
           }
         } catch (err) {
           console.error('[export] gif-only slide failed:', err)
+          // Stop ffmpeg (it would otherwise wait on stdin forever) and drop
+          // the partial file.
+          void window.electronAPI.abortVideoEncode?.({ sessionId }).catch(() => {})
           return null
         }
       }
@@ -3205,16 +3482,30 @@ const EditorStage = forwardRef<
       let master: VEntry = videoEls[0]!
       for (const v of videoEls) if (v.effDur > master.effDur) master = v
 
-      // Pause all videos and remember their state
+      // Pause all videos and remember their state. Their preview trim-loop
+      // is suspended too: it would bounce a cover-frame seek outside the
+      // trim window back to trimStart, and rewind the master just before
+      // its trimEnd so the capture loop never sees the end.
       for (const { el } of videoEls) {
         el.pause()
         el.loop = false
+        trimLoopSuspended.add(el)
       }
 
       const sessionId = crypto.randomUUID()
       // frame 0 = cover frame; frames 1..N = full video from start
       const videoFrames = Math.ceil(maxDuration * fps)
       const totalFrames = 1 + videoFrames
+      // Undo the export-time stage changes (camera reset, hidden guide
+      // layers, cover-image swaps) on EVERY exit path — a failed export used
+      // to leave the editor at 100% with its guides gone.
+      let restoreStage: (() => void) | null = null
+      const coverSwaps: { node: Konva.Image; original: CanvasImageSource }[] = []
+      const restoreCovers = () => {
+        for (const { node, original } of coverSwaps.splice(0)) {
+          node.image(original as unknown as Parameters<Konva.Image['image']>[0])
+        }
+      }
 
       try {
         // Start ffmpeg session. The response includes which encoder ffmpeg
@@ -3236,7 +3527,11 @@ const EditorStage = forwardRef<
         // Save & reset stage transform
         const ps = stage.scaleX(), pp = stage.position()
         stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
-        if (gl) gl.hide(); if (sgl) sgl.hide(); if (vl) vl.hide(); if (ol) ol.hide(); if (igl) igl.hide()
+        const restoreChrome = hideChromeForCapture()
+        restoreStage = () => {
+          restoreChrome()
+          stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
+        }
 
         // ---- Playback-driven capture ----
         // Old approach seeked every video every frame (~80-150 ms per seek
@@ -3344,7 +3639,6 @@ const EditorStage = forwardRef<
         // Swap in user-picked cover images, seek each video to its
         // coverTime, capture once, then restore the live video sources
         // so subsequent playback frames render the stream.
-        const coverSwaps: { node: Konva.Image; original: CanvasImageSource }[] = []
         for (const { item } of videoEls) {
           if (!item.coverImageSrc) continue
           const coverImg = coverImageElements.get(item.id)
@@ -3370,9 +3664,7 @@ const EditorStage = forwardRef<
           // snapshot lingering for a beat.
           maybeEmitPreview(captured.canvas)
         }
-        for (const { node, original } of coverSwaps) {
-          node.image(original as unknown as Parameters<Konva.Image['image']>[0])
-        }
+        restoreCovers()
 
         // ---- Playback frames ----
         // Position every video at its trimStart, then play() all of them
@@ -3387,6 +3679,10 @@ const EditorStage = forwardRef<
         // One rAF after seeks so the canvas reflects the freshly-positioned
         // frame before playback advances.
         await new Promise<void>((r) => requestAnimationFrame(() => r()))
+
+        // Shorter videos loop inside their trim window again, as in the
+        // preview; only the master (which ends the capture) stays suspended.
+        for (const { el } of videoEls) if (el !== master.el) trimLoopSuspended.delete(el)
 
         for (const { el } of videoEls) {
           el.playbackRate = 1
@@ -3409,9 +3705,9 @@ const EditorStage = forwardRef<
         await new Promise<void>((resolve, reject) => {
           let stopping = false
           let inFlight = false
-          // First playback frame is emitted at videoTime == trimStart, so
-          // arm the next-emit threshold to fire immediately on the first
-          // tick by setting it one interval below the start.
+          // Video time of the next frame to emit. The first playback frame
+          // is emitted at videoTime == trimStart, i.e. on the first tick
+          // (the epsilon absorbs float noise in the seeked currentTime).
           let nextEmitVideoTime = master.trimStart - 1e-4
           const stop = (err?: Error) => {
             if (stopping) return
@@ -3430,7 +3726,7 @@ const EditorStage = forwardRef<
             }
             // Master crossed the next emission slot? Capture, send, advance.
             // The inFlight gate prevents queue buildup if IPC is slow.
-            if (!inFlight && videoTime >= nextEmitVideoTime + frameInterval) {
+            if (!inFlight && videoTime >= nextEmitVideoTime) {
               nextEmitVideoTime += frameInterval
               inFlight = true
               const captured = captureFrame()
@@ -3447,24 +3743,30 @@ const EditorStage = forwardRef<
         await pendingWrite
 
         // Restore stage
-        if (gl) gl.show(); if (sgl) sgl.show(); if (vl) vl.show(); if (ol) ol.show(); if (igl) igl.show()
-        stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
+        restoreStage()
+        restoreStage = null
 
         // Finish encoding
         const result = await window.electronAPI.endVideoEncode({ sessionId })
         return result
       } catch (err) {
         console.error('Video export failed:', err)
+        void window.electronAPI.abortVideoEncode?.({ sessionId }).catch(() => {})
         return null
       } finally {
+        restoreCovers()
+        // Narrowed to never by TS's control-flow analysis of the callback
+        // assignment — re-read through a cast.
+        ;(restoreStage as (() => void) | null)?.()
         // Restore video playback
         for (const { el } of videoEls) {
+          trimLoopSuspended.delete(el)
           el.loop = true
           el.play().catch(() => {})
         }
       }
     },
-    [artboardPositions, W, H],
+    [artboardPositions, W, H, hideChromeForCapture],
   )
 
   useImperativeHandle(ref, () => ({
@@ -3475,27 +3777,119 @@ const EditorStage = forwardRef<
     applyCrop: () => { cropApplyRef.current?.() },
   }), [exportSlidePng, exportSlideVideo, fitToScreen, centerSlide])
 
+  /* ---- box selection commit ----
+   * Shared by the Stage's mouseup and a window fallback: a release off the
+   * canvas (over HTML chrome, or outside the window) never reaches Konva,
+   * which used to leave the box glued to the pointer. */
+  const finishBoxSel = useCallback((additive: boolean) => {
+    if (!boxSelActiveRef.current) return
+    boxSelActiveRef.current = false
+    const b = boxSel
+    setBoxSel(null)
+    if (!b) { if (!additive) setSelected(null); return }
+    const dx = Math.abs(b.x2 - b.x1), dy = Math.abs(b.y2 - b.y1)
+    if (dx < 3 && dy < 3) {
+      // Treated as a plain click on empty area.
+      if (!additive) setSelected(null)
+      return
+    }
+    const minX = Math.min(b.x1, b.x2), maxX = Math.max(b.x1, b.x2)
+    const minY = Math.min(b.y1, b.y2), maxY = Math.max(b.y1, b.y2)
+    const picked: string[] = []
+    for (const it of items) {
+      const slideIdx = slides.findIndex((s) => s.id === it.slideId)
+      const ap = artboardPositions[slideIdx]
+      if (!ap) continue
+      const ix1 = ap.x + it.x, iy1 = ap.y + it.y
+      const ix2 = ix1 + it.width, iy2 = iy1 + it.height
+      if (ix2 > minX && ix1 < maxX && iy2 > minY && iy1 < maxY) picked.push(it.id)
+    }
+    if (additive) {
+      const merged = Array.from(new Set([...selectedIds, ...picked]))
+      setSelectedIds(merged)
+    } else {
+      setSelectedIds(picked)
+    }
+  }, [boxSel, items, slides, artboardPositions, selectedIds, setSelected, setSelectedIds])
+
+  const boxSelOpen = boxSel !== null
+  useEffect(() => {
+    if (!boxSelOpen) return
+    // Runs after the Stage's own mouseup (Konva listens on its content
+    // element, deeper in the tree), which has already cleared the ref.
+    const onUp = (e: MouseEvent) => finishBoxSel(e.shiftKey || e.metaKey || e.ctrlKey)
+    window.addEventListener('mouseup', onUp)
+    return () => window.removeEventListener('mouseup', onUp)
+  }, [boxSelOpen, finishBoxSel])
+
+  /* Slide reorder ends on the overlay's mouseup — a release outside the
+     editor would never reach it, leaving the overlay capturing the pointer.
+     Window fallback: cancel (no drop) if the overlay didn't already end it. */
+  useEffect(() => {
+    if (!isReordering) return
+    const onUp = () => {
+      if (!reorderDragRef.current) return
+      reorderDragRef.current = null
+      setIsReordering(false)
+      setReorderDropTarget(null)
+      document.body.style.cursor = ''
+    }
+    window.addEventListener('mouseup', onUp)
+    return () => window.removeEventListener('mouseup', onUp)
+  }, [isReordering])
+
+  /* Screen-space bounding boxes of the selected items (rotation-aware,
+     padded for the transformer's handles). The HTML "+ add slide" buttons
+     sit over the Konva canvas, so one parked on top of a handle would eat
+     the drag — those buttons step aside while they'd collide. */
+  const selectionScreenBoxes = (() => {
+    if (selectedIds.length === 0) return []
+    const PAD = 14
+    const boxes: { l: number; t: number; r: number; b: number }[] = []
+    for (const id of selectedIds) {
+      const it = items.find((x) => x.id === id)
+      if (!it) continue
+      const idx = slides.findIndex((s) => s.id === it.slideId)
+      const ap = idx >= 0 ? artboardPositions[idx] : undefined
+      if (!ap) continue
+      const rad = ((it.rotation || 0) * Math.PI) / 180
+      const cos = Math.cos(rad), sin = Math.sin(rad)
+      const xs: number[] = [], ys: number[] = []
+      for (const [dx, dy] of [[0, 0], [it.width, 0], [0, it.height], [it.width, it.height]] as const) {
+        xs.push((ap.x + it.x + dx * cos - dy * sin) * zoom + panOffset.x)
+        ys.push((ap.y + it.y + dx * sin + dy * cos) * zoom + panOffset.y)
+      }
+      boxes.push({
+        l: Math.min(...xs) - PAD, t: Math.min(...ys) - PAD,
+        r: Math.max(...xs) + PAD, b: Math.max(...ys) + PAD,
+      })
+    }
+    return boxes
+  })()
+
   /* ---- render ---- */
   // Chrome (slide labels, action buttons, zoom indicator) sits over the
   // workspace pasteboard. Switch its tint from white→black when the workspace
   // is too light for white text to read. CSS custom properties scoped to this
   // wrapper let every descendant pick the right opacity without each having
   // to compute luminance.
-  const chromeStyleVars = (() => {
+  // `chromeFg` is the same tint as an "r, g, b" triple for Konva-drawn chrome
+  // (slide outlines), which can't read CSS variables.
+  const chromeFg = (() => {
     const hex = (workspaceBgColor || '#0a0a0e').replace('#', '')
     const r = parseInt(hex.slice(0, 2), 16) || 0
     const g = parseInt(hex.slice(2, 4), 16) || 0
     const b = parseInt(hex.slice(4, 6), 16) || 0
     const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
     const dark = lum > 140
-    const fg = dark ? '17, 18, 22' : '241, 242, 245'
-    return {
-      ['--chrome-fg' as string]: `rgba(${fg}, 0.85)`,
-      ['--chrome-fg-med' as string]: `rgba(${fg}, 0.6)`,
-      ['--chrome-fg-dim' as string]: `rgba(${fg}, 0.45)`,
-      ['--chrome-fg-faint' as string]: `rgba(${fg}, 0.3)`,
-    } as React.CSSProperties
+    return dark ? '17, 18, 22' : '241, 242, 245'
   })()
+  const chromeStyleVars = {
+    ['--chrome-fg' as string]: `rgba(${chromeFg}, 0.85)`,
+    ['--chrome-fg-med' as string]: `rgba(${chromeFg}, 0.6)`,
+    ['--chrome-fg-dim' as string]: `rgba(${chromeFg}, 0.45)`,
+    ['--chrome-fg-faint' as string]: `rgba(${chromeFg}, 0.3)`,
+  } as React.CSSProperties
 
   return (
     <div
@@ -3528,12 +3922,12 @@ const EditorStage = forwardRef<
           pointerEvents: 'none',
           display: 'flex',
           flexDirection: 'column',
-          background: 'rgba(18,18,24,0.95)',
-          border: '1px solid rgba(241,242,245,0.15)',
+          background: 'var(--surface-3)',
+          border: '1px solid var(--border-strong)',
           borderRadius: 8,
           overflow: 'hidden',
           backdropFilter: 'blur(8px)',
-          boxShadow: '0 4px 20px rgba(10,11,15,0.5)',
+          boxShadow: 'var(--shadow-lg)',
         }}>
           <canvas
             width={LOUPE_SIZE}
@@ -3557,13 +3951,13 @@ const EditorStage = forwardRef<
             <div style={{
               width: 14, height: 14, borderRadius: 3,
               background: pixelInfo.color,
-              border: '1px solid rgba(241,242,245,0.25)',
+              border: '1px solid var(--border-bright)',
               flexShrink: 0,
             }} />
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#f1f2f5' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-bright)' }}>
               {pixelInfo.color}
             </span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'rgba(241,242,245,0.4)', marginLeft: 'auto' }}>
+            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-dim)', marginLeft: 'auto' }}>
               {pixelInfo.x},{pixelInfo.y}
             </span>
           </div>
@@ -3736,10 +4130,13 @@ const EditorStage = forwardRef<
                         spellCheck={false}
                         maxLength={80}
                         style={{
-                          background: 'rgba(10, 11, 15, 0.4)',
+                          // Theme tokens: a fixed dark fill under the
+                          // inherited (dark-on-light) label colour was
+                          // unreadable on the Cream theme.
+                          background: 'var(--surface-3)',
                           border: '1px solid color-mix(in srgb, var(--hot) 45%, transparent)',
                           borderRadius: 3,
-                          color: 'inherit',
+                          color: 'var(--text-bright)',
                           font: 'inherit',
                           padding: '0 4px',
                           outline: 'none',
@@ -3853,10 +4250,10 @@ const EditorStage = forwardRef<
                   top: screenY - 30,
                   width: 3,
                   height: screenH + 38,
-                  background: 'var(--accent)',
+                  background: 'var(--hot)',
                   borderRadius: 2,
                   pointerEvents: 'none',
-                  boxShadow: '0 0 8px rgba(124,108,240,0.5)',
+                  boxShadow: '0 0 8px color-mix(in srgb, var(--hot) 50%, transparent)',
                 }} />
               )}
 
@@ -3868,7 +4265,7 @@ const EditorStage = forwardRef<
                   top: screenY,
                   width: screenW,
                   height: screenH,
-                  border: '2px dashed var(--accent)',
+                  border: '2px dashed var(--hot)',
                   borderRadius: 4,
                   pointerEvents: 'none',
                   opacity: 0.5,
@@ -3912,8 +4309,8 @@ const EditorStage = forwardRef<
                   const iy = live ? live.y : it.y
                   const iw = live ? live.width : it.width
                   const ih = live ? live.height : it.height
-                  const isUp = it.naturalWidth > 0 && it.naturalHeight > 0 &&
-                    (iw > it.naturalWidth * 1.01 || ih > it.naturalHeight * 1.01)
+                  const { w: srcW, h: srcH } = sourcePixels(it)
+                  const isUp = srcW > 0 && srcH > 0 && (iw > srcW * 1.01 || ih > srcH * 1.01)
                   if (!isUp) return null
                   const bx = (ap.x + ix + iw) * zoom + panOffset.x
                   const by = (ap.y + iy) * zoom + panOffset.y
@@ -3922,7 +4319,7 @@ const EditorStage = forwardRef<
                   return (
                     <div
                       key={`warn-${it.id}`}
-                      title={`Upscaled past native size (${it.naturalWidth}×${it.naturalHeight}px → ${targetW}×${targetH}px). Quality will degrade in export.`}
+                      title={`Upscaled past native size (${srcW}×${srcH}px → ${targetW}×${targetH}px). Quality will degrade in export.`}
                       style={{
                         position: 'absolute',
                         left: bx,
@@ -4010,6 +4407,18 @@ const EditorStage = forwardRef<
                 // target; zoomed in it grows with the canvas up to 44px.
                 const addSize = Math.round(Math.max(24, Math.min(44, 32 * zoom)))
                 const glyph = Math.max(9, Math.round(addSize * 0.36))
+                // In seamless mode artboardGap is 0, so the natural button
+                // position sits exactly on the slide's right edge with half
+                // of itself overlapping the slide content. Add a fixed
+                // screen-space offset (button radius + breathing room) so
+                // the button is clearly OUTSIDE the slide in that case.
+                const addX = screenX + screenW + (seamlessSlides ? 24 : (artboardGap * zoom) / 2)
+                const addY = screenY + screenH / 2
+                const half = addSize / 2
+                if (selectionScreenBoxes.some((b) =>
+                  addX + half > b.l && addX - half < b.r && addY + half > b.t && addY - half < b.b)) {
+                  return null
+                }
                 return <button
                   type="button"
                   className="artboard-add-btn"
@@ -4017,13 +4426,8 @@ const EditorStage = forwardRef<
                   onClick={(e) => { e.stopPropagation(); addSlide(i) }}
                   style={{
                     position: 'absolute',
-                    // In seamless mode artboardGap is 0, so the natural button
-                    // position sits exactly on the slide's right edge with half
-                    // of itself overlapping the slide content. Add a fixed
-                    // screen-space offset (button radius + breathing room) so
-                    // the button is clearly OUTSIDE the slide in that case.
-                    left: screenX + screenW + (seamlessSlides ? 24 : (artboardGap * zoom) / 2),
-                    top: screenY + screenH / 2,
+                    left: addX,
+                    top: addY,
                     transform: 'translate(-50%, -50%)',
                     pointerEvents: 'auto',
                     width: addSize,
@@ -4066,18 +4470,37 @@ const EditorStage = forwardRef<
           const itemScreenW = effW * zoom
           const itemBottomY = (sap.y + effY + effH) * zoom + panOffset.y
           const playbackBarTop = itemBottomY + 8
-          // Corrections/cover frame popover sits just above the toolbar (which is at sty - 42).
-          // Component uses translateY(-100%), so this is its bottom edge.
-          const correctionsTop = sty - 42 - 6
+
+          // Keep the toolbar (and its popovers) inside the viewport while any
+          // part of the item is on screen — a wide image or one panned
+          // against an edge used to push half the toolbar off-canvas. Items
+          // fully off-screen keep their natural (hidden) placement.
+          const EDGE = 8
+          const itemLeftX = (sap.x + effX) * zoom + panOffset.x
+          const itemOnScreen = itemLeftX + itemScreenW > 0 && itemLeftX < maxViewWidth
+            && itemBottomY > 0 && sty < maxViewHeight
+          const clampX = (x: number, half: number) =>
+            itemOnScreen && maxViewWidth > half * 2 + EDGE * 2
+              ? Math.min(Math.max(x, half + EDGE), maxViewWidth - half - EDGE)
+              : x
+          const ftbLeft = clampX(stx, ftbSize.w / 2)
+          const ftbTop = itemOnScreen ? Math.max(EDGE, sty - 42) : sty - 42
+          // Corrections / cover-frame / trim popovers hang above the toolbar
+          // (bottom edge = this top, via translateY(-100%)) — or below it when
+          // there isn't room up there for their ~240px of controls.
+          const popoverBelow = ftbTop - 6 < 250
+          const correctionsTop = popoverBelow ? ftbTop + (ftbSize.h || 36) + 6 : ftbTop - 6
+          const popoverLeft = clampX(itemCenterX, 120)
 
           return (
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             <div
+              ref={ftbRef}
               className="floating-toolbar"
               style={{
                 position: 'absolute',
-                left: stx,
-                top: sty - 42,
+                left: ftbLeft,
+                top: ftbTop,
                 transform: 'translateX(-50%)',
                 pointerEvents: 'auto',
                 zIndex: 2,
@@ -4099,8 +4522,7 @@ const EditorStage = forwardRef<
                   />
                   <button
                     type="button"
-                    className="ftb-btn ftb-btn--wide"
-                    style={{ background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 600 }}
+                    className="ftb-btn ftb-btn--wide ftb-btn--primary"
                     onClick={(e) => { e.stopPropagation(); endErase(true) }}
                     title="Apply (Enter)"
                   >
@@ -4115,6 +4537,22 @@ const EditorStage = forwardRef<
                     Cancel
                   </button>
                 </>
+              ) : !cropItemId && !isMediaItem(sel) ? (
+                // Text + shapes: crop, fit/fill, 1:1, mirror and corrections
+                // all key off a source bitmap (naturalWidth/H are 0, and the
+                // Text/Shape views never draw flips or filters) — rotation is
+                // the one tool that applies.
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setRotateMode((v) => !v) }}
+                  title="Enable rotation"
+                  className={`ftb-btn${rotateMode ? ' ftb-btn--on' : ''}`}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                </button>
               ) : !cropItemId ? (
                 <>
                   <button
@@ -4275,15 +4713,7 @@ const EditorStage = forwardRef<
                     type="button"
                     onClick={(e) => { e.stopPropagation(); cropApplyRef.current?.() }}
                     title="Apply crop (Enter)"
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 4,
-                      padding: '4px 10px', border: 'none', borderRadius: 5,
-                      background: 'var(--accent)', color: 'var(--on-accent)',
-                      cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                      transition: 'filter 0.12s',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.filter = 'brightness(1.15)' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.filter = '' }}
+                    className="ftb-btn ftb-btn--wide ftb-btn--primary"
                   >
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M2 6l3 3 5-5" />
@@ -4314,24 +4744,27 @@ const EditorStage = forwardRef<
             {showCorrections && !cropItemId && (
               <CorrectionsPopover
                 item={sel}
-                left={itemCenterX}
+                left={popoverLeft}
                 top={correctionsTop}
+                below={popoverBelow}
               />
             )}
             {/* Floating cover frame popover */}
             {showCoverFrame && sel.type === 'video' && !cropItemId && (
               <CoverFramePopover
                 item={sel}
-                left={itemCenterX}
+                left={popoverLeft}
                 top={correctionsTop}
+                below={popoverBelow}
               />
             )}
             {/* Floating trim popover */}
             {showTrim && sel.type === 'video' && !cropItemId && (
               <TrimPopover
                 item={sel}
-                left={itemCenterX}
+                left={popoverLeft}
                 top={correctionsTop}
+                below={popoverBelow}
               />
             )}
             </div>
@@ -4400,36 +4833,8 @@ const EditorStage = forwardRef<
             setBoxSel((prev) => (prev ? { ...prev, x2: wsX, y2: wsY } : prev))
           }}
           onMouseUp={(e) => {
-            if (!boxSelActiveRef.current) return
-            boxSelActiveRef.current = false
-            const b = boxSel
-            setBoxSel(null)
             const ev = e.evt as MouseEvent | undefined
-            const additive = !!(ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey))
-            if (!b) { if (!additive) setSelected(null); return }
-            const dx = Math.abs(b.x2 - b.x1), dy = Math.abs(b.y2 - b.y1)
-            if (dx < 3 && dy < 3) {
-              // Treated as a plain click on empty area.
-              if (!additive) setSelected(null)
-              return
-            }
-            const minX = Math.min(b.x1, b.x2), maxX = Math.max(b.x1, b.x2)
-            const minY = Math.min(b.y1, b.y2), maxY = Math.max(b.y1, b.y2)
-            const picked: string[] = []
-            for (const it of items) {
-              const slideIdx = slides.findIndex((s) => s.id === it.slideId)
-              const ap = artboardPositions[slideIdx]
-              if (!ap) continue
-              const ix1 = ap.x + it.x, iy1 = ap.y + it.y
-              const ix2 = ix1 + it.width, iy2 = iy1 + it.height
-              if (ix2 > minX && ix1 < maxX && iy2 > minY && iy1 < maxY) picked.push(it.id)
-            }
-            if (additive) {
-              const merged = Array.from(new Set([...selectedIds, ...picked]))
-              setSelectedIds(merged)
-            } else {
-              setSelectedIds(picked)
-            }
+            finishBoxSel(!!(ev && (ev.shiftKey || ev.metaKey || ev.ctrlKey)))
           }}
           onTouchStart={(e) => { if (e.target === e.target.getStage()) setSelected(null) }}
         >
@@ -4507,7 +4912,7 @@ const EditorStage = forwardRef<
                       paint a thin darker line. We draw a single perimeter
                       stroke around the whole strip below instead. */}
                   {!previewMode && !seamlessSlides && (
-                    <Rect x={0} y={0} width={W} height={H} stroke="rgba(241,242,245,0.12)" strokeWidth={1.5} />
+                    <Rect x={0} y={0} width={W} height={H} stroke={`rgba(${chromeFg}, 0.12)`} strokeWidth={1.5} />
                   )}
                   {/* Grid and center guides used to live here, but now they
                       render in an overlay layer above the content so they sit
@@ -4523,8 +4928,8 @@ const EditorStage = forwardRef<
                     const iy = live ? live.y : item.y
                     const iw = live ? live.width : item.width
                     const ih = live ? live.height : item.height
-                    const up = item.naturalWidth > 0 && item.naturalHeight > 0 &&
-                      (iw > item.naturalWidth * 1.01 || ih > item.naturalHeight * 1.01)
+                    const { w: srcW, h: srcH } = sourcePixels(item)
+                    const up = srcW > 0 && srcH > 0 && (iw > srcW * 1.01 || ih > srcH * 1.01)
                     if (!up) return null
                     return (
                       <Rect
@@ -4553,7 +4958,7 @@ const EditorStage = forwardRef<
                   y={first.y}
                   width={(last.x + W) - first.x}
                   height={H}
-                  stroke="rgba(241,242,245,0.12)"
+                  stroke={`rgba(${chromeFg}, 0.12)`}
                   strokeWidth={1.5}
                   listening={false}
                 />
@@ -4577,7 +4982,7 @@ const EditorStage = forwardRef<
                     onClick={(e) => { e.cancelBubble = true; setSelected(null); useTiovivoStore.getState().setActiveSlide(slide.id) }}
                   />
                   {masterGhosts.map((g) => (
-                    <MasterGhost key={`ghost-${g.id}`} item={g} slideId={slide.id} />
+                    <MasterGhost key={`ghost-${g.id}`} item={g} slideId={slide.id} chromeColor={accent.hot} />
                   ))}
                   {slideItems.map((item) => (
                     item.type === 'text' ? (
@@ -4589,7 +4994,7 @@ const EditorStage = forwardRef<
                           if (additive) toggleSelected(item.id)
                           else setSelected(item.id)
                         }}
-                        onChange={(patch) => updateItem(item.id, patch)}
+                        onChange={(patch) => commitTransform(item.id, patch)}
                         onRequestEdit={() => {
                           useTiovivoStore.getState().setActiveSlide(slide.id)
                           setSelected(item.id)
@@ -4607,6 +5012,7 @@ const EditorStage = forwardRef<
                           if (additive) toggleSelected(item.id)
                           else setSelected(item.id)
                         }}
+                        onChange={(patch) => commitTransform(item.id, patch)}
                         onDragStart={(node) => handleDragStart(node as unknown as Konva.Image, item)}
                         onDragMove={(node) => handleDragMove(node as unknown as Konva.Image, item)}
                         onDragEnd={(node) => handleDragEnd(node as unknown as Konva.Image, item)}
@@ -4620,7 +5026,7 @@ const EditorStage = forwardRef<
                           if (additive) toggleSelected(item.id)
                           else setSelected(item.id)
                         }}
-                        onChange={(patch) => updateItem(item.id, patch)}
+                        onChange={(patch) => commitTransform(item.id, patch)}
                         onDragStart={(node) => handleDragStart(node, item)}
                         onDragMove={(node) => handleDragMove(node, item)}
                         onDragEnd={(node) => handleDragEnd(node, item)}
@@ -4637,16 +5043,18 @@ const EditorStage = forwardRef<
                   {/* Multi-select borders — only when 2+ items selected.
                       Konva's Transformer wraps the union bbox; a per-item border
                       makes individual selection visible. strokeScaleEnabled=false
-                      keeps stroke at constant viewport pixels regardless of zoom. */}
+                      keeps stroke at constant viewport pixels regardless of zoom.
+                      Tagged as chrome so exports hide them. */}
                   {isMultiSelect && slideItems.map((item) => {
                     if (!selectedIds.includes(item.id)) return null
                     return (
                       <Rect
                         key={`msel-${item.id}`}
+                        name={EDITOR_CHROME}
                         x={item.x} y={item.y}
                         width={item.width} height={item.height}
                         rotation={item.rotation}
-                        stroke="#3d7bfd" strokeWidth={2}
+                        stroke={accent.hot} strokeWidth={2}
                         strokeScaleEnabled={false}
                         listening={false}
                       />
@@ -4827,12 +5235,15 @@ const EditorStage = forwardRef<
 
           {/* Hidden-zone veil: opaque core around slides, gradient fade to transparent at outer edge */}
           {showHiddenZone && hiddenZone && artboardPositions.length > 0 && (() => {
-            const first = artboardPositions[0]!
-            const last = artboardPositions[artboardPositions.length - 1]!
             const P = Math.min(W, H) * 0.8
             const P2 = P * 0.5
-            const sx0 = first.x, sy0 = first.y
-            const sx1 = last.x + W, sy1 = first.y + H
+            // Bounding box over EVERY artboard — first/last alone only
+            // covered row 1 in the multi-row layout.
+            let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity
+            for (const ap of artboardPositions) {
+              sx0 = Math.min(sx0, ap.x); sy0 = Math.min(sy0, ap.y)
+              sx1 = Math.max(sx1, ap.x + W); sy1 = Math.max(sy1, ap.y + H)
+            }
             const cx0 = sx0 - P2, cy0 = sy0 - P2
             const cx1 = sx1 + P2, cy1 = sy1 + P2
             const ox0 = sx0 - P, oy0 = sy0 - P
@@ -4941,8 +5352,9 @@ const EditorStage = forwardRef<
 
           {/* Selection handles layer — sits ABOVE the hidden-zone veil so the
               Transformer anchors and rotation ruler stay visible regardless of
-              whether the selected item is inside or outside an artboard. */}
-          <Layer>
+              whether the selected item is inside or outside an artboard.
+              Hidden for every export capture (see hideChromeForCapture). */}
+          <Layer ref={selectionLayerRef}>
             <Transformer
               ref={trRef}
               boundBoxFunc={(oldBox, newBox) => {
@@ -4987,7 +5399,8 @@ const EditorStage = forwardRef<
               rotateEnabled={false}
               resizeEnabled={!rotateMode}
               anchorSize={10}
-              borderStroke={rotateMode ? '#3d7bfd' : undefined}
+              borderStroke={accent.hot}
+              anchorStroke={accent.hot}
               anchorStrokeWidth={1.5}
               borderStrokeWidth={1.5}
               anchorCornerRadius={2}
@@ -5013,7 +5426,7 @@ const EditorStage = forwardRef<
               const handleAng = rad + Math.PI / 2
               const hx = cx + rulerR * Math.cos(handleAng)
               const hy = cy + rulerR * Math.sin(handleAng)
-              const stroke = '#3d7bfd'
+              const stroke = accent.hot
               const sw = Math.max(1.5, 2 / zoom)
               return (
                 <Group listening>
@@ -5097,8 +5510,9 @@ const EditorStage = forwardRef<
               return (
                 <Rect
                   x={x} y={y} width={w} height={h}
-                  fill="rgba(59,130,246,0.15)"
-                  stroke={GUIDE_COLOR}
+                  // #rrggbbaa — the accent at ~15% alpha.
+                  fill={`${accent.hot}26`}
+                  stroke={accent.hot}
                   strokeWidth={Math.max(1, 1 / zoom)}
                   dash={[Math.max(4, 6 / zoom), Math.max(3, 4 / zoom)]}
                   listening={false}
@@ -5111,7 +5525,7 @@ const EditorStage = forwardRef<
               const isCenter =
                 (g.orientation === 'vertical' && Math.abs(g.pos - W / 2) < 1) ||
                 (g.orientation === 'horizontal' && Math.abs(g.pos - H / 2) < 1)
-              const color = isCenter ? GUIDE_COLOR_CENTER : GUIDE_COLOR
+              const color = isCenter ? accent.hotHi : accent.hot
               return g.orientation === 'vertical' ? (
                 <Line key={`sg-${i}`} points={[ap.x + g.pos, ap.y + g.from, ap.x + g.pos, ap.y + g.to]} stroke={color} strokeWidth={Math.max(1.5, 2 / zoom)} dash={[Math.max(6, 8 / zoom), Math.max(4, 5 / zoom)]} />
               ) : (
@@ -5181,29 +5595,18 @@ const EditorStage = forwardRef<
         const width = Math.max(8, it.width * zoom)
         const lh = it.lineHeight ?? 1.15
         const ls = it.letterSpacing ?? 0
-        const fontStyle = fontStyleString(it.bold, it.italic)
-        // Match the rendered font size pre-edit. In fill mode, that's the
-        // binary-search-derived size, not item.fontSize.
-        const baseFontSize = it.fillMode
-          ? fitFontSize({
-              text: it.text || '',
-              fontFamily: it.fontFamily || 'Inter',
-              fontStyle,
-              boxWidth: it.width,
-              boxHeight: it.height,
-              lineHeight: lh,
-              letterSpacing: ls,
-              min: 4,
-              max: 4000,
-            })
-          : (it.fontSize || 64)
+        // Match the rendered font size pre-edit — the same layout the canvas
+        // draws (in fill mode the balanced-wrap size, not item.fontSize), so
+        // the text doesn't jump on double-click.
+        const baseFontSize = textLayout(it).fontSize
         const fontPx = Math.max(2, baseFontSize * zoom)
         // Size the textarea to the rendered box so multi-line text is fully
         // visible — previously a one-line minHeight forced scrolling.
         const minPx = fontPx * lh
         const height = Math.max(minPx, it.height * zoom)
         const commit = (value: string) => {
-          updateItem(editingTextId, { text: value })
+          // An unchanged edit would still push an (empty) undo step.
+          if (value !== (it.text || '')) updateItem(editingTextId, { text: value })
           setEditingTextId(null)
         }
         return (
@@ -5235,7 +5638,7 @@ const EditorStage = forwardRef<
               zIndex: 30,
               margin: 0,
               padding: 0,
-              border: '1px dashed rgba(59,130,246,0.9)',
+              border: '1px dashed var(--hot)',
               outline: 'none',
               background: 'rgba(241,242,245,0.06)',
               backdropFilter: 'blur(2px)',

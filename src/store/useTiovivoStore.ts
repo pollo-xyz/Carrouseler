@@ -199,6 +199,10 @@ interface TiovivoState {
    *  Used to drive the "Save changes before closing?" prompt. */
   isDirty: boolean
   setDirty: (v: boolean) => void
+  /** Monotonic document-change counter — bumped by every edit that dirties
+   *  the document. A save snapshots it and only clears isDirty if nothing
+   *  changed while the (async) save was in flight. */
+  revision: number
 
   setPreset: (id: PresetId) => void
   setCustomDimensions: (w: number, h: number) => void
@@ -215,7 +219,13 @@ interface TiovivoState {
    *  and assigns fresh ones; returns the new item ids. */
   pasteItems: (templates: Omit<PlacedMedia, 'id' | 'slideId'>[]) => string[]
   updateItem: (id: string, patch: Partial<PlacedMedia>) => void
+  /** Patch several items as ONE undo step. A patch may carry `slideId` to
+   *  move the item to another slide in the same step. */
   updateItems: (patches: { id: string; patch: Partial<PlacedMedia> }[]) => void
+  /** Write values DERIVED from what's already in the document (e.g. a text
+   *  box's measured height) — no undo entry, no dirty flag. Going through
+   *  updateItem made every undo re-trigger the sync and wipe the redo stack. */
+  syncItemMeasurements: (id: string, patch: Partial<PlacedMedia>) => void
   removeItem: (id: string) => void
   removeItems: (ids: string[]) => void
   moveItemToSlide: (itemId: string, slideId: string) => void
@@ -253,6 +263,9 @@ interface TiovivoState {
    *  assigning each a fresh seed — so all slides share the look but show
    *  distinct compositions. Passing null clears every slide's vibe. */
   setAllSlidesBgVibe: (vibe: Omit<BgVibe, 'seed'> | null) => void
+  /** Merge an edit into EVERY slide's own vibe (palette, sliders and seed
+   *  of each slide survive); slides without a vibe stay solid. */
+  patchAllSlidesBgVibe: (patch: Partial<Omit<BgVibe, 'seed'>>) => void
   /** Reroll the seed for one slide. */
   randomizeSlideVibe: (slideId: string) => void
   /** Reroll the seed for every slide that has a vibe. */
@@ -358,13 +371,18 @@ function revokeBlobUrlsForSnapshots(snapshots: HistorySnapshot[]) {
   }
 }
 
+/** State patch marking the document as changed since the last save. */
+function dirtied(): Pick<TiovivoState, 'isDirty' | 'revision'> {
+  return { isDirty: true, revision: useTiovivoStore.getState().revision + 1 }
+}
+
 function pushHistory(key: string) {
   const s = useTiovivoStore.getState()
   const now = Date.now()
   // Coalesce: if the same "kind" of change fires within HISTORY_COALESCE_MS,
   // treat as a single logical edit (e.g. a drag streams many updateItem calls).
   if (s._historyKey === key && now - s._historyTime < HISTORY_COALESCE_MS) {
-    useTiovivoStore.setState({ _historyTime: now, _future: [], isDirty: true })
+    useTiovivoStore.setState({ _historyTime: now, _future: [], ...dirtied() })
     return
   }
   const past = s._past.concat([snapshotOf(s)])
@@ -376,7 +394,7 @@ function pushHistory(key: string) {
     _historyTime: now,
     // Any change that warrants a history entry also dirties the document
     // against the on-disk version.
-    isDirty: true,
+    ...dirtied(),
   })
 }
 
@@ -387,13 +405,19 @@ function debouncedThumbRefresh(slideId: string, delay = 300) {
   if (thumbTimers[slideId]) clearTimeout(thumbTimers[slideId])
   thumbTimers[slideId] = setTimeout(() => {
     const st = useTiovivoStore.getState()
-    const slideItems = st.items.filter((i) => i.slideId === slideId)
+    // Master ("show on all slides") items render on every slide — the
+    // thumbnail must show them too, in the same z-order as the canvas
+    // (ghosts first, then the slide's own items).
+    const slideItems = [
+      ...st.items.filter((i) => i.appearsOnAllSlides && i.slideId !== slideId),
+      ...st.items.filter((i) => i.slideId === slideId),
+    ]
     const slide = st.slides.find((s) => s.id === slideId)
     generateThumbnail(slideItems, st.dimensions, undefined, undefined, slide).then((url) => {
       useTiovivoStore.setState((prev) => ({
         thumbnails: { ...prev.thumbnails, [slideId]: url },
       }))
-    })
+    }).catch((err) => console.warn('[thumbnail] render failed:', err))
   }, delay)
 }
 
@@ -418,9 +442,13 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   seamlessSlides: false,
   slideRows: (() => {
     // View preference — survives restarts but never travels in the file.
-    if (typeof localStorage === 'undefined') return 1
-    const n = Number(localStorage.getItem('tiovivo-slide-rows'))
-    return Number.isFinite(n) && n >= 1 && n <= 4 ? n : 1
+    try {
+      if (typeof localStorage === 'undefined') return 1
+      const n = Number(localStorage.getItem('tiovivo-slide-rows'))
+      return Number.isFinite(n) && n >= 1 && n <= 4 ? n : 1
+    } catch {
+      return 1 // storage disabled
+    }
   })(),
   showHiddenZone: true,
   showIgSafeArea: false,
@@ -434,6 +462,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
 
   isDirty: false,
   setDirty: (v) => set({ isDirty: v }),
+  revision: 0,
 
   thumbnails: {},
   cropItemId: null,
@@ -473,6 +502,8 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       dimensions: next,
       items: repositionItems(get().items, prev, next),
     })
+    // Every slide's aspect changed — stale thumbnails would show squashed.
+    get().refreshAllThumbnails()
   },
 
   setCustomDimensions: (w, h) => {
@@ -486,6 +517,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       dimensions: next,
       items: repositionItems(get().items, prev, next),
     })
+    get().refreshAllThumbnails()
   },
 
   // Note: this does NOT clear selectedIds. Click handlers that want to replace
@@ -511,6 +543,9 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     }
     next.splice(Math.min(idx, next.length), 0, newSlide)
     set({ slides: next, activeSlideId: sid, selectedIds: [] })
+    // Render its (background-only) thumbnail now — the deck otherwise shows
+    // a blank placeholder until the first edit on the new slide.
+    debouncedThumbRefresh(sid, 50)
   },
 
   duplicateSlide: (id) => {
@@ -563,11 +598,13 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       .filter((i) => !removedItems.some((r) => r.id === i.id))
       .map((i) => (i.slideId === id && i.appearsOnAllSlides ? { ...i, slideId: fallback } : i))
     // Note: don't revoke URLs so undo can still use them.
+    const crop = get().cropItemId
     set({
       slides: nextSlides,
       activeSlideId: activeSlideId === id ? fallback : activeSlideId,
       items: nextItems,
       selectedIds: get().selectedIds.filter((sid) => !removedItems.some((r) => r.id === sid)),
+      cropItemId: crop && removedItems.some((r) => r.id === crop) ? null : crop,
     })
   },
 
@@ -802,10 +839,18 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       const p = map.get(i.id)
       if (!p) return i
       touchedSlides.add(i.slideId)
+      if (p.slideId) touchedSlides.add(p.slideId)
       return { ...i, ...p }
     })
     set({ items: next })
     touchedSlides.forEach((sid) => debouncedThumbRefresh(sid))
+  },
+
+  syncItemMeasurements: (id, patch) => {
+    const item = get().items.find((x) => x.id === id)
+    if (!item) return
+    set({ items: get().items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })
+    debouncedThumbRefresh(item.slideId)
   },
 
   removeItem: (id) => {
@@ -815,6 +860,9 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     set({
       items: get().items.filter((x) => x.id !== id),
       selectedIds: get().selectedIds.filter((sid) => sid !== id),
+      // Deleting the item being cropped must end crop mode, or the editor
+      // is stuck in it with no overlay (Esc lives on the overlay).
+      cropItemId: get().cropItemId === id ? null : get().cropItemId,
     })
     if (i) debouncedThumbRefresh(i.slideId)
   },
@@ -824,9 +872,11 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     pushHistory('removeItems:' + ids.slice().sort().join(','))
     const idSet = new Set(ids)
     const removed = get().items.filter((x) => idSet.has(x.id))
+    const crop = get().cropItemId
     set({
       items: get().items.filter((x) => !idSet.has(x.id)),
       selectedIds: get().selectedIds.filter((sid) => !idSet.has(sid)),
+      cropItemId: crop && idSet.has(crop) ? null : crop,
     })
     const slideIds = new Set(removed.map((r) => r.slideId))
     slideIds.forEach((sid) => debouncedThumbRefresh(sid))
@@ -864,40 +914,50 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     debouncedThumbRefresh(slideId)
   },
 
-  setSelected: (id) => set({ selectedIds: id ? [id] : [] }),
+  // Selecting anything other than the item being cropped cancels the crop
+  // (otherwise the Transformer stays detached and Apply/Cancel float over
+  // unrelated items).
+  setSelected: (id) => {
+    const crop = get().cropItemId
+    set({ selectedIds: id ? [id] : [], cropItemId: crop && crop !== id ? null : crop })
+  },
 
-  setSelectedIds: (ids) => set({ selectedIds: ids }),
+  setSelectedIds: (ids) => {
+    const crop = get().cropItemId
+    set({ selectedIds: ids, cropItemId: crop && !ids.includes(crop) ? null : crop })
+  },
 
   toggleSelected: (id) => {
     const cur = get().selectedIds
-    if (cur.includes(id)) set({ selectedIds: cur.filter((x) => x !== id) })
-    else set({ selectedIds: [...cur, id] })
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
+    const crop = get().cropItemId
+    set({ selectedIds: next, cropItemId: crop && !next.includes(crop) ? null : crop })
   },
 
   // Workspace toggles are persisted in .vpost, so changing them dirties the
   // document. We don't push them into history because they're not part of
   // the undo stack — but they still need to trigger the unsaved-changes prompt.
-  setShowGrid: (v) => set({ showGrid: v, isDirty: true }),
-  setGridSize: (n) => set({ gridSize: Math.max(4, Math.min(400, n)), isDirty: true }),
-  setGridOpacity: (n) => set({ gridOpacity: Math.max(0, Math.min(1, n)), isDirty: true }),
-  setMarginPct: (n) => set({ marginPct: Math.max(0, Math.min(30, n)), isDirty: true }),
-  setShowCenterGuides: (v) => set({ showCenterGuides: v, isDirty: true }),
-  setSnapGrid: (v) => set({ snapGrid: v, isDirty: true }),
-  setSnapCenter: (v) => set({ snapCenter: v, isDirty: true }),
-  setSnapItems: (v) => set({ snapItems: v, isDirty: true }),
-  setSeamlessSlides: (v) => set({ seamlessSlides: v, isDirty: true }),
+  setShowGrid: (v) => set({ showGrid: v, ...dirtied() }),
+  setGridSize: (n) => set({ gridSize: Math.max(4, Math.min(400, n)), ...dirtied() }),
+  setGridOpacity: (n) => set({ gridOpacity: Math.max(0, Math.min(1, n)), ...dirtied() }),
+  setMarginPct: (n) => set({ marginPct: Math.max(0, Math.min(30, n)), ...dirtied() }),
+  setShowCenterGuides: (v) => set({ showCenterGuides: v, ...dirtied() }),
+  setSnapGrid: (v) => set({ snapGrid: v, ...dirtied() }),
+  setSnapCenter: (v) => set({ snapCenter: v, ...dirtied() }),
+  setSnapItems: (v) => set({ snapItems: v, ...dirtied() }),
+  setSeamlessSlides: (v) => set({ seamlessSlides: v, ...dirtied() }),
   setSlideRows: (n) => {
     const rows = Math.max(1, Math.min(4, Math.round(n)))
-    if (typeof localStorage !== 'undefined') localStorage.setItem('tiovivo-slide-rows', String(rows))
+    try { localStorage.setItem('tiovivo-slide-rows', String(rows)) } catch { /* not persisted */ }
     // View-only — doesn't touch isDirty (nothing changes in the document).
     set({ slideRows: rows })
   },
-  setShowHiddenZone: (v) => set({ showHiddenZone: v, isDirty: true }),
-  setShowIgSafeArea: (v) => set({ showIgSafeArea: v, isDirty: true }),
+  setShowHiddenZone: (v) => set({ showHiddenZone: v, ...dirtied() }),
+  setShowIgSafeArea: (v) => set({ showIgSafeArea: v, ...dirtied() }),
   // Preview mode is a transient view toggle — does NOT mark the document
   // dirty since it doesn't change anything that's saved.
   setPreviewMode: (v) => set({ previewMode: v }),
-  setSnapMargins: (v) => set({ snapMargins: v, isDirty: true }),
+  setSnapMargins: (v) => set({ snapMargins: v, ...dirtied() }),
 
   setSlideBgColor: (slideId, color) => {
     pushHistory('bgColor:' + slideId)
@@ -911,11 +971,14 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
 
   setSlideName: (slideId, name) => {
     pushHistory('slideName:' + slideId)
-    const trimmed = name.trim()
+    // Store the raw text: this runs on every keystroke of a controlled input,
+    // and trimming here stripped the space before the next word could land
+    // ("Cover slide" → "Coverslide"). Consumers trim when they display/export.
+    const hasText = name.trim().length > 0
     set({
       slides: get().slides.map((s) => {
         if (s.id !== slideId) return s
-        if (trimmed) return { ...s, name: trimmed }
+        if (hasText) return { ...s, name }
         // Empty → drop the field entirely so the JSON stays clean and the
         // UI falls back to the position-based "Slide N" default.
         const { name: _drop, ...rest } = s
@@ -976,6 +1039,15 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
         })),
       })
     }
+    get().refreshAllThumbnails()
+  },
+
+  patchAllSlidesBgVibe: (patch) => {
+    if (!get().slides.some((s) => s.bgVibe)) return
+    pushHistory('bgVibeAll')
+    set({
+      slides: get().slides.map((s) => (s.bgVibe ? { ...s, bgVibe: { ...s.bgVibe, ...patch } } : s)),
+    })
     get().refreshAllThumbnails()
   },
 
@@ -1169,6 +1241,9 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       cropItemId: null,
       selectedIds: s.selectedIds.filter((id) => validIds.has(id)),
       activeSlideId: prev.slides.some((sl) => sl.id === s.activeSlideId) ? s.activeSlideId : prev.slides[0]!.id,
+      // The document now differs from what's on disk (save → undo → close
+      // used to skip the unsaved-changes prompt).
+      ...dirtied(),
     })
     get().refreshAllThumbnails()
   },
@@ -1189,6 +1264,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       cropItemId: null,
       selectedIds: s.selectedIds.filter((id) => validIds.has(id)),
       activeSlideId: next.slides.some((sl) => sl.id === s.activeSlideId) ? s.activeSlideId : next.slides[0]!.id,
+      ...dirtied(),
     })
     get().refreshAllThumbnails()
   },
@@ -1278,5 +1354,10 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       // Fresh, empty document.
       isDirty: false,
     })
+    debouncedThumbRefresh(sid, 50)
   },
 }))
+
+// First slide of a fresh session gets a real thumbnail too (browser only —
+// the store is also imported by the node unit tests, where there's no DOM).
+if (typeof document !== 'undefined') debouncedThumbRefresh(initialSlideId, 50)

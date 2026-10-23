@@ -105,7 +105,10 @@
 .app__header {
   position: relative;
   display: flex;
-  flex-wrap: wrap;
+  /* ONE strip, never two: the Electron titleBarOverlay is a fixed 55px
+     band, so a wrapped second row would slide under the window buttons.
+     Narrow windows compact the row instead (see the media query below). */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px 16px;
   /* Default header padding for non-Mac platforms. macOS overrides the
@@ -145,13 +148,6 @@
   background: var(--border-strong);
   margin: 0 4px;
 }
-
-/* Compact pill used for header-level chips that wrap a label + a control —
-   e.g. the Workspace colour picker. Shaped to sit cleanly alongside the
-   .app__export-name label without competing for attention. */
-
-
-
 
 /* macOS: leave room for the traffic-light buttons that sit on top of the
    window chrome. Windows / Linux don't have them on the left so the
@@ -241,9 +237,19 @@
   position: relative;
   white-space: nowrap;
 }
-.menubar__item:hover:not(.menubar__item--disabled) {
+.menubar__item:hover:not(.menubar__item--disabled),
+.menubar__item:focus-visible {
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   color: var(--text-bright);
+}
+/* Keyboard navigation lands on rows: the hover wash IS the focus mark, so
+   drop the browser ring (a ring inside a 4px-padded menu reads as noise). */
+.menubar__item:focus-visible {
+  outline: none;
+}
+.menubar__btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink) 40%, transparent);
+  outline-offset: -2px;
 }
 .menubar__item--disabled {
   color: color-mix(in srgb, var(--ink) 35%, transparent);
@@ -563,32 +569,6 @@ input.scrubbable:focus {
 /* Filename-format toggle that lives inside the Name pill. Reads as a button
    even when inactive (visible border, hover state) so the affordance is
    obvious, but stays compact mono since it shows the literal filename suffix. */
-.app__filename-toggle {
-  font-size: 11px;
-  font-family: var(--mono);
-  letter-spacing: -0.01em;
-  padding: 2px 6px;
-  border-radius: 3px;
-  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
-  background: color-mix(in srgb, var(--ink) 3%, transparent);
-  color: color-mix(in srgb, var(--ink) 55%, transparent);
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease);
-}
-.app__filename-toggle:hover {
-  background: color-mix(in srgb, var(--ink) 7%, transparent);
-  border-color: color-mix(in srgb, var(--ink) 22%, transparent);
-  color: color-mix(in srgb, var(--ink) 85%, transparent);
-}
-.app__filename-toggle--on {
-  background: var(--accent-soft);
-  border-color: var(--border-bright);
-  color: var(--text-bright);
-}
-.app__filename-toggle--on:hover {
-  background: color-mix(in srgb, var(--accent-soft) 82%, var(--ink));
-}
 
 .app__custom-size span {
   color: var(--text-dim);
@@ -598,6 +578,21 @@ input.scrubbable:focus {
 
 .app__spacer {
   flex: 1;
+  min-width: 0;
+}
+
+/* Every header control holds its size; only the spacer gives way. */
+.app__header > :not(.app__spacer) {
+  flex-shrink: 0;
+}
+
+/* Narrow windows (the desktop minimum is 900px, minus 150px reserved for
+   the window buttons): tighten the rhythm and drop the format chip's
+   pixel readout — the ratio label still names the format, and the exact
+   size is one click away in its popover. */
+@media (max-width: 1080px) {
+  .app__header { column-gap: 10px; }
+  .app__format-dims { display: none; }
 }
 
 /* ================================================================
@@ -614,8 +609,7 @@ input.scrubbable:focus {
   justify-content: center;
   gap: 1px;
   /* Exactly the 30px control tier — flex centres the label, so vertical
-     padding stays 0 and min-height owns the height (a .btn__hint can still
-     grow it). */
+     padding stays 0 and min-height owns the height. */
   min-height: 30px;
   padding: 0 14px;
   border-radius: var(--r-sm);
@@ -659,14 +653,6 @@ input.scrubbable:focus {
 }
 
 /* Subtext hint (e.g. "1920×1080") */
-.btn__hint {
-  font-size: 0.6rem;
-  opacity: 0.45;
-  font-family: var(--mono);
-  font-weight: 400;
-  letter-spacing: 0;
-  margin-top: 1px;
-}
 
 /* Active/selected toggle — the raised neutral thumb (Rolando's pick 1C):
    a lifted --accent-soft fill with hairline and soft shadow, clearly a
@@ -684,10 +670,6 @@ input.scrubbable:focus {
 .btn--seg-active:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-soft) 82%, var(--ink));
   border-color: var(--border-bright);
-  color: var(--text-bright);
-}
-.btn--accent .btn__hint {
-  opacity: 0.8;
   color: var(--text-bright);
 }
 
@@ -712,19 +694,24 @@ input.scrubbable:focus {
     var(--shadow-sm),
     0 4px 14px -6px color-mix(in srgb, var(--accent) 45%, transparent);
   transition:
-    background var(--dur) var(--ease),
+    transform var(--dur-fast) var(--ease),
     box-shadow var(--dur) var(--ease),
-    transform 80ms var(--ease);
+    background var(--dur-fast) var(--ease);
 }
 
+/* The one CTA that lifts on hover (and presses on click). */
 .btn--export:hover:not(:disabled) {
   background: var(--accent-hi);
   /* Keep the dark on-accent text — the base .btn:hover flips color to
      --text-bright, which would match this light fill and vanish. */
   color: var(--on-accent);
+  transform: translateY(-1px);
   box-shadow:
     var(--shadow-sm),
-    0 6px 20px -6px color-mix(in srgb, var(--accent) 55%, transparent);
+    0 10px 26px -10px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.btn--export:active:not(:disabled) {
+  transform: var(--press);
 }
 
 .btn--export svg {
@@ -752,21 +739,9 @@ input.scrubbable:focus {
   border-radius: var(--r-sm);
 }
 
-.btn--square {
-  width: 28px;
-  min-width: 28px;
-  padding-inline: 0;
-}
-
 /* .btn--seg-active shares the raised-thumb active treatment defined with
    .btn--accent above, so every "pick one" control in the app reads the
    same way. */
-
-.btn__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
 
 /* ================================================================
    BODY / SIDEBAR
@@ -785,20 +760,6 @@ input.scrubbable:focus {
 
 .app__main { order: 1; }
 .app__sidebar { order: 2; }
-
-/* LEFT — permanent project navigator (width is set inline + resizable) */
-
-
-
-
-
-
-
-/* Drag handle on the nav's right edge — widen the rail when controls are
-   tight. A hairline lights up in the accent on hover/drag. */
-
-
-
 
 /* RIGHT — inspector: same panel styling as before, now on the right edge */
 .app__sidebar {
@@ -952,12 +913,6 @@ input[type='color']::-moz-color-swatch {
 
 /* Footer row under the palette grid — helper text on the left, "Save preset"
    ghost button on the right. */
-.palette-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 2px;
-}
 
 /* Inline variant of .hint — no top margin, fits next to a sibling button. */
 .hint--inline {
@@ -1092,7 +1047,6 @@ input[type='color']::-moz-color-swatch {
   background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
-
 /* Section labels */
 .app__sidebar h2 {
   margin: 0;
@@ -1200,36 +1154,6 @@ input[type='color']::-moz-color-swatch {
 }
 
 /* ── Drop zone ── */
-
-.drop-zone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px 14px;
-  border: 1px dashed color-mix(in srgb, var(--ink) 14%, transparent);
-  border-radius: var(--r);
-  text-align: center;
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  cursor: pointer;
-  background: transparent;
-  transition:
-    border-color var(--dur) var(--ease),
-    background var(--dur) var(--ease),
-    color var(--dur) var(--ease);
-}
-
-.drop-zone:hover {
-  border-color: var(--accent-strong);
-  background: color-mix(in srgb, var(--hot) 4%, transparent);
-  color: var(--text);
-}
-
-.drop-zone input {
-  display: none;
-}
 
 /* ── Hint text ── */
 
@@ -1957,6 +1881,17 @@ input[type='color']::-moz-color-swatch {
   font-size: 0.75rem;
   font-weight: 500;
 }
+/* Commit action of a mode (crop Apply, erase Done) — the ink-solid CTA
+   voice, same as Export. */
+.ftb-btn--primary,
+.ftb-btn--primary:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.ftb-btn--primary:hover {
+  background: var(--accent-hi);
+}
 
 /* Buttons inside the glass toolbar stay flat; raised-on-glass reads as
    border noise. Active toggles (.btn--accent) keep their raised thumb. */
@@ -1970,7 +1905,6 @@ input[type='color']::-moz-color-swatch {
   border-color: transparent;
 }
 
-/* Docked in the inspector (P4) — a plain ruled list, no floating glass. */
 /* Floating per-slide layer stack — lives under each artboard on the
    pasteboard. Frosted glass (floating chrome), hairline border, and a
    tracked micro-label title, matching the Signal floating-chrome recipe. */
@@ -2242,21 +2176,6 @@ input[type='color']::-moz-color-swatch {
   user-select: none;
 }
 
-.artboard-remove-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 3px;
-  line-height: 1;
-  font-size: 12px;
-  color: color-mix(in srgb, var(--ink) 32%, transparent);
-  transition: color var(--dur) var(--ease);
-}
-
-.artboard-remove-btn:hover {
-  color: var(--danger);
-}
-
 /* ================================================================
    KEYBOARD SHORTCUTS
    ================================================================ */
@@ -2276,25 +2195,6 @@ kbd {
 /* ================================================================
    COVER FRAME PICKER
    ================================================================ */
-
-.cover-frame-picker {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.cover-frame-picker h2 {
-  margin: 0 0 10px;
-}
-
-.cover-frame-picker canvas {
-  display: block;
-  width: 100%;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-}
 
 /* ================================================================
    MISC UTILITIES
@@ -2703,7 +2603,6 @@ kbd {
 /* Chrome metadata voice: panel headings, menus, pills, labels */
 .collapsible summary h2,
 .menubar,
-.app__header-pill,
 .artboard-label,
 .toast,
 .confirm__title {
@@ -2718,23 +2617,6 @@ kbd {
   transform: var(--press);
 }
 
-/* Primary CTA lifts on hover, presses on click */
-.btn--export {
-  transition:
-    transform var(--dur-fast) var(--ease),
-    box-shadow var(--dur) var(--ease),
-    background var(--dur-fast) var(--ease);
-}
-.btn--export:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    var(--shadow-sm),
-    0 10px 26px -10px color-mix(in srgb, var(--accent) 55%, transparent);
-}
-.btn--export:active:not(:disabled) {
-  transform: var(--press);
-}
-
 /* ================================================================
    EDITORIAL VOICE — Swiss typographic hierarchy. Two real sizes:
    the project name (large, tight, bright) and everything else.
@@ -2745,8 +2627,7 @@ kbd {
    ================================================================ */
 
 .collapsible summary h2,
-.selection-panel h2,
-.cover-frame-picker h2 {
+.selection-panel h2 {
   /* Explicit flex here — the base flex+gap only targeted .app__sidebar h2,
      so left-nav headings had their icon glued to the text and sitting off
      the label's optical baseline. */

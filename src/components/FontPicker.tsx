@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 /**
  * Custom font combobox.
@@ -13,10 +13,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
  *     Mouse-click or Enter calls `onCommit` with the final value.
  *
  * The parent is responsible for applying preview / commit values to the
- * actual text item (typically by calling `updateItem({ fontFamily })`).
- * The store's history coalescing collapses preview spam into one entry,
- * so undo behaves like a single "font change" no matter how many fonts
- * the user hovered through.
+ * actual text item. Previews are TRANSIENT: apply them without an undo
+ * entry or dirty flag (e.g. the store's syncItemMeasurements). Before a
+ * commit the picker previews the opening value back, so the parent's
+ * commit (updateItem) records exactly one "original → new font" step —
+ * and nothing at all when the user cancels or re-picks the same font.
  */
 interface Props {
   value: string
@@ -43,9 +44,14 @@ export default function FontPicker({
   // revert when the user cancels (Esc or click-outside) so a hovered preview
   // doesn't get left behind.
   const openValueRef = useRef(value)
+  // Has a preview been applied since the picker opened? Tracked here rather
+  // than inferred from `value`, which may not have re-rendered yet.
+  const previewedRef = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
+  const listId = useId()
+  const optionId = (i: number) => `${listId}-opt-${i}`
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -56,6 +62,7 @@ export default function FontPicker({
   const openDropdown = () => {
     if (open) return
     openValueRef.current = value
+    previewedRef.current = false
     setQuery('')
     setOpen(true)
     // Start the active row on the current value if present, else first.
@@ -64,18 +71,33 @@ export default function FontPicker({
     onOpen?.()
   }
 
+  const preview = (font: string) => {
+    previewedRef.current = true
+    onPreview(font)
+  }
+
+  /** Undo any live preview — back to the font the picker opened with. */
+  const revertPreview = () => {
+    if (!previewedRef.current) return
+    previewedRef.current = false
+    onPreview(openValueRef.current)
+  }
+
   const commit = (font: string) => {
     setOpen(false)
     setQuery('')
-    onCommit(font)
+    // Previews bypass history, so put the opening font back first — the
+    // commit then lands as one undo step from the real starting point.
+    revertPreview()
+    if (font !== openValueRef.current) onCommit(font)
   }
 
   const cancel = () => {
     setOpen(false)
     setQuery('')
     // If a hover-preview drifted the canvas away from the opening value,
-    // snap it back. No-op when nothing changed.
-    if (openValueRef.current !== value) onPreview(openValueRef.current)
+    // snap it back. No-op when nothing was previewed.
+    revertPreview()
   }
 
   // Click-outside closes + reverts.
@@ -111,16 +133,19 @@ export default function FontPicker({
       const next = Math.min(filtered.length - 1, activeIndex + 1)
       setActiveIndex(next)
       const f = filtered[next]
-      if (f) onPreview(f)
+      if (f) preview(f)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       if (!open) return
       const next = Math.max(0, activeIndex - 1)
       setActiveIndex(next)
       const f = filtered[next]
-      if (f) onPreview(f)
+      if (f) preview(f)
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      // Closed (e.g. right after Escape) → activeIndex is stale; committing
+      // it would apply the font the user just cancelled.
+      if (!open) return
       const f = filtered[activeIndex]
       if (f) commit(f)
     } else if (e.key === 'Escape') {
@@ -143,6 +168,11 @@ export default function FontPicker({
         value={open ? query : value}
         placeholder={placeholder}
         spellCheck={false}
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-activedescendant={open && filtered[activeIndex] ? optionId(activeIndex) : undefined}
         onFocus={openDropdown}
         onClick={openDropdown}
         onChange={(e) => {
@@ -152,20 +182,23 @@ export default function FontPicker({
         onKeyDown={onKeyDown}
       />
       {open && (
-        <ul className="font-picker__list" ref={listRef} role="listbox">
+        <ul className="font-picker__list" ref={listRef} id={listId} role="listbox" aria-label="Fonts">
           {filtered.length === 0 ? (
-            <li className="font-picker__empty">No matches</li>
+            <li className="font-picker__empty" role="option" aria-selected={false} aria-disabled>
+              No matches
+            </li>
           ) : (
             filtered.map((font, i) => (
               <li
                 key={font}
+                id={optionId(i)}
                 role="option"
                 aria-selected={i === activeIndex}
                 className={`font-picker__item${i === activeIndex ? ' font-picker__item--active' : ''}${font === value ? ' font-picker__item--current' : ''}`}
                 style={{ fontFamily: `'${font.replace(/'/g, "\\'")}', system-ui` }}
                 onMouseEnter={() => {
                   setActiveIndex(i)
-                  onPreview(font)
+                  preview(font)
                 }}
                 onMouseDown={(e) => {
                   // mousedown (not click) so the input doesn't blur-cancel first.

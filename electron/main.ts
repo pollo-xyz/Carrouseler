@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, session as elec
 import path from 'node:path'
 import fs from 'node:fs'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -79,6 +79,9 @@ function runFfmpegWithStdin(
     proc.on('error', (err) => { clearTimeout(t); resolve({ code: 1, stderr: stderr + '\n' + String(err) }) })
     proc.on('close', (code) => { clearTimeout(t); resolve({ code: code ?? 1, stderr }) })
     if (stdinBytes) {
+      // ffmpeg may exit before consuming everything — swallow the EPIPE
+      // instead of letting it surface as an uncaught main-process error.
+      proc.stdin!.on('error', () => { /* reported via exit code */ })
       proc.stdin!.write(stdinBytes)
       proc.stdin!.end()
     }
@@ -204,6 +207,8 @@ async function probeEncoder(): Promise<EncoderName> {
 // menu bar so these are no-ops on that platform.
 ipcMain.handle('get-recents', async (): Promise<string[]> => readRecents())
 ipcMain.handle('open-recent', async (_event, filePath: string) => {
+  // Only entries main itself put on the list — not arbitrary paths.
+  if (typeof filePath !== 'string' || !readRecents().includes(filePath)) return
   openRecent(filePath)
 })
 ipcMain.handle('clear-recents', async () => {
@@ -339,6 +344,30 @@ process.env.VITE_PUBLIC = app.isPackaged
 let win: BrowserWindow | null = null
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
+/* Paths the USER chose this session (save/open dialogs, Finder/Explorer
+ * opens, Recent) and directories they picked. Write IPCs only accept these,
+ * so a compromised renderer can't scribble anywhere on disk. */
+const knownFiles = new Set<string>()
+const knownDirs = new Set<string>()
+const normPath = (p: string) => path.resolve(p)
+function rememberFile(p: string) { knownFiles.add(normPath(p)) }
+function isKnownFile(p: string) { return knownFiles.has(normPath(p)) }
+function isInKnownDir(p: string) { return knownDirs.has(path.dirname(normPath(p))) }
+
+/** Replace a file without ever leaving it half-written: write a sibling temp
+ *  file, then rename over the target. A full disk or crash mid-save used to
+ *  truncate the user's only copy of the project. */
+async function writeFileAtomic(target: string, data: Buffer) {
+  const tmp = `${target}.${process.pid}.tmp`
+  try {
+    await fs.promises.writeFile(tmp, data)
+    await fs.promises.rename(tmp, target)
+  } catch (err) {
+    await fs.promises.rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
+}
+
 // Pending file path to open once the renderer is ready (Finder double-click,
 // "Open With", or argv-on-launch). On macOS the open-file event can fire
 // before app.whenReady(), so we queue here and flush after window load.
@@ -349,6 +378,7 @@ function deliverPendingOpen() {
   if (!pendingOpenPath || !win) return
   try {
     const buffer = fs.readFileSync(pendingOpenPath)
+    rememberFile(pendingOpenPath)
     win.webContents.send('app:open-project-file', {
       path: pendingOpenPath,
       buffer: new Uint8Array(buffer),
@@ -365,6 +395,9 @@ function deliverPendingOpen() {
 function queueOpenPath(filePath: string) {
   pendingOpenPath = filePath
   if (rendererReady) deliverPendingOpen()
+  // macOS keeps running with no window — open one; its did-finish-load
+  // delivers the queued file.
+  else if (!win && app.isReady()) createWindow()
 }
 
 function createWindow() {
@@ -377,6 +410,9 @@ function createWindow() {
   // Last theme's overlay colors, persisted by the retint IPC — the window is
   // born already matching the user's theme instead of defaulting dark.
   const overlay = readOverlayColors()
+  // A previous window's close flow left this true — reset it, or every later
+  // close/quit (macOS: reopen from the Dock) would skip the unsaved prompt.
+  allowClose = false
   win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -419,6 +455,20 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     rendererReady = true
     deliverPendingOpen()
+    if (pendingMenuChannel) {
+      win?.webContents.send(pendingMenuChannel)
+      pendingMenuChannel = null
+    }
+  })
+
+  // The renderer is a local app, never a browser: no navigating away, no
+  // popup windows (a dropped link or stray window.open would otherwise load
+  // remote content into a window that has the preload bridge).
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  const appUrl = VITE_DEV_SERVER_URL
+    ?? pathToFileURL(path.join(process.env.DIST!, 'index.html')).href
+  win.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith(appUrl)) e.preventDefault()
   })
 
   // Save-on-quit prompt. We intercept the window's close event, ask the
@@ -429,6 +479,16 @@ function createWindow() {
   win.on('close', async (e) => {
     if (!win || allowClose) return // we already orchestrated; let it close
     e.preventDefault()
+    const w = win
+    // Finish the close. Preventing a close during app.quit() cancels the
+    // quit, so if one was underway re-issue it (macOS Cmd+Q used to need a
+    // second press; Windows quit-from-taskbar likewise).
+    const proceed = () => {
+      allowClose = true
+      if (quitting) app.quit()
+      else w.close()
+    }
+    const stay = () => { quitting = false }
     let dirty = false
     try {
       dirty = await new Promise<boolean>((resolve, reject) => {
@@ -446,18 +506,27 @@ function createWindow() {
         win!.webContents.send('app:query-dirty')
       })
     } catch {
-      // If the renderer can't tell us, just close — better than wedging the
-      // user out of quitting the app entirely.
-      allowClose = true
-      win.close()
+      // The renderer didn't answer (hung or still loading). Ask rather than
+      // guess — silently closing could throw away unsaved work.
+      const { response } = await dialog.showMessageBox(w, {
+        type: 'warning',
+        buttons: ['Close Anyway', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Not responding',
+        message: 'Tiovivo couldn’t check for unsaved changes.',
+        detail: 'Closing now may lose recent edits.',
+        noLink: true,
+      })
+      if (response === 0) proceed()
+      else stay()
       return
     }
     if (!dirty) {
-      allowClose = true
-      win.close()
+      proceed()
       return
     }
-    const result = await dialog.showMessageBox(win, {
+    const result = await dialog.showMessageBox(w, {
       type: 'question',
       buttons: ['Save', "Don't Save", 'Cancel'],
       defaultId: 0,
@@ -467,10 +536,9 @@ function createWindow() {
       detail: "Your changes will be lost if you don't save them.",
       noLink: true,
     })
-    if (result.response === 2) return // Cancel — keep window open
+    if (result.response === 2) { stay(); return } // Cancel — keep window open
     if (result.response === 1) {
-      allowClose = true
-      win.close()
+      proceed()
       return
     }
     // Save — wait for renderer to confirm it actually wrote the file.
@@ -482,22 +550,32 @@ function createWindow() {
           resolve(ok)
         }
         ipcMain.on('app:save-result', onResult)
-        win!.webContents.send('app:save-and-close')
+        w.webContents.send('app:save-and-close')
       })
     } catch {
       saved = false
     }
-    if (saved) {
-      allowClose = true
-      win.close()
-    }
-    // else: save failed or user cancelled the file picker — stay open.
+    if (saved) proceed()
+    else stay() // save failed or user cancelled the file picker — stay open.
   })
 
   win.on('closed', () => {
     rendererReady = false
+    win = null
+    // A closed window can't feed frames — kill its encoders so ffmpeg
+    // doesn't sit on stdin holding a half-written MP4.
+    abortAllEncodeSessions()
   })
 }
+
+/** True from before-quit until the close flow lets the quit proceed or the
+ *  user cancels it. */
+let quitting = false
+app.on('before-quit', () => { quitting = true })
+
+/** A menu command that arrived while no window existed (macOS) — replayed
+ *  once the new window's renderer has loaded. */
+let pendingMenuChannel: string | null = null
 
 /** Set true once the close-confirmation flow has decided the window may
  *  close — lets the next 'close' event fall through without re-prompting. */
@@ -546,14 +624,16 @@ function openRecent(filePath: string) {
     const list = readRecents().filter((p) => p !== filePath)
     writeRecents(list)
     buildMenu()
-    dialog.showMessageBox(win!, {
+    const opts: Electron.MessageBoxOptions = {
       type: 'warning',
       title: 'File not found',
       message: 'That project file could not be opened.',
       detail: `It may have been moved, renamed, or deleted:\n${filePath}\n\nIt has been removed from Recent.`,
       buttons: ['OK'],
       defaultId: 0,
-    })
+    }
+    if (win) void dialog.showMessageBox(win, opts)
+    else void dialog.showMessageBox(opts)
     return
   }
   queueOpenPath(filePath)
@@ -565,7 +645,14 @@ function buildMenu() {
   const isMac = process.platform === 'darwin'
   const sendToFocused = (channel: string) => {
     const w = BrowserWindow.getFocusedWindow() ?? win
-    w?.webContents.send(channel)
+    if (w && !w.isDestroyed()) {
+      w.webContents.send(channel)
+      return
+    }
+    // macOS with every window closed: open one, then replay the command
+    // (Open needs the renderer; New/Save are moot on a fresh document).
+    pendingMenuChannel = channel === 'app:open-project' ? channel : null
+    createWindow()
   }
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
@@ -692,11 +779,16 @@ app.on('open-file', (event, filePath) => {
 // window and pick up the new path from argv.
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
-  app.quit()
+  // Exit immediately — app.quit() is async and the rest of startup (window,
+  // encoder probe, temp-dir cleanup on quit) must not run in this instance.
+  app.exit(0)
 } else {
-  app.on('second-instance', (_e, argv) => {
-    const fileArg = argv.find((a) => a.toLowerCase().endsWith('.vpost'))
-    if (fileArg) queueOpenPath(fileArg)
+  app.on('second-instance', (_e, argv, workingDirectory) => {
+    const fileArg = argv.slice(1).find((a) => a.toLowerCase().endsWith('.vpost'))
+    if (fileArg) {
+      const resolved = path.resolve(workingDirectory, fileArg)
+      if (fs.existsSync(resolved)) queueOpenPath(resolved)
+    }
     if (win) {
       if (win.isMinimized()) win.restore()
       win.focus()
@@ -704,7 +796,7 @@ if (!gotLock) {
   })
 }
 
-app.whenReady().then(() => {
+if (gotLock) app.whenReady().then(() => {
   // Cold-launch with file argument (Win/Linux; macOS uses open-file event).
   if (process.platform !== 'darwin') {
     const fileArg = process.argv.slice(1).find((a) => a.toLowerCase().endsWith('.vpost'))
@@ -718,11 +810,12 @@ app.whenReady().then(() => {
   // We register both handlers: some Chromium code paths check before requesting
   // and skip the request entirely if the check returns false.
   electronSession.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    if (permission === 'local-fonts') return callback(true)
+    // 'local-fonts' is a real Chromium permission missing from Electron's typings.
+    if ((permission as string) === 'local-fonts') return callback(true)
     callback(false)
   })
   electronSession.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    if (permission === 'local-fonts') return true
+    if ((permission as string) === 'local-fonts') return true
     return false
   })
   buildMenu()
@@ -735,17 +828,26 @@ app.whenReady().then(() => {
 
 // Save a single file with a save dialog. When `buffer` is omitted, the caller
 // just wants the chosen path back (e.g. ffmpeg writes the file itself).
-ipcMain.handle('save-file', async (_event, options: {
+/** The window that sent an IPC — dialogs parent to it so they're modal
+ *  (an unparented dialog let the user keep editing mid-save). */
+const senderWindow = (e: Electron.IpcMainInvokeEvent) => BrowserWindow.fromWebContents(e.sender)
+
+ipcMain.handle('save-file', async (event, options: {
   defaultName: string
   filters: { name: string; extensions: string[] }[]
   buffer?: Uint8Array
 }) => {
-  const result = await dialog.showSaveDialog({
+  const parent = senderWindow(event)
+  const dlgOpts: Electron.SaveDialogOptions = {
     defaultPath: options.defaultName,
     filters: options.filters,
-  })
+  }
+  const result = parent
+    ? await dialog.showSaveDialog(parent, dlgOpts)
+    : await dialog.showSaveDialog(dlgOpts)
   if (result.canceled || !result.filePath) return null
-  if (options.buffer) fs.writeFileSync(result.filePath, Buffer.from(options.buffer))
+  rememberFile(result.filePath)
+  if (options.buffer) await writeFileAtomic(result.filePath, Buffer.from(options.buffer))
   // Treat .vpost saves as recent. PNG/MP4 exports aren't projects so they
   // shouldn't pollute the list.
   if (result.filePath.toLowerCase().endsWith('.vpost')) pushRecent(result.filePath)
@@ -753,11 +855,16 @@ ipcMain.handle('save-file', async (_event, options: {
 })
 
 // Pick a directory
-ipcMain.handle('pick-directory', async () => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle('pick-directory', async (event) => {
+  const parent = senderWindow(event)
+  const dlgOpts: Electron.OpenDialogOptions = {
     properties: ['openDirectory', 'createDirectory'],
-  })
+  }
+  const result = parent
+    ? await dialog.showOpenDialog(parent, dlgOpts)
+    : await dialog.showOpenDialog(dlgOpts)
   if (result.canceled || !result.filePaths.length) return null
+  knownDirs.add(normPath(result.filePaths[0]!))
   return result.filePaths[0]
 })
 
@@ -766,24 +873,33 @@ ipcMain.handle('save-files-to-dir', async (_event, options: {
   dirPath: string
   files: { name: string; buffer: Uint8Array }[]
 }) => {
+  if (!knownDirs.has(normPath(options.dirPath))) {
+    throw new Error('Export folder was not chosen in this session')
+  }
   for (const file of options.files) {
-    const filePath = path.join(options.dirPath, file.name)
-    fs.writeFileSync(filePath, Buffer.from(file.buffer))
+    // Names come from the renderer: keep them a plain file inside the dir.
+    const filePath = path.join(options.dirPath, safeFilename(path.basename(file.name)))
+    await writeFileAtomic(filePath, Buffer.from(file.buffer))
   }
   return options.files.length
 })
 
 // Open a single file with an open dialog
-ipcMain.handle('open-file', async (_event, options: {
+ipcMain.handle('open-file', async (event, options: {
   filters: { name: string; extensions: string[] }[]
 }) => {
-  const result = await dialog.showOpenDialog({
+  const parent = senderWindow(event)
+  const dlgOpts: Electron.OpenDialogOptions = {
     properties: ['openFile'],
     filters: options.filters,
-  })
+  }
+  const result = parent
+    ? await dialog.showOpenDialog(parent, dlgOpts)
+    : await dialog.showOpenDialog(dlgOpts)
   if (result.canceled || !result.filePaths.length) return null
   const filePath = result.filePaths[0]!
-  const buffer = fs.readFileSync(filePath)
+  const buffer = await fs.promises.readFile(filePath)
+  rememberFile(filePath)
   if (filePath.toLowerCase().endsWith('.vpost')) pushRecent(filePath)
   return { path: filePath, buffer: new Uint8Array(buffer) }
 })
@@ -793,7 +909,9 @@ ipcMain.handle('write-file', async (_event, options: {
   path: string
   buffer: Uint8Array
 }) => {
-  fs.writeFileSync(options.path, Buffer.from(options.buffer))
+  // Only re-save files the user opened or chose in a dialog this session.
+  if (!isKnownFile(options.path)) throw new Error('Refusing to write a path that was not chosen by the user')
+  await writeFileAtomic(options.path, Buffer.from(options.buffer))
   if (options.path.toLowerCase().endsWith('.vpost')) pushRecent(options.path)
   return options.path
 })
@@ -807,17 +925,16 @@ ipcMain.handle('write-file', async (_event, options: {
 /* synchronously inside the renderer's dragstart event, but the bytes  */
 /* must already exist on disk before the OS-level drag begins.         */
 
-const dragTempDir = path.join(app.getPath('temp'), 'tiovivo-drag')
+const dragTempDir = path.join(app.getPath('temp'), 'tiovivo-drag', String(process.pid))
 try { fs.mkdirSync(dragTempDir, { recursive: true }) } catch { /* exists */ }
 
 // Drop any files in our drag temp dir on quit so we don't leave clutter
 // across sessions. Failures are best-effort.
-app.on('before-quit', () => {
-  try {
-    for (const f of fs.readdirSync(dragTempDir)) {
-      try { fs.unlinkSync(path.join(dragTempDir, f)) } catch { /* ignore */ }
-    }
-  } catch { /* dir missing */ }
+// will-quit, not before-quit: the latter also fires for a quit the user
+// then cancels at the unsaved-changes prompt, and the app keeps running.
+app.on('will-quit', () => {
+  try { fs.rmSync(dragTempDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+  abortAllEncodeSessions()
 })
 
 // Sanitize a filename for cross-platform safety. Reused logic from the
@@ -835,7 +952,8 @@ ipcMain.handle('slide-drag:prepare', async (_event, options: {
   const safe = safeFilename(options.filename)
   const stamp = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
   const fp = path.join(dragTempDir, `${stamp}-${safe}`)
-  fs.writeFileSync(fp, Buffer.from(options.buffer))
+  await fs.promises.mkdir(dragTempDir, { recursive: true })
+  await fs.promises.writeFile(fp, Buffer.from(options.buffer))
   return fp
 })
 
@@ -843,12 +961,14 @@ ipcMain.on('slide-drag:start', (event, options: {
   filePath: string
   iconDataUrl: string
 }) => {
-  // Constrain the icon — Electron requires a NativeImage even for the same
-  // file you're dragging. Empty / undecodable data falls back to a
-  // 1×1 placeholder so the drag still works visually.
+  // Only files this process parked for dragging.
+  if (path.dirname(normPath(options.filePath)) !== normPath(dragTempDir)) return
+  // Electron requires a non-empty NativeImage (macOS refuses an empty one,
+  // silently cancelling the drag). Undecodable data falls back to a
+  // thumbnail of the file itself.
   let icon = nativeImage.createFromDataURL(options.iconDataUrl)
   if (icon.isEmpty()) {
-    icon = nativeImage.createEmpty()
+    icon = nativeImage.createFromPath(options.filePath).resize({ width: 128 })
   }
   try {
     event.sender.startDrag({
@@ -897,6 +1017,9 @@ ipcMain.handle('start-video-encode', async (_event, options: {
 }) => {
   const ffmpeg = getFfmpegPath()
   const { sessionId, width, height, fps, outputPath } = options
+  if (!isKnownFile(outputPath) && !isInKnownDir(outputPath)) {
+    throw new Error('Refusing to encode to a path that was not chosen by the user')
+  }
 
   const encoder = await probeEncoder()
   const proc = spawn(ffmpeg, [
@@ -906,10 +1029,18 @@ ipcMain.handle('start-video-encode', async (_event, options: {
     '-video_size', `${width}x${height}`,
     '-framerate', String(fps),
     '-i', 'pipe:0',
+    // yuv420p (every H.264 encoder here) needs even dimensions — an odd
+    // custom size (e.g. 1081×1350) made ffmpeg bail on the first frame.
+    // Trim the odd pixel; a no-op for even sizes.
+    '-vf', 'crop=trunc(iw/2)*2:trunc(ih/2)*2:0:0',
     ...encoderArgs(encoder),
     '-movflags', '+faststart',
-    outputPath,
+    // Absolute path: a value starting with '-' can't be read as an option.
+    path.resolve(outputPath),
   ], { stdio: ['pipe', 'pipe', 'pipe'] })
+  // Frames written after ffmpeg exits fail with EPIPE/EOF — that's reported
+  // through the session's close handler, not as an uncaught exception.
+  proc.stdin?.on('error', () => { /* handled via 'close' */ })
 
   const session: EncodeSession = {
     proc,
@@ -963,8 +1094,38 @@ ipcMain.handle('start-video-encode', async (_event, options: {
       reject(err)
     })
   })
+  // Nobody awaits the promise until end-video-encode — a crash before then
+  // would otherwise be an unhandled rejection.
+  session.promise.catch(() => {})
 
   return { ok: true, encoder }
+})
+
+/** Kill a session's ffmpeg and delete its partial output. */
+function abortEncodeSession(sessionId: string) {
+  const session = encodeSessions.get(sessionId)
+  if (!session) return
+  encodeSessions.delete(sessionId)
+  session.ended = true // an intentional stop, not a crash
+  try { session.proc.kill() } catch { /* already gone */ }
+  session.proc.once('close', () => {
+    fs.promises.rm(session.outputPath, { force: true }).catch(() => {})
+  })
+}
+function abortAllEncodeSessions() {
+  for (const id of [...encodeSessions.keys()]) abortEncodeSession(id)
+}
+
+// Renderer gave up on an export (frame timeout, capture error, cancel):
+// stop ffmpeg instead of leaving it blocked on stdin forever.
+ipcMain.handle('abort-video-encode', async (_event, options: { sessionId: string }) => {
+  abortEncodeSession(options.sessionId)
+})
+
+// Windows/Linux have no native menu (and so no F12 / Ctrl+Shift+I
+// accelerator) — the in-app View menu toggles DevTools through this.
+ipcMain.handle('toggle-dev-tools', async (event) => {
+  event.sender.toggleDevTools()
 })
 
 // Send a raw RGBA frame to the ffmpeg process. Acks once stdin has consumed
@@ -1001,34 +1162,4 @@ ipcMain.handle('end-video-encode', async (_event, options: {
   session.proc.stdin!.end()
   const outputPath = await session.promise
   return outputPath
-})
-
-// Extract a single frame from an encoded video at a given time
-ipcMain.handle('extract-cover-frame', async (_event, options: {
-  videoPath: string
-  time: number
-  outputPath: string
-  width: number
-  height: number
-}) => {
-  const ffmpeg = getFfmpegPath()
-  const { videoPath, time, outputPath, width, height } = options
-
-  return new Promise<string>((resolve, reject) => {
-    const proc = spawn(ffmpeg, [
-      '-y',
-      '-ss', String(time),
-      '-i', videoPath,
-      '-frames:v', '1',
-      '-s', `${width}x${height}`,
-      outputPath,
-    ])
-    let stderr = ''
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) resolve(outputPath)
-      else reject(new Error(`ffmpeg frame extract failed: ${stderr}`))
-    })
-    proc.on('error', reject)
-  })
 })

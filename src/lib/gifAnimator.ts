@@ -52,6 +52,14 @@ export async function createGifAnimator(blobUrl: string): Promise<GifAnimator | 
   if (!Ctor) return null
 
   let decoder: InstanceType<ImageDecoderLike> | null = null
+  // Hoisted so the failure paths can close whatever was decoded before a
+  // mid-stream error — VideoFrames hold GPU/decoder memory until closed.
+  const frames: DecodedFrame[] = []
+  const release = () => {
+    for (const f of frames) try { f.image.close?.() } catch { /* ignore */ }
+    frames.length = 0
+    try { decoder?.close() } catch { /* ignore */ }
+  }
   try {
     const res = await fetch(blobUrl)
     if (!res.ok) return null
@@ -66,13 +74,13 @@ export async function createGifAnimator(blobUrl: string): Promise<GifAnimator | 
     const frameCount = track?.frameCount ?? 0
     if (!frameCount) {
       console.warn('[gif] decoder produced 0 frames')
+      release()
       return null
     }
 
     // Eager-decode every frame upfront. Simpler than on-demand timing, and
     // GIFs are small enough that the memory hit is fine for the carousel
     // use case (a 480×270 50-frame GIF is ~26 MB of decoded RGBA).
-    const frames: DecodedFrame[] = []
     for (let i = 0; i < frameCount; i++) {
       const { image } = await decoder.decode({ frameIndex: i })
       const f = image as DecodedFrame['image'] & { duration?: number }
@@ -92,7 +100,7 @@ export async function createGifAnimator(blobUrl: string): Promise<GifAnimator | 
     const ctx = canvas.getContext('2d')
     if (!ctx) {
       // No 2d context — pretend decode failed so the caller falls back.
-      for (const f of frames) try { f.image.close?.() } catch { /* ignore */ }
+      release()
       return null
     }
 
@@ -132,7 +140,7 @@ export async function createGifAnimator(blobUrl: string): Promise<GifAnimator | 
     }
   } catch (err) {
     console.warn('[gif] decode failed, falling back to <img>:', err)
-    try { decoder?.close() } catch { /* ignore */ }
+    release()
     return null
   }
 }

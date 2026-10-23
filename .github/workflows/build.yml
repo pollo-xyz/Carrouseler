@@ -37,8 +37,12 @@ jobs:
       clean: ${{ steps.t.outputs.clean }}
     steps:
       - id: t
+        # The tag arrives via env, never pasted into the script text, so a
+        # crafted workflow_dispatch input can't inject shell.
+        env:
+          RAW_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          raw="${{ github.event.inputs.tag || github.ref_name }}"
+          raw="$RAW_TAG"
           echo "raw=$raw"          >> "$GITHUB_OUTPUT"
           echo "clean=${raw%+mac}" >> "$GITHUB_OUTPUT"
 
@@ -49,12 +53,18 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    outputs:
+      sha: ${{ steps.rev.outputs.sha }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           # Build the commit the trigger tag points at (matters for workflow_dispatch).
           ref: ${{ needs.prepare.outputs.raw }}
+
+      - id: rev
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
@@ -94,14 +104,31 @@ jobs:
             release/latest*.yml
           if-no-files-found: ignore
 
-      - name: Attach to release
+  # ONE job publishes, after both platforms built — two matrix jobs racing to
+  # create the same release could fail or produce duplicates.
+  release:
+    needs: [prepare, build]
+    # Like the old per-platform upload: a failed platform doesn't block the
+    # other one's installers from shipping.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           # Publish under the clean vX.Y.Z tag regardless of the +mac trigger.
           tag_name: ${{ needs.prepare.outputs.clean }}
           name: Tiovivo ${{ needs.prepare.outputs.clean }}
+          # If the clean tag doesn't exist yet it's created on the commit that
+          # was BUILT — not on whatever the default branch points at now.
+          target_commitish: ${{ needs.build.outputs.sha }}
           draft: false
           files: |
-            release/*.dmg
-            release/*.zip
-            release/*.exe
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.exe

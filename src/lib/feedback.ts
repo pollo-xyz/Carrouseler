@@ -5,6 +5,8 @@ import { create } from 'zustand'
  *
  * - toast(message, opts) — non-blocking notification, stacks bottom-right.
  * - confirmDialog(opts)  — promise-based modal confirm; resolves true/false.
+ * - choiceDialog(opts)   — same modal with an optional third button
+ *                          (Save / Don't Save / Cancel); resolves the choice.
  *
  * State lives in a small zustand store; <ToastHost/> and <ConfirmHost/>
  * (src/components/FeedbackHosts.tsx) render it.
@@ -23,14 +25,21 @@ export interface ToastItem {
   leaving?: boolean
 }
 
+/** Which button closed the dialog. Escape / veil click count as 'cancel'. */
+export type ConfirmChoice = 'confirm' | 'alt' | 'cancel'
+
 export interface ConfirmRequest {
   title?: string
   message: string
   confirmLabel: string
   cancelLabel: string
-  /** Styles the confirm button as destructive. */
+  /** Optional secondary action shown apart from Cancel / confirm (e.g.
+   *  "Don't Save"); choosing it resolves 'alt'. */
+  altLabel?: string
+  /** Styles the confirm button as destructive (and focuses Cancel first so
+   *  a stray Enter can't destroy anything). */
   danger: boolean
-  resolve: (accepted: boolean) => void
+  resolve: (choice: ConfirmChoice) => void
 }
 
 interface FeedbackState {
@@ -83,28 +92,35 @@ export function toast(
   return id
 }
 
-export function confirmDialog(opts: {
+interface DialogOptions {
   title?: string
   message: string
   confirmLabel?: string
   cancelLabel?: string
   danger?: boolean
-}): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
+}
+
+export function choiceDialog(opts: DialogOptions & { altLabel?: string }): Promise<ConfirmChoice> {
+  return new Promise<ConfirmChoice>((resolve) => {
     // Only one dialog at a time; a second request cancels the first.
-    useFeedbackStore.getState().confirm?.resolve(false)
+    useFeedbackStore.getState().confirm?.resolve('cancel')
     useFeedbackStore.setState({
       confirm: {
         title: opts.title,
         message: opts.message,
         confirmLabel: opts.confirmLabel ?? 'OK',
         cancelLabel: opts.cancelLabel ?? 'Cancel',
+        altLabel: opts.altLabel,
         danger: opts.danger ?? false,
-        resolve: (accepted) => {
+        resolve: (choice) => {
           useFeedbackStore.setState({ confirm: null })
-          resolve(accepted)
+          resolve(choice)
         },
       },
     })
   })
+}
+
+export function confirmDialog(opts: DialogOptions): Promise<boolean> {
+  return choiceDialog(opts).then((choice) => choice === 'confirm')
 }

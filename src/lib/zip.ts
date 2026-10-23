@@ -14,6 +14,14 @@ function crc32(data: Uint8Array): number {
   return ~crc >>> 0
 }
 
+/** Largest size / offset a classic (non-zip64) archive can record. Past it
+ *  the 32-bit header fields silently wrap and the file is corrupt. */
+const ZIP32_MAX = 0xffffffff
+
+function tooLarge(): Error {
+  return new Error('Project is too large to save (over 4 GB). Remove or shorten some videos and try again.')
+}
+
 export async function createZip(
   files: { name: string; data: Blob }[],
 ): Promise<Blob> {
@@ -27,9 +35,15 @@ export async function createZip(
 
   let offset = 0
 
+  // Entry count is a 16-bit field in the end-of-central-directory record.
+  if (files.length > 0xffff) throw new Error('Project has too many files to save.')
+
   for (const file of files) {
-    const data = new Uint8Array(await file.data.arrayBuffer())
     const nameBytes = new TextEncoder().encode(file.name)
+    // No zip64 support — refuse before reading the bytes rather than write
+    // an archive whose sizes/offsets have wrapped around.
+    if (offset + 30 + nameBytes.length + file.data.size > ZIP32_MAX) throw tooLarge()
+    const data = new Uint8Array(await file.data.arrayBuffer())
     const crc = crc32(data)
 
     // Local file header (30 bytes + name)
@@ -85,6 +99,7 @@ export async function createZip(
   }
 
   const cdSize = offset - cdOffset
+  if (offset > ZIP32_MAX) throw tooLarge()
 
   // End of central directory record
   const end = new Uint8Array(22)
@@ -129,6 +144,10 @@ export function readZip(buffer: Uint8Array): ZipEntry[] {
 
   const cdEntries = dv.getUint16(eocdOffset + 10, true)
   const cdOffset = dv.getUint32(eocdOffset + 16, true)
+  // An all-ones offset means the real one lives in a zip64 record we can't read.
+  if (cdOffset === ZIP32_MAX) {
+    throw new Error('readZip: zip64 archives are not supported')
+  }
 
   const entries: ZipEntry[] = []
   let p = cdOffset

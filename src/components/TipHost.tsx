@@ -10,7 +10,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
  *
  * Accessibility: controls whose only accessible name was the title (icon
  * buttons) get an aria-label backfilled at capture time, so lifting the
- * attribute never silences a screen reader.
+ * attribute never silences a screen reader. Backfilled labels are marked
+ * (data-tip-aria) and kept in step with later title changes — the theme /
+ * preview / aspect-lock toggles swap their title on click, and a stale
+ * aria-label would otherwise keep announcing the old state.
  *
  * React keeps ownership of the attribute: if a render changes the title
  * prop, React writes the new value and the next hover re-captures it
@@ -79,8 +82,11 @@ export function TipHost() {
         el.dataset.tip = title
         el.removeAttribute('title')
         // Icon-only controls often rely on title for their accessible name.
-        if (!el.hasAttribute('aria-label') && !el.textContent?.trim()) {
+        if (el.dataset.tipAria !== undefined) {
           el.setAttribute('aria-label', title)
+        } else if (!el.hasAttribute('aria-label') && !el.textContent?.trim()) {
+          el.setAttribute('aria-label', title)
+          el.dataset.tipAria = ''
         }
       }
       anchor = el
@@ -95,6 +101,20 @@ export function TipHost() {
       hide()
     }
 
+    // React rewrites `title` when the prop changes; mirror that into any
+    // aria-label we backfilled so the accessible name never goes stale
+    // (keyboard users never hover, so onOver alone can't refresh it).
+    const titleObserver = new MutationObserver((records) => {
+      for (const r of records) {
+        const el = r.target as HTMLElement
+        const t = el.getAttribute('title')
+        if (t && el.dataset.tipAria !== undefined && el.getAttribute('aria-label') !== t) {
+          el.setAttribute('aria-label', t)
+        }
+      }
+    })
+    titleObserver.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['title'] })
+
     document.addEventListener('pointerover', onOver, true)
     document.addEventListener('pointerout', onOut, true)
     // Any press, scroll or key means the user has moved on.
@@ -102,6 +122,7 @@ export function TipHost() {
     document.addEventListener('wheel', hide, { capture: true, passive: true })
     document.addEventListener('keydown', hide, true)
     return () => {
+      titleObserver.disconnect()
       document.removeEventListener('pointerover', onOver, true)
       document.removeEventListener('pointerout', onOut, true)
       document.removeEventListener('pointerdown', hide, true)

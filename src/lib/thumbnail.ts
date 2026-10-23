@@ -3,6 +3,78 @@ import type { PlacedMedia, Slide } from '../store/useTiovivoStore'
 import type { Size } from './presets'
 import { renderBgVibe } from './bgVibe'
 
+/** Give up on a video's seek after this long — Save awaits the project
+ *  preview, so a video that never fires 'seeked' must not hang it. */
+const VIDEO_FRAME_TIMEOUT_MS = 4000
+
+/** Konva.Image for a bitmap item at thumbnail scale, honouring crop and
+ *  flips exactly like the editor's MediaItemView: the crop rect (natural
+ *  px) fills the item box, and a flip is a negative scale plus an offset so
+ *  the rotation pivot stays at the item's top-left. */
+function bitmapNode(item: PlacedMedia, image: CanvasImageSource, ratio: number): Konva.Image {
+  const w = item.width * ratio
+  const h = item.height * ratio
+  const hasCrop = item.cropW > 0 && item.cropH > 0
+  return new Konva.Image({
+    image,
+    x: item.x * ratio,
+    y: item.y * ratio,
+    width: w,
+    height: h,
+    rotation: item.rotation,
+    opacity: item.opacity ?? 1,
+    ...(hasCrop ? { crop: { x: item.cropX, y: item.cropY, width: item.cropW, height: item.cropH } } : {}),
+    scaleX: item.flipX ? -1 : 1,
+    scaleY: item.flipY ? -1 : 1,
+    offsetX: item.flipX ? w : 0,
+    offsetY: item.flipY ? h : 0,
+  })
+}
+
+/** Rect / ellipse / line at thumbnail scale — same geometry as the
+ *  editor's ShapeView (x / y is the bbox top-left for every kind, which is
+ *  also the rotation pivot). Shapes have no `src`; they used to fall into
+ *  the image branch and silently never draw. */
+function shapeNode(item: PlacedMedia, ratio: number): Konva.Shape {
+  const kind = item.shapeKind ?? 'rect'
+  const w = item.width * ratio
+  const h = item.height * ratio
+  const fill = item.fillColor === 'transparent' ? undefined : (item.fillColor ?? '#ffffff')
+  const stroke = item.strokeColor || undefined
+  const strokeWidth = (item.strokeWidth ?? 0) * ratio
+  const base = { x: item.x * ratio, y: item.y * ratio, rotation: item.rotation }
+  if (kind === 'ellipse') {
+    return new Konva.Ellipse({
+      ...base,
+      radiusX: w / 2,
+      radiusY: h / 2,
+      offsetX: -w / 2,
+      offsetY: -h / 2,
+      fill,
+      stroke,
+      strokeWidth,
+    })
+  }
+  if (kind === 'line') {
+    return new Konva.Line({
+      ...base,
+      points: [0, h / 2, w, h / 2],
+      stroke: stroke || '#ffffff',
+      strokeWidth: Math.max(1, item.strokeWidth || item.height) * ratio,
+      lineCap: 'round',
+    })
+  }
+  return new Konva.Rect({
+    ...base,
+    width: w,
+    height: h,
+    fill,
+    stroke,
+    strokeWidth,
+    cornerRadius: (item.cornerRadius ?? 0) * ratio,
+  })
+}
+
 /**
  * Generate a small thumbnail data-URL for a slide by rendering its items
  * into an offscreen Konva stage.
@@ -70,10 +142,21 @@ export async function generateThumbnail(
     )
   }
 
-  // Load and draw each media item
+  // Videos created for frame grabs — released once the stage is rasterised.
+  const videos: HTMLVideoElement[] = []
+
+  // Load each media item, then add the nodes in the ORIGINAL item order:
+  // loads finish in any order, and adding on completion scrambled z-order.
+  const nodes: (Konva.Shape | null)[] = items.map(() => null)
   const loadPromises = items.map(
-    (item) =>
+    (item, index) =>
       new Promise<void>((resolve) => {
+        const layerAdd = (node: Konva.Shape) => { nodes[index] = node }
+        if (item.type === 'shape') {
+          layerAdd(shapeNode(item, ratio))
+          resolve()
+          return
+        }
         if (item.type === 'text') {
           const bold = !!item.bold
           const italic = !!item.italic
@@ -110,7 +193,7 @@ export async function generateThumbnail(
           } else {
             baseFontSize = item.fontSize || 64
           }
-          layer.add(
+          layerAdd(
             new Konva.Text({
               x: item.x * ratio,
               y: item.y * ratio,
@@ -133,27 +216,29 @@ export async function generateThumbnail(
         }
         if (item.type === 'video') {
           const v = document.createElement('video')
+          videos.push(v)
           v.src = item.src
           v.muted = true
           v.preload = 'auto'
           v.currentTime = 0.1 // grab a frame slightly in
-          const onLoaded = () => {
-            layer.add(
-              new Konva.Image({
-                image: v,
-                x: item.x * ratio,
-                y: item.y * ratio,
-                width: item.width * ratio,
-                height: item.height * ratio,
-                rotation: item.rotation,
-                opacity: item.opacity ?? 1,
-              }),
-            )
-            v.removeEventListener('seeked', onLoaded)
+          let settled = false
+          const finish = (draw: boolean) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timeout)
+            v.removeEventListener('seeked', onSeeked)
+            if (draw) layerAdd(bitmapNode(item, v, ratio))
             resolve()
           }
-          v.addEventListener('seeked', onLoaded)
-          v.addEventListener('error', () => resolve())
+          const onSeeked = () => finish(true)
+          // A seek that never completes (codec trouble, 0-length clip) must
+          // not hang Save. Draw whatever frame is decoded by then, if any.
+          const timeout = setTimeout(
+            () => finish(v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA),
+            VIDEO_FRAME_TIMEOUT_MS,
+          )
+          v.addEventListener('seeked', onSeeked)
+          v.addEventListener('error', () => finish(false))
           // trigger load
           v.load()
           return
@@ -163,17 +248,7 @@ export async function generateThumbnail(
         const img = new window.Image()
         img.crossOrigin = 'anonymous'
         img.onload = () => {
-          layer.add(
-            new Konva.Image({
-              image: img,
-              x: item.x * ratio,
-              y: item.y * ratio,
-              width: item.width * ratio,
-              height: item.height * ratio,
-              rotation: item.rotation,
-              opacity: item.opacity ?? 1,
-            }),
-          )
+          layerAdd(bitmapNode(item, img, ratio))
           resolve()
         }
         img.onerror = () => resolve()
@@ -182,6 +257,7 @@ export async function generateThumbnail(
   )
 
   await Promise.all(loadPromises)
+  for (const node of nodes) if (node) layer.add(node)
   layer.batchDraw()
 
   const dataUrl = stage.toDataURL({ pixelRatio: 1 })
@@ -189,6 +265,12 @@ export async function generateThumbnail(
   // Cleanup
   stage.destroy()
   document.body.removeChild(container)
+  // Detach the sources so each thumbnail pass doesn't leave live media
+  // players around until GC (Chromium caps how many can exist).
+  for (const v of videos) {
+    v.removeAttribute('src')
+    v.load()
+  }
 
   return dataUrl
 }
@@ -234,7 +316,13 @@ export async function generateProjectPreview(
   // duplicating the per-item drawing logic.
   const thumbs = await Promise.all(
     slides.map(async (s) => {
-      const slideItems = items.filter((it) => it.slideId === s.id)
+      // Master ("show on all slides") items appear on every slide — same
+      // z-order as the canvas and the strip thumbnails: ghosts first, then
+      // the slide's own items.
+      const slideItems = [
+        ...items.filter((it) => it.appearsOnAllSlides && it.slideId !== s.id),
+        ...items.filter((it) => it.slideId === s.id),
+      ]
       const dataUrl = await generateThumbnail(slideItems, dimensions, slideW, slideH * 2, s)
       // When the slide has a vibe, the thumbnail already includes it pixel-
       // perfect, so we don't want the composite step to paint a flat color

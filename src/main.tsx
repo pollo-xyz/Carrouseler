@@ -19,8 +19,12 @@ initTheme()
 // Tag the body with the platform so CSS can conditionally style chrome —
 // e.g. the macOS-only 82px left padding for traffic-light buttons. We use
 // userAgent rather than process.platform because nodeIntegration is off.
+// Only inside Electron: the plain-browser renderer (vite --mode browser) has
+// no traffic lights, no window-button overlay and no native macOS menu, so
+// it keeps the in-app menubar and plain header padding on every OS.
 const ua = navigator.userAgent
-if (/Mac/.test(ua)) document.body.classList.add('platform-mac')
+if (!window.electronAPI) document.body.classList.add('platform-web')
+else if (/Mac/.test(ua)) document.body.classList.add('platform-mac')
 else if (/Windows/.test(ua)) document.body.classList.add('platform-win')
 else document.body.classList.add('platform-other')
 

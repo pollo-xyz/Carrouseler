@@ -37,7 +37,7 @@ export interface ElectronAPI {
     fps: number
     duration: number
     outputPath: string
-  }) => Promise<{ ok: boolean }>
+  }) => Promise<{ ok: boolean; encoder: string }>
 
   videoFrame: (options: {
     sessionId: string
@@ -55,13 +55,13 @@ export interface ElectronAPI {
     chosen: string
   } | null>
 
-  extractCoverFrame: (options: {
-    videoPath: string
-    time: number
-    outputPath: string
-    width: number
-    height: number
-  }) => Promise<string>
+  /** Abandon an encoding session: kills ffmpeg, deletes the partial file. */
+  abortVideoEncode: (options: {
+    sessionId: string
+  }) => Promise<void>
+
+  /** Toggle Chromium DevTools for this window. */
+  toggleDevTools: () => Promise<void>
 
   onUndo: (cb: () => void) => () => void
   onRedo: (cb: () => void) => () => void

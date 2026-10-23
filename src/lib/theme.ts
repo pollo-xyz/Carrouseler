@@ -60,8 +60,12 @@ function applyToDom(theme: ThemeName) {
 }
 
 function readStored(): ThemeName {
-  if (typeof localStorage === 'undefined') return 'onyx'
-  const v = localStorage.getItem(STORAGE_KEY)
+  let v: string | null = null
+  try {
+    v = typeof localStorage === 'undefined' ? null : localStorage.getItem(STORAGE_KEY)
+  } catch {
+    /* storage disabled — fall back to the default theme */
+  }
   // Migrate the earlier dark/light naming.
   if (v === 'cream' || v === 'light') return 'cream'
   return 'onyx'
@@ -90,7 +94,16 @@ function flipWithReveal(apply: () => void, origin?: FlipOrigin) {
   // the FINISHED new theme, not chrome mid-way through its own 280ms fades.
   document.documentElement.classList.add('theme-flipping')
   const t = document.startViewTransition(apply)
-  t.finished.finally(() => document.documentElement.classList.remove('theme-flipping'))
+  const release = () => document.documentElement.classList.remove('theme-flipping')
+  // Safety net: a transition whose frames never get scheduled (an occluded
+  // or hidden window) never settles — that left 'theme-flipping' on <html>,
+  // freezing every CSS transition app-wide and the page on the old
+  // snapshot. Force-finish it well after the 520ms reveal would have ended.
+  const guard = setTimeout(() => {
+    try { t.skipTransition() } catch { /* already done */ }
+    release()
+  }, 1500)
+  t.finished.finally(() => { clearTimeout(guard); release() })
   t.ready
     .then(() => {
       const x = origin?.x ?? window.innerWidth - 90
@@ -122,7 +135,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   setTheme: (t, origin) => {
     flipWithReveal(() => {
       applyToDom(t)
-      if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, t)
+      try { localStorage.setItem(STORAGE_KEY, t) } catch { /* not persisted — still applied */ }
       set({ theme: t })
     }, origin)
   },

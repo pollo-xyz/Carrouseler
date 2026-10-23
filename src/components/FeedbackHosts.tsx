@@ -35,20 +35,41 @@ export function ToastHost() {
 
 export function ConfirmHost() {
   const confirm = useFeedbackStore((s) => s.confirm)
+  const panelRef = useRef<HTMLDivElement>(null)
   const confirmBtnRef = useRef<HTMLButtonElement>(null)
+  const cancelBtnRef = useRef<HTMLButtonElement>(null)
 
-  // Focus the primary action so Enter confirms and Escape cancels without
-  // the user reaching for the mouse.
+  // Focus a button so Enter / Escape work without the mouse — the primary
+  // action normally, but Cancel for destructive dialogs so a stray Enter
+  // can't destroy anything. On close, hand focus back to whatever had it.
   useEffect(() => {
-    if (confirm) confirmBtnRef.current?.focus()
+    if (!confirm) return
+    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    ;(confirm.danger ? cancelBtnRef : confirmBtnRef).current?.focus()
+    return () => {
+      if (prev?.isConnected) prev.focus()
+    }
   }, [confirm])
 
   if (!confirm) return null
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Modal: no keystroke may reach the window-level canvas shortcuts
+    // behind the veil (Backspace deleting items, Space panning, …).
+    e.stopPropagation()
     if (e.key === 'Escape') {
-      e.stopPropagation()
-      confirm.resolve(false)
+      e.preventDefault()
+      confirm.resolve('cancel')
+    } else if (e.key === 'Tab') {
+      // Trap Tab inside the dialog's buttons.
+      const btns = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+      if (btns.length === 0) return
+      const i = btns.indexOf(document.activeElement as HTMLButtonElement)
+      const next = e.shiftKey
+        ? btns[i <= 0 ? btns.length - 1 : i - 1]
+        : btns[i < 0 || i === btns.length - 1 ? 0 : i + 1]
+      e.preventDefault()
+      next?.focus()
     }
   }
 
@@ -58,20 +79,37 @@ export function ConfirmHost() {
       onKeyDown={onKeyDown}
       onMouseDown={(e) => {
         // Click on the veil (not the panel) cancels.
-        if (e.target === e.currentTarget) confirm.resolve(false)
+        if (e.target === e.currentTarget) confirm.resolve('cancel')
       }}
     >
-      <div className="confirm" role="alertdialog" aria-modal="true" aria-label={confirm.title ?? 'Confirm'}>
+      <div
+        ref={panelRef}
+        className="confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={confirm.title ?? 'Confirm'}
+      >
         {confirm.title && <div className="confirm__title">{confirm.title}</div>}
         <div className="confirm__message">{confirm.message}</div>
         <div className="confirm__actions">
-          <button className="confirm__btn" onClick={() => confirm.resolve(false)}>
+          {confirm.altLabel && (
+            // Secondary choice (e.g. "Don't Save") sits apart on the left,
+            // macOS-style, so it isn't mistaken for Cancel.
+            <button
+              className="confirm__btn"
+              style={{ marginRight: 'auto' }}
+              onClick={() => confirm.resolve('alt')}
+            >
+              {confirm.altLabel}
+            </button>
+          )}
+          <button ref={cancelBtnRef} className="confirm__btn" onClick={() => confirm.resolve('cancel')}>
             {confirm.cancelLabel}
           </button>
           <button
             ref={confirmBtnRef}
             className={`confirm__btn confirm__btn--primary${confirm.danger ? ' confirm__btn--danger' : ''}`}
-            onClick={() => confirm.resolve(true)}
+            onClick={() => confirm.resolve('confirm')}
           >
             {confirm.confirmLabel}
           </button>

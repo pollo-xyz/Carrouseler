@@ -30,7 +30,7 @@ export interface ProjectManifest {
   slides: Slide[]
   assets: ProjectAsset[]
   items: (Omit<PlacedMedia, 'src' | 'coverImageSrc'> & {
-    // Optional for text items, which carry no media asset
+    // Optional for text and shape items, which carry no media asset
     assetId?: string
     coverAssetId?: string
   })[]
@@ -72,6 +72,13 @@ function extFromName(name: string): string {
   return i >= 0 ? name.slice(i + 1).toLowerCase() : ''
 }
 
+/** Text and shapes are drawn from their own fields — their `src` is ''.
+ *  Fetching '' resolves to the page URL (dev) or fails outright (file://),
+ *  so any project containing a shape could not be saved. */
+function hasMediaAsset(type: MediaType): boolean {
+  return type !== 'text' && type !== 'shape'
+}
+
 export async function serializeProject(
   state: SerializeInput,
   getAssetBlob: (src: string) => Promise<Blob>,
@@ -92,7 +99,7 @@ export async function serializeProject(
   }
 
   for (const item of state.items) {
-    if (item.type === 'text') continue
+    if (!hasMediaAsset(item.type)) continue
     await registerAsset(item.src, item.name)
     if (item.coverImageSrc) {
       await registerAsset(item.coverImageSrc, `cover-${item.name}`)
@@ -115,7 +122,7 @@ export async function serializeProject(
       const { src: _src, coverImageSrc: _cs, ...rest } = it
       void _src; void _cs
       const out: ProjectManifest['items'][number] = { ...rest }
-      if (it.type !== 'text') {
+      if (hasMediaAsset(it.type)) {
         out.assetId = srcToAsset.get(it.src)!.id
         if (it.coverImageSrc) {
           out.coverAssetId = srcToAsset.get(it.coverImageSrc)!.id
@@ -183,8 +190,8 @@ export function hydrateItems(
 ): PlacedMedia[] {
   return manifest.items.map((it) => {
     const { assetId, coverAssetId, ...rest } = it
-    if (rest.type === 'text') {
-      return { ...rest, src: '', type: 'text' as MediaType }
+    if (!hasMediaAsset(rest.type)) {
+      return { ...rest, src: '' }
     }
     if (!assetId) throw new Error('Media item missing assetId')
     const url = assetUrls.get(assetId)

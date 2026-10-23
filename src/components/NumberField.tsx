@@ -30,16 +30,31 @@ export default function NumberField({
 }: Props) {
   const fmt = (v: number) => (decimals !== undefined ? v.toFixed(decimals) : String(v))
   const [text, setText] = useState<string>(() => fmt(value))
+  const [focused, setFocused] = useState(false)
 
   // Re-sync local text whenever the source value changes (e.g. from undo,
   // a slider, or another input editing the same store field). Done as a
   // render-time state adjustment (React's sanctioned derived-state reset)
   // rather than an effect, so there's no flash of stale text.
+  // Skipped while focused: the text is the user's then, and the live
+  // commits below feed `value` straight back — re-formatting mid-edit
+  // turned "0." into "0.00" and made "0.8" untypeable in decimal fields.
+  // Blur re-syncs (commit() rewrites the text).
   const [prevSync, setPrevSync] = useState({ value, decimals })
   if (prevSync.value !== value || prevSync.decimals !== decimals) {
     setPrevSync({ value, decimals })
-    setText(fmt(value))
+    if (!focused) setText(fmt(value))
   }
+
+  // Value when the field gained focus — Escape restores it even after live
+  // keystroke commits have already changed the store.
+  const focusValueRef = useRef(value)
+  // Set by Escape so the blur it triggers doesn't commit the typed text.
+  const cancelRef = useRef(false)
+  // Did the user type since focus? A blur without edits must not write
+  // anything (it would re-dirty the document, or clobber a value changed
+  // elsewhere while the field sat focused).
+  const editedRef = useRef(false)
 
   // Scrub state — null when not in a drag, populated on pointerdown. The
   // `active` flag flips once the pointer has moved past a small threshold,
@@ -59,14 +74,33 @@ export default function NumberField({
 
   const commit = () => {
     const trimmed = text.trim()
-    if (!trimmed) { setText(fmt(value)); return }
+    if (!editedRef.current || !trimmed) { setText(fmt(value)); return }
     const n = Number(trimmed)
     if (!Number.isFinite(n)) { setText(fmt(value)); return }
-    let clamped = n
-    if (min !== undefined) clamped = Math.max(min, clamped)
-    if (max !== undefined) clamped = Math.min(max, clamped)
-    onCommit(clamped)
+    let clamped = clamp(n)
+    // Store what the field displays — a live-committed 0.25 in a 1-decimal
+    // field would otherwise read "0.3" while the document holds 0.25.
+    if (decimals !== undefined) clamped = Number(clamped.toFixed(decimals))
+    // Live commits usually stored this already; skip the redundant write.
+    if (clamped !== value) onCommit(clamped)
     setText(fmt(clamped))
+  }
+
+  const onFocus = () => {
+    setFocused(true)
+    focusValueRef.current = value
+    cancelRef.current = false
+    editedRef.current = false
+  }
+
+  const onBlur = () => {
+    setFocused(false)
+    if (cancelRef.current) {
+      // Escape already restored both the text and the stored value.
+      cancelRef.current = false
+      return
+    }
+    commit()
   }
 
   // Live commit on every keystroke when the typed value already parses to a
@@ -76,6 +110,7 @@ export default function NumberField({
   // typing or blur out.
   const onChange = (raw: string) => {
     setText(raw)
+    editedRef.current = true
     const trimmed = raw.trim()
     if (!trimmed) return
     const n = Number(trimmed)
@@ -143,12 +178,20 @@ export default function NumberField({
       step={step}
       value={text}
       onChange={(e) => onChange(e.target.value)}
-      onBlur={commit}
+      onFocus={onFocus}
+      onBlur={onBlur}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           ;(e.currentTarget as HTMLInputElement).blur()
         } else if (e.key === 'Escape') {
-          setText(fmt(value))
+          // Revert to the value from before this edit. Live commits may
+          // already have pushed keystrokes into the store, so write the
+          // original back; the cancel flag stops the blur from committing
+          // the typed text over it.
+          const original = focusValueRef.current
+          cancelRef.current = true
+          if (value !== original) onCommit(original)
+          setText(fmt(original))
           ;(e.currentTarget as HTMLInputElement).blur()
         }
       }}

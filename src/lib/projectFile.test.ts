@@ -138,6 +138,28 @@ describe('serializeProject / deserializeProject round-trip', () => {
     expect(manifest.items[0]!.assetId).toBeUndefined()
   })
 
+  it('serializes shape items without any asset and hydrates them back', async () => {
+    const input = makeInput([
+      makeItem({ id: 's1', type: 'shape', src: '', name: 'Rectangle', shapeKind: 'rect', fillColor: '#ff0000' }),
+      makeItem({ id: 'i1', src: 'blob:orig-1' }),
+    ])
+    // getAssetBlob must only be asked for the image — never for the shape's ''
+    const requested: string[] = []
+    const file = await serializeProject(input, async (src) => {
+      requested.push(src)
+      if (src !== 'blob:orig-1') throw new Error(`unexpected fetch of "${src}"`)
+      return pngBlob()
+    })
+    expect(requested).toEqual(['blob:orig-1'])
+    const { manifest } = deserializeProject(new Uint8Array(await file.arrayBuffer()))
+    expect(manifest.assets).toHaveLength(1)
+    expect(manifest.items[0]!.assetId).toBeUndefined()
+
+    const hydrated = hydrateItems(manifest, new Map([[manifest.items[1]!.assetId!, 'blob:re']]))
+    expect(hydrated[0]).toMatchObject({ type: 'shape', src: '', shapeKind: 'rect', fillColor: '#ff0000' })
+    expect(hydrated[1]!.src).toBe('blob:re')
+  })
+
   it('embeds the optional preview.png', async () => {
     const preview = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })
     const file = await serializeProject(makeInput([], { preview }), async () => pngBlob())

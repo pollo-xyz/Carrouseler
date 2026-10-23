@@ -9,7 +9,7 @@ import { ToastHost, ConfirmHost } from './components/FeedbackHosts'
 import { TipHost } from './components/TipHost'
 import { Neaticon } from './components/Neaticon'
 import SlideStrip from './components/SlideStrip'
-import { toast, dismissToast, confirmDialog } from './lib/feedback'
+import { toast, dismissToast, confirmDialog, choiceDialog, useFeedbackStore } from './lib/feedback'
 import { useThemeStore, resolveWorkspaceBg, WORKSPACE_AUTO } from './lib/theme'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
 import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
@@ -163,6 +163,45 @@ function formatElapsed(ms: number): string {
 function sliderFill(value: number, min: number, max: number): React.CSSProperties {
   const pct = ((value - min) / (max - min)) * 100
   return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
+}
+
+/** Input types that take typed text — keystrokes there belong to the field.
+ *  Sliders, checkboxes and colour swatches are NOT here: after clicking one,
+ *  Delete / Ctrl+Z / [ ] must still reach the canvas. */
+const TEXT_INPUT_TYPES = new Set([
+  'text', 'number', 'search', 'email', 'url', 'password', 'tel',
+  'date', 'datetime-local', 'month', 'time', 'week',
+])
+
+/** True when key events on `el` are text editing (input / textarea /
+ *  select / contenteditable) and app shortcuts must stand aside. */
+function isTextEntryTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el.isContentEditable) return true
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true
+  return el instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(el.type)
+}
+
+/** Undo / redo from a menu (native app:undo IPC on macOS, the in-app Edit
+ *  menu elsewhere). With a text field focused the user means the field's
+ *  own text history — Cmd+Z there used to rewind the canvas instead. */
+function runUndoRedo(kind: 'undo' | 'redo') {
+  const el = document.activeElement
+  if (isTextEntryTarget(el) && !(el instanceof HTMLSelectElement)) {
+    document.execCommand(kind)
+    return
+  }
+  const st = useTiovivoStore.getState()
+  if (kind === 'undo') st.undo()
+  else st.redo()
+}
+
+/** Apply a vibe edit to every slide that already has one, merging ONLY the
+ *  edited field(s) into each slide's own vibe. Sending the active slide's
+ *  full config (the old behaviour) reset every other slide's palette and
+ *  sliders on a single Grain nudge, and turned solid slides into vibes. */
+function patchAllSlideVibes(patch: Partial<Omit<BgVibe, 'seed'>>) {
+  useTiovivoStore.getState().patchAllSlidesBgVibe(patch)
 }
 
 function slideHasAnimatedExport(items: PlacedMedia[], slideId: string): boolean {
@@ -329,7 +368,9 @@ function BackgroundPanel({
   const apply = useCallback(
     (patch: Partial<Omit<BgVibe, 'seed'>>) => {
       if (scope === 'all') {
-        setAllSlidesBgVibe({ ...config, ...patch })
+        // Only the edited field(s) propagate — each slide keeps the rest of
+        // its own vibe, and solid slides stay solid.
+        patchAllSlideVibes(patch)
       } else {
         // Preserve the active slide's existing seed when one is set, otherwise
         // mint a fresh one (so first-touch in 'selected' mode immediately
@@ -338,7 +379,7 @@ function BackgroundPanel({
         setSlideBgVibe(activeSlideId, { ...config, ...patch, seed })
       }
     },
-    [config, scope, activeSlide, activeSlideId, setAllSlidesBgVibe, setSlideBgVibe],
+    [config, scope, activeSlide, activeSlideId, setSlideBgVibe],
   )
 
   const setPaletteColor = (i: number, color: string) => {
@@ -833,6 +874,9 @@ function RemoveBgButton({
 export default function App() {
   const stageRef = useRef<EditorStageHandle>(null)
   const [exporting, setExporting] = useState(false)
+  // Synchronous mirror for event handlers: export walks the LIVE store
+  // slide by slide, so undo / delete / open mid-export corrupt the output.
+  const exportingRef = useRef(false)
   const [exportProgress, setExportProgress] = useState('')
   // Cycling 0–3 dots + a wall-clock timer keep the export indicator visibly
   // animated even when the percentage is stuck waiting on a slow ffmpeg frame.
@@ -923,6 +967,7 @@ export default function App() {
   const addText = useTiovivoStore((s) => s.addText)
   const addShape = useTiovivoStore((s) => s.addShape)
   const updateItem = useTiovivoStore((s) => s.updateItem)
+  const syncItemMeasurements = useTiovivoStore((s) => s.syncItemMeasurements)
 
   // Download the chosen Giphy result and drop it on the active slide. We
   // embed the bytes (not the remote URL) so the .vpost stays portable.
@@ -1037,6 +1082,10 @@ export default function App() {
   const onFiles = useCallback(
     async (files: FileList | null) => {
       if (!files?.length) return
+      // Files this renderer can't decode (HEIC, unsupported codecs, corrupt
+      // data) used to land as invisible 0×0 items that then broke export.
+      // Skip them and say so once for the whole drop.
+      const failed: string[] = []
       for (const file of Array.from(files)) {
         if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) continue
         const url = URL.createObjectURL(file)
@@ -1044,27 +1093,40 @@ export default function App() {
           const v = document.createElement('video')
           v.preload = 'metadata'
           v.src = url
-          await new Promise<void>((res, rej) => {
-            v.onloadedmetadata = () => res()
-            v.onerror = () => rej(new Error('video'))
-          }).catch(() => {})
-          const nw = v.videoWidth || dimensions.width * 0.5
-          const nh = v.videoHeight || dimensions.height * 0.5
+          const ok = await new Promise<boolean>((res) => {
+            v.onloadedmetadata = () => res(true)
+            v.onerror = () => res(false)
+          })
+          const nw = v.videoWidth
+          const nh = v.videoHeight
+          v.removeAttribute('src')
+          v.load()
           URL.revokeObjectURL(url)
+          // No picture track (or none we can decode) → nothing to place.
+          if (!ok || !nw || !nh) { failed.push(file.name); continue }
           addMedia(file, nw, nh)
           continue
         }
         const img = new Image()
         img.src = url
-        await new Promise<void>((res, rej) => {
-          img.onload = () => res()
-          img.onerror = () => rej(new Error('img'))
-        }).catch(() => { URL.revokeObjectURL(url) })
-        addMedia(file, img.naturalWidth, img.naturalHeight)
+        const ok = await new Promise<boolean>((res) => {
+          img.onload = () => res(true)
+          img.onerror = () => res(false)
+        })
         URL.revokeObjectURL(url)
+        if (!ok || !img.naturalWidth || !img.naturalHeight) { failed.push(file.name); continue }
+        addMedia(file, img.naturalWidth, img.naturalHeight)
+      }
+      if (failed.length) {
+        toast(
+          `Couldn't read ${failed.length === 1 ? `"${failed[0]}"` : `${failed.length} files`} — ` +
+          'the format isn\'t supported (e.g. HEIC, some video codecs) or the file is damaged.' +
+          (failed.length > 1 ? `\n${failed.join('\n')}` : ''),
+          { kind: 'error' },
+        )
       }
     },
-    [addMedia, dimensions.height, dimensions.width],
+    [addMedia],
   )
 
   /* ---- Canvas drag-and-drop ---- */
@@ -1105,12 +1167,26 @@ export default function App() {
     items: Omit<PlacedMedia, 'id' | 'slideId'>[]
     offsetCount: number
   } | null>(null)
+  // Loading / resetting a project revokes every blob: URL the old document
+  // used, so copied media would paste as dead images (and then fail Save).
+  // Drop those entries; text and shapes carry no blob and survive.
+  const dropClipboardMedia = useCallback(() => {
+    const clip = clipboardRef.current
+    if (!clip) return
+    const keep = clip.items.filter(
+      (it) => !it.src.startsWith('blob:') && !it.coverImageSrc?.startsWith('blob:'),
+    )
+    clipboardRef.current = keep.length ? { ...clip, items: keep } : null
+  }, [])
 
   /* ---- Keyboard shortcuts ---- */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      // Text fields own their keys; sliders / checkboxes / swatches don't.
+      if (isTextEntryTarget(e.target)) return
+      // Nothing may act behind a modal dialog (Backspace deleted canvas
+      // items under "Discard changes?"), nor on the live store mid-export.
+      if (useFeedbackStore.getState().confirm || exportingRef.current) return
 
       const st = useTiovivoStore.getState()
 
@@ -1189,7 +1265,9 @@ export default function App() {
         const targetIdx = e.key === '[' ? currentIdx - 1 : currentIdx + 1
         if (targetIdx < 0 || targetIdx >= st.slides.length) return
         const targetSlideId = st.slides[targetIdx]!.id
-        st.selectedIds.forEach((id) => st.moveItemToSlide(id, targetSlideId))
+        // One updateItems call = one undo step for the whole selection
+        // (moveItemToSlide per item made Undo walk them back one by one).
+        st.updateItems(st.selectedIds.map((id) => ({ id, patch: { slideId: targetSlideId } })))
         e.preventDefault()
         return
       }
@@ -1203,8 +1281,13 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown)
     // In Electron, the Edit menu's Cmd/Ctrl+Z accelerator fires before the
     // renderer sees the keydown — so also listen for IPC events from main.
-    const offUndo = window.electronAPI?.onUndo(() => useTiovivoStore.getState().undo())
-    const offRedo = window.electronAPI?.onRedo(() => useTiovivoStore.getState().redo())
+    // runUndoRedo sends it to a focused text field's own history instead.
+    const onMenuUndoRedo = (kind: 'undo' | 'redo') => {
+      if (useFeedbackStore.getState().confirm || exportingRef.current) return
+      runUndoRedo(kind)
+    }
+    const offUndo = window.electronAPI?.onUndo(() => onMenuUndoRedo('undo'))
+    const offRedo = window.electronAPI?.onRedo(() => onMenuUndoRedo('redo'))
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       offUndo?.()
@@ -1222,6 +1305,7 @@ export default function App() {
       return
     }
     setExporting(true)
+    exportingRef.current = true
     setExportProgress('')
     st.setSelectedIds([])
     const prefix = sanitizeFilename(exportPrefix.trim()) || 'tiovivo'
@@ -1391,6 +1475,7 @@ export default function App() {
       console.error('[export] failed:', err)
       toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     } finally {
+      exportingRef.current = false
       setExporting(false)
       setExportProgress('')
     }
@@ -1414,6 +1499,7 @@ export default function App() {
       : ''
     const hasVideo = slideHasAnimatedExport(st.items, slideId)
     setExporting(true)
+    exportingRef.current = true
     setExportProgress(`Exporting slide ${idx + 1}...`)
     st.setSelectedIds([])
     try {
@@ -1470,6 +1556,7 @@ export default function App() {
       console.error('[export-single] failed:', err)
       toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     } finally {
+      exportingRef.current = false
       setExporting(false)
       setExportProgress('')
     }
@@ -1485,6 +1572,15 @@ export default function App() {
       return false
     }
     const st = useTiovivoStore.getState()
+    // The save writes THIS snapshot; edits made while it's in flight (preview
+    // render, file dialog, disk write) aren't in the file, so they must keep
+    // the document dirty.
+    const savedRevision = st.revision
+    const markSaved = () => {
+      if (useTiovivoStore.getState().revision === savedRevision) {
+        useTiovivoStore.getState().setDirty(false)
+      }
+    }
     try {
       // Render the Fit-view snapshot (all slides side-by-side) so the .vpost
       // carries its own preview image. Failure here is non-fatal — we still
@@ -1532,7 +1628,7 @@ export default function App() {
       const existing = projectPathRef.current
       if (existing && !forcePrompt) {
         await window.electronAPI.writeFile({ path: existing, buffer })
-        useTiovivoStore.getState().setDirty(false)
+        markSaved()
         void refreshRecents()
         return true
       }
@@ -1547,7 +1643,7 @@ export default function App() {
       })
       if (path) {
         setProjectPath(path)
-        useTiovivoStore.getState().setDirty(false)
+        markSaved()
         void refreshRecents()
         return true
       }
@@ -1562,9 +1658,9 @@ export default function App() {
   }, [refreshRecents])
 
   const loadFromBuffer = useCallback((buffer: Uint8Array, path: string) => {
+    const assetUrls = new Map<string, string>()
     try {
       const { manifest, assetBlobs } = deserializeProject(buffer)
-      const assetUrls = new Map<string, string>()
       for (const [id, blob] of assetBlobs) {
         assetUrls.set(id, URL.createObjectURL(blob))
       }
@@ -1580,41 +1676,74 @@ export default function App() {
         guides: manifest.guides,
         lastTextStyle: manifest.lastTextStyle,
       })
+      dropClipboardMedia()
       setProjectPath(path)
     } catch (err) {
+      // The current project is untouched — free the URLs minted for the
+      // file that failed to load.
+      for (const url of assetUrls.values()) URL.revokeObjectURL(url)
       console.error('[open] failed:', err)
       toast(`Open failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
-  }, [])
+  }, [dropClipboardMedia])
+
+  /** Gate for everything that replaces the open document (New, Open, Open
+   *  Recent, a .vpost opened from Finder / Explorer, Reload). Resolves true
+   *  when it's fine to proceed: nothing unsaved, the user saved, or chose
+   *  Don't Save. These used to throw away unsaved work without asking. */
+  const confirmReplaceDocument = useCallback(async (doing: string): Promise<boolean> => {
+    if (exportingRef.current) {
+      toast('Wait for the export to finish first.', { kind: 'error' })
+      return false
+    }
+    if (!useTiovivoStore.getState().isDirty) return true
+    const name = projectPathRef.current?.split(/[/\\]/).pop() || 'Untitled'
+    const choice = await choiceDialog({
+      title: 'Save changes?',
+      message: `Do you want to save the changes you made to "${name}" before ${doing}?\n` +
+        'Your changes will be lost if you don\'t save them.',
+      confirmLabel: 'Save',
+      altLabel: 'Don\'t Save',
+    })
+    if (choice === 'alt') return true
+    if (choice === 'confirm') return handleSave(false) // false: save dialog cancelled / failed
+    return false
+  }, [handleSave])
 
   const handleOpen = useCallback(async () => {
     if (!window.electronAPI) {
       toast('Opening projects only works in the desktop app, not the browser.', { kind: 'error' })
       return
     }
+    if (exportingRef.current) {
+      toast('Wait for the export to finish first.', { kind: 'error' })
+      return
+    }
     try {
+      // Pick first, then ask: cancelling the picker shouldn't cost a prompt.
       const result = await window.electronAPI.openFile({ filters: VPOST_FILTER })
       if (!result) return
+      if (!(await confirmReplaceDocument('opening another project'))) return
       loadFromBuffer(result.buffer, result.path)
       void refreshRecents()
     } catch (err) {
       console.error('[open] failed:', err)
       toast(`Open failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
     }
-  }, [loadFromBuffer, refreshRecents])
+  }, [confirmReplaceDocument, loadFromBuffer, refreshRecents])
 
-  const handleNew = useCallback(() => {
-    void confirmDialog({
-      title: 'New project',
-      message: 'Discard current project and start fresh?',
-      confirmLabel: 'Discard',
-      danger: true,
-    }).then((ok) => {
-      if (!ok) return
-      useTiovivoStore.getState().resetProject()
-      setProjectPath(null)
-    })
-  }, [])
+  const handleNew = useCallback(async () => {
+    // Only asks when there are unsaved changes — a clean document is
+    // replaced straight away.
+    if (!(await confirmReplaceDocument('starting a new project'))) return
+    useTiovivoStore.getState().resetProject()
+    dropClipboardMedia()
+    setProjectPath(null)
+  }, [confirmReplaceDocument, dropClipboardMedia])
+
+  const handleReload = useCallback(async () => {
+    if (await confirmReplaceDocument('reloading')) location.reload()
+  }, [confirmReplaceDocument])
 
   /* ---- File-menu keyboard shortcuts ---- */
   // On macOS the native menu's accelerators (Cmd+N / O / S / Shift+S) fire
@@ -1625,14 +1754,15 @@ export default function App() {
     if (/Mac/.test(navigator.userAgent)) return
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (isTextEntryTarget(e.target)) return
+      // Not behind an open dialog, not while export walks the live state.
+      if (useFeedbackStore.getState().confirm || exportingRef.current) return
       if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault(); handleNew()
+        e.preventDefault(); void handleNew()
       } else if (e.key === 'o' || e.key === 'O') {
-        e.preventDefault(); handleOpen()
+        e.preventDefault(); void handleOpen()
       } else if (e.key === 's' || e.key === 'S') {
-        e.preventDefault(); handleSave(e.shiftKey)
+        e.preventDefault(); void handleSave(e.shiftKey)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -1643,16 +1773,20 @@ export default function App() {
   useEffect(() => {
     const api = window.electronAPI
     if (!api) return
-    const offNew = api.onNewProject(() => handleNew())
-    const offOpen = api.onOpenProject(() => handleOpen())
+    const offNew = api.onNewProject(() => { void handleNew() })
+    const offOpen = api.onOpenProject(() => { void handleOpen() })
     const offSave = api.onSaveProject(() => handleSave(false))
     const offSaveAs = api.onSaveProjectAs(() => handleSave(true))
+    // Open Recent (both menus) and Finder / Explorer opens all arrive here,
+    // so this one gate covers them.
     const offOpenFile = api.onOpenProjectFile(({ path, buffer }) => {
-      loadFromBuffer(buffer, path)
       // Main has already pushed this path onto the recents list; sync the
       // in-app MenuBar so the next File → Open Recent reflects it (no-op on
       // mac, where refreshRecents short-circuits).
       void refreshRecents()
+      void confirmReplaceDocument('opening another project').then((ok) => {
+        if (ok) loadFromBuffer(buffer, path)
+      })
     })
     // Save-on-quit orchestration. Main asks if we're dirty (with a 1.5s
     // timeout on its side, so respond synchronously from the store snapshot).
@@ -1674,7 +1808,7 @@ export default function App() {
       offQueryDirty?.()
       offSaveAndClose?.()
     }
-  }, [handleNew, handleOpen, handleSave, loadFromBuffer, refreshRecents])
+  }, [handleNew, handleOpen, handleSave, loadFromBuffer, refreshRecents, confirmReplaceDocument])
 
   useEffect(() => {
     // Cross-platform basename split: on Windows, paths use backslashes — splitting
@@ -1772,8 +1906,10 @@ export default function App() {
                 <div className="popover__section">Layout</div>
                 {/* Wrap the filmstrip into rows — pure view preference, the
                     document itself is untouched. Seamless mode is one
-                    continuous strip, so rows don't apply there. */}
-                <label
+                    continuous strip, so rows don't apply there. A div, not a
+                    <label>: a label forwards clicks on "Rows" to its first
+                    button, silently picking 1 row. */}
+                <div
                   className="field"
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 10, margin: '6px 0 2px' }}
                   title={seamlessSlides ? 'Rows are unavailable in Seamless mode — the panorama is one continuous strip.' : 'Arrange the slides into rows on the canvas — just for viewing, the exported carousel is unchanged.'}
@@ -1792,7 +1928,7 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                </label>
+                </div>
                 <div className="popover__section">Overlays</div>
                 <label className="check">
                   <input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} />
@@ -1928,8 +2064,8 @@ export default function App() {
             native menu bar at the top of the screen takes over. */}
         <MenuBar
           recents={recents}
-          onNew={handleNew}
-          onOpen={handleOpen}
+          onNew={() => { void handleNew() }}
+          onOpen={() => { void handleOpen() }}
           onOpenRecent={(p) => {
             // Main reads the file and sends app:open-project-file back to us;
             // loadFromBuffer is wired to that channel via the existing useEffect.
@@ -1941,16 +2077,14 @@ export default function App() {
           }}
           onSave={() => { void handleSave(false) }}
           onSaveAs={() => { void handleSave(true) }}
-          onUndo={() => useTiovivoStore.getState().undo()}
-          onRedo={() => useTiovivoStore.getState().redo()}
-          onReload={() => location.reload()}
+          // The menu hands focus back before running these, so a focused
+          // text field gets its own undo (see runUndoRedo).
+          onUndo={() => { if (!exportingRef.current) runUndoRedo('undo') }}
+          onRedo={() => { if (!exportingRef.current) runUndoRedo('redo') }}
+          onReload={() => { void handleReload() }}
           showOutlines={showOutlines}
           onToggleOutlines={() => setShowOutlines((v) => !v)}
-          onToggleDevTools={() => {
-            // No IPC for this yet; rely on the F12 / Ctrl+Shift+I native
-            // accelerator Chromium still honours. The menu item exists as a
-            // discoverability hint.
-          }}
+          onToggleDevTools={() => { void window.electronAPI?.toggleDevTools?.() }}
         />
         <div className="app__brand-sep" aria-hidden />
         {/* Format — chosen once per project, so it's one chip. Presets,
@@ -2182,7 +2316,11 @@ export default function App() {
                       value={t.fontFamily ?? ''}
                       fonts={fontList}
                       onCommit={(font) => patch({ fontFamily: font })}
-                      onPreview={(font) => patch({ fontFamily: font })}
+                      // Hover / arrow previews are transient: no undo entry,
+                      // no dirty flag, no lastTextStyle change. FontPicker
+                      // restores the opening font before committing, so the
+                      // commit is a single undo step.
+                      onPreview={(font) => syncItemMeasurements(t.id, { fontFamily: font })}
                       onOpen={() => void refreshFonts()}
                     />
                   </label>
@@ -2800,10 +2938,19 @@ export default function App() {
                   <span>Name</span>
                   <input
                     type="text"
+                    // The store keeps the raw text while typing (trimming per
+                    // keystroke ate the space before the next word); blank /
+                    // whitespace-only clears the name so the "Slide N"
+                    // placeholder shows. Display + export trim; blur tidies
+                    // stray edge spaces out of the saved file.
                     value={activeSlide.name ?? ''}
                     placeholder={`Slide ${activeSlideIndex + 1}`}
                     spellCheck={false}
                     onChange={(e) => setSlideName(activeSlide.id, e.target.value)}
+                    onBlur={(e) => {
+                      const raw = e.target.value
+                      if (raw !== raw.trim()) setSlideName(activeSlide.id, raw.trim())
+                    }}
                     title="Slide name — shows on the canvas label and (optionally) in export filenames"
                   />
                 </label>

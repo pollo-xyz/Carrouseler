@@ -55,6 +55,12 @@ function LayerRow({
           <span className="layer-stack__text-icon" aria-hidden>
             T
           </span>
+        ) : item.type === 'shape' ? (
+          // Shapes have no bitmap (src is '') — an <img> would show a
+          // broken-image glyph.
+          <span className="layer-stack__text-icon" aria-hidden>
+            {item.shapeKind === 'ellipse' ? '◯' : item.shapeKind === 'line' ? '─' : '▭'}
+          </span>
         ) : (
           <img
             src={item.src}

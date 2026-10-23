@@ -59,7 +59,9 @@
   --border:        color-mix(in srgb, var(--ink) 5.5%, transparent);
   --border-strong: color-mix(in srgb, var(--ink) 10.5%, transparent);
   --border-bright: color-mix(in srgb, var(--ink) 18%, transparent);
-  --text-dim:    color-mix(in srgb, var(--ink) 34%, transparent);
+  /* 48%, not 34%: field labels and section headings use this at ~10px —
+     34% measured 2.9:1 against the panels, under WCAG AA. 48% ≈ 4.5:1. */
+  --text-dim:    color-mix(in srgb, var(--ink) 48%, transparent);
   --text:        color-mix(in srgb, var(--ink) 62%, transparent);
   --text-bright: color-mix(in srgb, var(--ink) 96%, transparent);
   --accent-dim:    color-mix(in srgb, var(--accent) 14%, transparent);
@@ -183,7 +185,7 @@
   --border:        color-mix(in srgb, var(--ink) 9%, transparent);
   --border-strong: color-mix(in srgb, var(--ink) 16%, transparent);
   --border-bright: color-mix(in srgb, var(--ink) 26%, transparent);
-  --text-dim:    color-mix(in srgb, var(--ink) 44%, transparent);
+  --text-dim:    color-mix(in srgb, var(--ink) 60%, transparent); /* ≈4.5:1 on paper (44% was 2.8:1) */
   --text:        color-mix(in srgb, var(--ink) 72%, transparent);
   --text-bright: color-mix(in srgb, var(--ink) 94%, transparent);
 
@@ -261,6 +263,15 @@ textarea {
 input[type='number'] {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* Keyboard focus — ONE neutral ink ring for every control that doesn't
+   define its own (same recipe as .btn). Without it the browser's default
+   ring shows, tinted by the OS accent (amber, green…) and off-palette.
+   :where() keeps specificity at zero so component styles still win. */
+:where(button, a[href], summary, [role='menuitem'], [role='option'], [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ink) 40%, transparent);
+  outline-offset: 1px;
 }
 
 /* Text selection — hot blue, readable in both themes */

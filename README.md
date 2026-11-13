@@ -93,6 +93,8 @@ Tiovivo keeps the full carousel in view while still giving each slide its own ex
 
 - `.vpost` project format — a ZIP bundle with manifest + original asset bytes + embedded Fit-view preview
 - macOS native menu bar with file associations; in-app menu bar on Windows / Linux
+- Start screen: blank formats, starter structures (list, how-to, myth / fact, quote, announcement, reel cover) and recent projects with previews
+- Brand kit — your fonts, three colours and handle; templates are drawn in it, colour fields offer it, and *Apply to this deck* restyles a whole document in one undo step
 - Recent projects list (per-platform)
 - Save-on-quit prompt that actually waits for the save to succeed
 - Undo / redo, copy / cut / paste, `[` / `]` to move items between slides
@@ -102,6 +104,20 @@ Tiovivo keeps the full carousel in view while still giving each slide its own ex
 </td>
 </tr>
 </table>
+
+---
+
+## 🤖 Connect Claude (MCP)
+
+The desktop app has a built-in [MCP](https://modelcontextprotocol.io) server, so an agent such as Claude Code can build and edit slides in the open window while you watch.
+
+1. **File → Connect Claude…**, switch on *Allow Claude to control Tiovivo*.
+2. Copy the command from the dialog and run it once in a terminal. It registers the server with Claude Code.
+3. Keep Tiovivo open and ask Claude for what you want, e.g. *"make a 6-slide carousel about X in Tiovivo and export it"*.
+
+Tools: `get_project`, `new_project`, `set_format`, `add_slide`, `update_slide`, `duplicate_slide`, `remove_slide`, `add_items`, `update_items`, `remove_items`, `reorder_layers`, `render` (returns an image of a slide or the whole deck), `export`, `save_project`, `list_fonts`, `undo`.
+
+The server is off by default, listens on `127.0.0.1` only, requires the key shown in the dialog, and refuses requests from web pages. Projects and exports made through it land in the folder shown in the dialog (default `Documents/Tiovivo`). Every change goes through the normal undo history.
 
 ---
 

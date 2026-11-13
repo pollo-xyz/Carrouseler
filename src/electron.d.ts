@@ -1,3 +1,19 @@
+export interface McpStatus {
+  enabled: boolean
+  running: boolean
+  url: string
+  token: string
+  outputDir: string
+  error: string | null
+}
+
+export interface McpCall {
+  id: string
+  tool: string
+  args: Record<string, unknown>
+  mutates: boolean
+}
+
 export interface ElectronAPI {
   saveFile: (options: {
     defaultName: string
@@ -12,6 +28,8 @@ export interface ElectronAPI {
   }) => Promise<{ path: string; buffer: Uint8Array } | null>
 
   getRecents: () => Promise<string[]>
+  /** Recents with last-saved time and the preview embedded in each file. */
+  getRecentDetails: () => Promise<{ path: string; modified: number; preview: Uint8Array | null }[]>
   openRecent: (filePath: string) => Promise<void>
   clearRecents: () => Promise<void>
 
@@ -83,6 +101,15 @@ export interface ElectronAPI {
   onOpenProjectFile: (
     cb: (payload: { path: string; buffer: Uint8Array }) => void,
   ) => () => void
+
+  /** Built-in MCP server (File → Connect Claude). */
+  mcpGetStatus: () => Promise<McpStatus>
+  mcpSetEnabled: (enabled: boolean) => Promise<McpStatus>
+  mcpNewToken: () => Promise<McpStatus>
+  mcpPickOutputDir: () => Promise<McpStatus>
+  onMcpCall: (cb: (call: McpCall) => void) => () => void
+  sendMcpResult: (msg: { id: string; ok: boolean; result?: unknown; error?: string }) => void
+  onOpenMcp: (cb: () => void) => () => void
 
   /** Park slide PNG/MP4 bytes in a temp file ahead of an OS drag. */
   prepareSlideDrag: (options: {

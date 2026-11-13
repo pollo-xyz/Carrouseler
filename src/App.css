@@ -134,6 +134,17 @@
   display: flex;
   align-items: center;
   margin-right: 4px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background var(--dur-fast) var(--ease);
+}
+.app__brand:hover,
+.app__brand[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 .app__brand-mark {
   width: 22px;
@@ -2390,6 +2401,284 @@ kbd {
   background: var(--danger-hi);
   border-color: var(--danger-hi);
 }
+
+/* ================================================================
+   START SCREEN — the front door. Covers the workspace below the
+   header (which stays live). Swiss sheet: one display question,
+   hairline-ruled sections, flat tiles; nothing floats.
+   ================================================================ */
+.start {
+  position: fixed;
+  inset: 56px 0 0 0;
+  z-index: 25;               /* over the rails (12), under header popovers (30) */
+  overflow-y: auto;
+  background: var(--bg);
+  background-image: var(--ambient);
+  outline: none;
+  animation: start-in var(--dur-open, 240ms) var(--ease) both;
+}
+@keyframes start-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .start { animation-duration: 0.01ms; }
+}
+.start__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 56px;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 44px 40px 64px;
+}
+.start__main,
+.start__side {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  min-width: 0;
+}
+.start__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.start__head h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 2.1rem;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  color: var(--text-bright);
+}
+.start__label {
+  margin: 0 0 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-strong);
+  font-family: var(--meta);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.start__hint {
+  margin: -6px 0 12px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* Tiles — blank formats and templates share one anatomy: a picture, a
+   bold name, a quiet line. */
+.start__format,
+.start__template,
+.start__recent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.start__format:hover,
+.start__template:hover,
+.start__recent:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  border-color: var(--border-strong);
+}
+.start__format b,
+.start__template b,
+.start__recent b {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.start__formats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.start__format-shape {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 84px;
+  margin-bottom: 8px;
+}
+.start__format-shape > span {
+  max-width: 100%;
+  height: 100%;
+  max-height: 84px;
+  border: 1px solid var(--border-bright);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.start__format:hover .start__format-shape > span {
+  background: color-mix(in srgb, var(--hot) 22%, transparent);
+  border-color: var(--hot);
+}
+.start__format-dims { font-variant-numeric: tabular-nums; }
+
+.start__templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+.start__template-thumb {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.start__template-thumb img,
+.start__recent-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.start__recents {
+  list-style: none;
+  margin: 0 -10px 8px;
+  padding: 0;
+}
+.start__recent {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+}
+.start__recent-thumb {
+  flex: none;
+  width: 72px;
+  height: 44px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.start__recent-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.start__recent-text b {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.start__open { margin-left: -14px; }
+
+@media (max-width: 1080px) {
+  .start__inner { grid-template-columns: minmax(0, 1fr); gap: 36px; padding: 32px 24px 48px; }
+  .start__formats { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+/* ── Brand kit ── */
+.brand-editor { display: flex; flex-direction: column; }
+.brand-editor__colors {
+  display: flex;
+  gap: 14px;
+  margin: 4px 0 6px;
+}
+.brand-editor__color {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.brand-editor__color .color-swatch { width: 44px; height: 30px; }
+
+.brand-swatches {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.brand-swatches__dot {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border-bright);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.brand-swatches__dot:hover { transform: scale(1.15); }
+.brand-swatches__dot--on { box-shadow: 0 0 0 1px var(--bg), 0 0 0 2.5px var(--hot); }
+
+/* Connect Claude (built-in MCP server) — rides the confirm card. */
+.confirm.mcp { width: 480px; }
+.mcp__note { margin: 0 0 14px; }
+.mcp__switch { color: var(--text-bright); }
+.mcp__state {
+  margin: 6px 0 16px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+.mcp__state--error { color: var(--danger); }
+.mcp__label {
+  font-family: var(--meta);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.mcp__command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.mcp__command code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.7rem;
+  color: var(--text);
+  user-select: all;
+}
+.mcp__hint {
+  margin: 6px 0 16px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+.mcp__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.mcp__link:hover { color: var(--text-bright); }
+.mcp .confirm__actions { margin-top: 18px; }
 
 /* ================================================================
    POPOVER — shared anchored dropdown (Format chip, Export options,

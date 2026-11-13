@@ -226,6 +226,9 @@ interface TiovivoState {
    *  box's measured height) — no undo entry, no dirty flag. Going through
    *  updateItem made every undo re-trigger the sync and wipe the redo stack. */
   syncItemMeasurements: (id: string, patch: Partial<PlacedMedia>) => void
+  /** Recolour slide grounds and patch items together as ONE undo step —
+   *  a whole-deck restyle (the brand kit's "Apply to this deck"). */
+  restyleDeck: (slideColors: Record<string, string>, patches: { id: string; patch: Partial<PlacedMedia> }[]) => void
   removeItem: (id: string) => void
   removeItems: (ids: string[]) => void
   moveItemToSlide: (itemId: string, slideId: string) => void
@@ -851,6 +854,17 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     if (!item) return
     set({ items: get().items.map((i) => (i.id === id ? { ...i, ...patch } : i)) })
     debouncedThumbRefresh(item.slideId)
+  },
+
+  restyleDeck: (slideColors, patches) => {
+    if (Object.keys(slideColors).length === 0 && patches.length === 0) return
+    pushHistory('restyleDeck')
+    const map = new Map(patches.map((p) => [p.id, p.patch]))
+    set({
+      slides: get().slides.map((s) => (slideColors[s.id] ? { ...s, bgColor: slideColors[s.id]! } : s)),
+      items: get().items.map((i) => (map.has(i.id) ? { ...i, ...map.get(i.id) } : i)),
+    })
+    get().refreshAllThumbnails()
   },
 
   removeItem: (id) => {

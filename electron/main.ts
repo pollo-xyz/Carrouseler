@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { initMcp } from './mcp'
 
 const require = createRequire(import.meta.url)
 const __filename = fileURLToPath(import.meta.url)
@@ -206,6 +207,73 @@ async function probeEncoder(): Promise<EncoderName> {
 // list, asks main to open one, or clears the list. macOS uses its native
 // menu bar so these are no-ops on that platform.
 ipcMain.handle('get-recents', async (): Promise<string[]> => readRecents())
+/** Pull `preview.png` out of a .vpost without reading the whole file (a
+ *  project with video can be hundreds of MB). The archive is STORE-only zip
+ *  written by src/lib/zip.ts: read the directory at the tail, then just the
+ *  one entry. Null when there's no preview or the file isn't readable. */
+async function readVpostPreview(filePath: string): Promise<Uint8Array | null> {
+  let fh: fs.promises.FileHandle | null = null
+  try {
+    fh = await fs.promises.open(filePath, 'r')
+    const { size } = await fh.stat()
+    const tailLen = Math.min(size, 65557)
+    const tail = Buffer.alloc(tailLen)
+    await fh.read(tail, 0, tailLen, size - tailLen)
+    let eocd = -1
+    for (let i = tailLen - 22; i >= 0; i--) {
+      if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break }
+    }
+    if (eocd < 0) return null
+    const count = tail.readUInt16LE(eocd + 10)
+    const cdSize = tail.readUInt32LE(eocd + 12)
+    const cdOffset = tail.readUInt32LE(eocd + 16)
+    if (cdOffset === 0xffffffff || cdSize > 4 * 1024 * 1024) return null
+    const cd = Buffer.alloc(cdSize)
+    await fh.read(cd, 0, cdSize, cdOffset)
+    let p = 0
+    for (let i = 0; i < count && p + 46 <= cd.length; i++) {
+      if (cd.readUInt32LE(p) !== 0x02014b50) return null
+      const method = cd.readUInt16LE(p + 10)
+      const dataSize = cd.readUInt32LE(p + 24)
+      const nameLen = cd.readUInt16LE(p + 28)
+      const extraLen = cd.readUInt16LE(p + 30)
+      const commentLen = cd.readUInt16LE(p + 32)
+      const localOffset = cd.readUInt32LE(p + 42)
+      const name = cd.toString('utf8', p + 46, p + 46 + nameLen)
+      if (name === 'preview.png') {
+        if (method !== 0 || dataSize === 0 || dataSize > 8 * 1024 * 1024) return null
+        const lfh = Buffer.alloc(30)
+        await fh.read(lfh, 0, 30, localOffset)
+        if (lfh.readUInt32LE(0) !== 0x04034b50) return null
+        const start = localOffset + 30 + lfh.readUInt16LE(26) + lfh.readUInt16LE(28)
+        const data = Buffer.alloc(dataSize)
+        await fh.read(data, 0, dataSize, start)
+        return new Uint8Array(data)
+      }
+      p += 46 + nameLen + extraLen + commentLen
+    }
+    return null
+  } catch {
+    return null
+  } finally {
+    await fh?.close().catch(() => {})
+  }
+}
+
+// Recents with what the start screen shows for each: when it was last
+// saved and its embedded preview. Files that have gone missing are skipped.
+ipcMain.handle('get-recent-details', async () => {
+  const out: { path: string; modified: number; preview: Uint8Array | null }[] = []
+  for (const p of readRecents()) {
+    try {
+      const stat = await fs.promises.stat(p)
+      out.push({ path: p, modified: stat.mtimeMs, preview: await readVpostPreview(p) })
+    } catch {
+      /* moved or deleted — openRecent prunes it if the user tries */
+    }
+  }
+  return out
+})
 ipcMain.handle('open-recent', async (_event, filePath: string) => {
   // Only entries main itself put on the list — not arbitrary paths.
   if (typeof filePath !== 'string' || !readRecents().includes(filePath)) return
@@ -717,6 +785,11 @@ function buildMenu() {
           accelerator: 'Shift+CmdOrCtrl+S',
           click: () => sendToFocused('app:save-project-as'),
         },
+        { type: 'separator' },
+        {
+          label: 'Connect Claude…',
+          click: () => sendToFocused('app:open-mcp'),
+        },
       ],
     },
     {
@@ -820,6 +893,13 @@ if (gotLock) app.whenReady().then(() => {
   })
   buildMenu()
   createWindow()
+  // Built-in MCP server (off until the user enables it in File → Connect
+  // Claude). Its writes go through the same chosen-path allow-list.
+  initMcp({
+    getWindow: () => win,
+    allowFile: rememberFile,
+    allowDir: (p) => { knownDirs.add(normPath(p)) },
+  })
 })
 
 /* ------------------------------------------------------------------ */

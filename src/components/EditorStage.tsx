@@ -2605,7 +2605,10 @@ const EditorStage = forwardRef<
     const totalW = layoutCols * W + (layoutCols - 1) * artboardGap
     const worldBaseH = layoutRows * H + (layoutRows - 1) * artboardGap
     const clearTotal = (layoutRows - 1) * ROW_CLEARANCE
-    const availW = maxViewWidth - pad * 2
+    // Wider at the sides than top/bottom: the floating insert tools sit on
+    // the left edge and would otherwise cover the first slide of a wide deck.
+    const SIDE_PAD = 68
+    const availW = maxViewWidth - SIDE_PAD * 2
     const availH = maxViewHeight - pad * 2 - CHROME_TOP - CHROME_BOT
     const fitZoom = Math.max(
       MIN_ZOOM,

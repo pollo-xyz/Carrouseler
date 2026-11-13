@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /** Recently-opened .vpost project paths, newest first. Used by the
    *  in-app File menu on Windows/Linux (macOS uses the native menu). */
   getRecents: () => ipcRenderer.invoke('get-recents') as Promise<string[]>,
+  getRecentDetails: () => ipcRenderer.invoke('get-recent-details') as Promise<{
+    path: string
+    modified: number
+    preview: Uint8Array | null
+  }[]>,
   openRecent: (filePath: string) => ipcRenderer.invoke('open-recent', filePath),
   clearRecents: () => ipcRenderer.invoke('clear-recents'),
 
@@ -179,6 +184,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const h = (_e: unknown, payload: { path: string; buffer: Uint8Array }) => cb(payload)
     ipcRenderer.on('app:open-project-file', h)
     return () => ipcRenderer.off('app:open-project-file', h)
+  },
+
+  /** Built-in MCP server (File → Connect Claude). */
+  mcpGetStatus: () => ipcRenderer.invoke('mcp-get-status'),
+  mcpSetEnabled: (enabled: boolean) => ipcRenderer.invoke('mcp-set-enabled', enabled),
+  mcpNewToken: () => ipcRenderer.invoke('mcp-new-token'),
+  mcpPickOutputDir: () => ipcRenderer.invoke('mcp-pick-output-dir'),
+  /** A tool call from a connected agent. Answer with sendMcpResult. */
+  onMcpCall: (cb: (call: { id: string; tool: string; args: Record<string, unknown>; mutates: boolean }) => void) => {
+    const h = (_e: unknown, call: { id: string; tool: string; args: Record<string, unknown>; mutates: boolean }) => cb(call)
+    ipcRenderer.on('mcp:call', h)
+    return () => ipcRenderer.off('mcp:call', h)
+  },
+  sendMcpResult: (msg: { id: string; ok: boolean; result?: unknown; error?: string }) =>
+    ipcRenderer.send('mcp:result', msg),
+  onOpenMcp: (cb: () => void) => {
+    const h = () => cb()
+    ipcRenderer.on('app:open-mcp', h)
+    return () => ipcRenderer.off('app:open-mcp', h)
   },
 
   /** Park slide bytes in a temp file so a native drag-out can hand them off

@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EditorStage, { type EditorStageHandle } from './components/EditorStage'
 import NumberField from './components/NumberField'
 import MenuBar from './components/MenuBar'
+import McpDialog from './components/McpDialog'
+import StartScreen from './components/StartScreen'
+import { BrandKitEditor, BrandSwatches } from './components/Brand'
+import { applyBrandToDeck, useBrandStore } from './lib/brand'
+import type { TemplateDeck } from './lib/templates'
+import { runMcpTool, type McpContext } from './lib/mcpBridge'
 import FontPicker from './components/FontPicker'
 import GifPicker from './components/GifPicker'
 import { downloadGif, type GiphyItem } from './lib/giphy'
@@ -13,7 +19,7 @@ import { toast, dismissToast, confirmDialog, choiceDialog, useFeedbackStore } fr
 import { useThemeStore, resolveWorkspaceBg, WORKSPACE_AUTO } from './lib/theme'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
 import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
-import { PRESETS } from './lib/presets'
+import { PRESETS, type PresetId } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
 import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
@@ -438,6 +444,36 @@ function BackgroundPanel({
           Vibe
         </button>
       </div>
+
+      {mode === 'solid' && activeSlide && (
+        <>
+          <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <span>Color</span>
+            <input
+              className="color-swatch"
+              type="color"
+              value={activeSlide.bgColor || '#ffffff'}
+              onChange={(e) => useTiovivoStore.getState().setSlideBgColor(activeSlideId, e.target.value)}
+            />
+            <span className="field__value" style={{ flex: 1 }}>{activeSlide.bgColor || '#ffffff'}</span>
+            <BrandSwatches
+              value={activeSlide.bgColor}
+              onPick={(c) => useTiovivoStore.getState().setSlideBgColor(activeSlideId, c)}
+            />
+          </label>
+          {hasMultipleSlides && (
+            <button
+              type="button"
+              className="btn btn--sm"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => useTiovivoStore.getState().setAllSlidesBgColor(activeSlide.bgColor || '#ffffff')}
+              title="Give every slide this background colour"
+            >
+              Use on all slides
+            </button>
+          )}
+        </>
+      )}
 
       {/* Scope — 'All slides' (default) or 'Selected slide'. Only meaningful
           for Vibe (where multiple settings can diverge between slides) and
@@ -923,6 +959,9 @@ export default function App() {
   // Dev aid (View → Show CSS outlines): outlines every region + control so
   // the user can name elements precisely when giving design feedback.
   const [showOutlines, setShowOutlines] = useState(false)
+  const [mcpOpen, setMcpOpen] = useState(false)
+  // The start screen is the front door: shown at launch and after File → New.
+  const [startOpen, setStartOpen] = useState(true)
 
   // Header + canvas popovers (Format chip, Export options, View cluster).
   const [formatOpen, setFormatOpen] = useState(false)
@@ -1296,7 +1335,11 @@ export default function App() {
   }, [])
 
   /* ---- Export all slides ---- */
-  const exportAll = useCallback(async () => {
+  // `auto` = an unattended export (a connected agent): the folder and prefix
+  // are given, so no folder picker and no blocking prompts.
+  const exportAll = useCallback(async (
+    auto?: { dir: string; prefix: string },
+  ): Promise<{ written: string[]; videoErrors: number } | undefined> => {
     const st = useTiovivoStore.getState()
     if (!st.slides.length || !stageRef.current) return
     if (!window.electronAPI) {
@@ -1308,11 +1351,11 @@ export default function App() {
     exportingRef.current = true
     setExportProgress('')
     st.setSelectedIds([])
-    const prefix = sanitizeFilename(exportPrefix.trim()) || 'tiovivo'
+    const prefix = auto?.prefix ?? (sanitizeFilename(exportPrefix.trim()) || 'tiovivo')
     const written: string[] = []
     let videoErrors = 0
     try {
-      const dir = await window.electronAPI.pickDirectory()
+      const dir = auto?.dir ?? await window.electronAPI.pickDirectory()
       if (!dir) return
 
       // One-shot diagnostic dump so the user can see which encoder was
@@ -1389,7 +1432,7 @@ export default function App() {
         }
       }
 
-      if (mixedReports.length > 0) {
+      if (mixedReports.length > 0 && !auto) {
         const proceed = await confirmDialog({
           title: 'Mixed video frame rates',
           message:
@@ -1479,6 +1522,7 @@ export default function App() {
       setExporting(false)
       setExportProgress('')
     }
+    return { written, videoErrors }
   }, [exportPrefix, includeSlideNameInFilename])
 
   /* ---- Export a single slide on demand (per-slide export button) ---- */
@@ -1566,7 +1610,9 @@ export default function App() {
   // Returns true when the project was actually written to disk, false if the
   // user cancelled the file dialog or save failed. The close-orchestration
   // path uses the boolean to decide whether to proceed with closing the window.
-  const handleSave = useCallback(async (forcePrompt: boolean): Promise<boolean> => {
+  // `targetPath` = save there without a dialog (main has already allow-listed
+  // it — used by the MCP save_project tool).
+  const handleSave = useCallback(async (forcePrompt: boolean, targetPath?: string): Promise<boolean> => {
     if (!window.electronAPI) {
       toast('Saving projects only works in the desktop app, not the browser.', { kind: 'error' })
       return false
@@ -1625,9 +1671,13 @@ export default function App() {
       )
       const buffer = new Uint8Array(await blob.arrayBuffer())
 
-      const existing = projectPathRef.current
+      const existing = targetPath ?? projectPathRef.current
       if (existing && !forcePrompt) {
         await window.electronAPI.writeFile({ path: existing, buffer })
+        if (targetPath) {
+          projectPathRef.current = targetPath
+          setProjectPath(targetPath)
+        }
         markSaved()
         void refreshRecents()
         return true
@@ -1678,6 +1728,7 @@ export default function App() {
       })
       dropClipboardMedia()
       setProjectPath(path)
+      setStartOpen(false)
     } catch (err) {
       // The current project is untouched — free the URLs minted for the
       // file that failed to load.
@@ -1739,11 +1790,79 @@ export default function App() {
     useTiovivoStore.getState().resetProject()
     dropClipboardMedia()
     setProjectPath(null)
+    setStartOpen(true)
+  }, [confirmReplaceDocument, dropClipboardMedia])
+
+  /** Replace the document with a fresh one from the start screen — a blank
+   *  format or a template deck. Loaded as a clean document: no undo history
+   *  pointing back at the previous project, nothing to save yet. */
+  const startDocument = useCallback(async (source: Exclude<PresetId, 'custom'> | TemplateDeck) => {
+    if (!(await confirmReplaceDocument('starting a new project'))) return
+    const deck: TemplateDeck = typeof source === 'string'
+      ? {
+          presetId: source,
+          dimensions: { ...PRESETS[source] },
+          slides: [{ id: crypto.randomUUID(), bgColor: '#ffffff', exportEnabled: true }],
+          items: [],
+        }
+      : source
+    useTiovivoStore.getState().loadProjectState({
+      slides: deck.slides,
+      items: deck.items,
+      dimensions: deck.dimensions,
+      presetId: deck.presetId,
+      customWidth: deck.dimensions.width,
+      customHeight: deck.dimensions.height,
+    })
+    dropClipboardMedia()
+    projectPathRef.current = null
+    setProjectPath(null)
+    setStartOpen(false)
+    useBrandStore.getState().markDrawn()
+    // The canvas was laid out for the previous format — refit once it has
+    // re-rendered with the new slides.
+    requestAnimationFrame(() => requestAnimationFrame(() => stageRef.current?.fitToScreen()))
   }, [confirmReplaceDocument, dropClipboardMedia])
 
   const handleReload = useCallback(async () => {
     if (await confirmReplaceDocument('reloading')) location.reload()
   }, [confirmReplaceDocument])
+
+  /* ---- Connected agent (built-in MCP server) ---- */
+  // Tool calls arrive from main one message at a time, but an agent may send
+  // several requests at once — run them strictly in order, they all act on
+  // the one live document.
+  const mcpQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.onMcpCall) return
+    const ctx: McpContext = {
+      renderSlidePng: async (slideId) => stageRef.current?.exportSlidePng(slideId) ?? null,
+      isBusy: () => exportingRef.current,
+      projectPath: () => projectPathRef.current,
+      saveTo: (path) => handleSave(false, path ?? undefined),
+      exportTo: async (dir, prefix) => (await exportAll({ dir, prefix })) ?? { written: [], videoErrors: 0 },
+      newProject: () => {
+        useTiovivoStore.getState().resetProject()
+        dropClipboardMedia()
+        projectPathRef.current = null
+        setProjectPath(null)
+      },
+      listFonts: () => listSystemFonts(),
+    }
+    const offCall = api.onMcpCall((call) => {
+      // An agent is editing — show the canvas it's working on.
+      if (call.mutates) setStartOpen(false)
+      const run = () => runMcpTool(call.tool, call.args, call.mutates, ctx)
+        .then((result) => api.sendMcpResult({ id: call.id, ok: true, result }))
+        .catch((err) => api.sendMcpResult({
+          id: call.id, ok: false, error: err instanceof Error ? err.message : String(err),
+        }))
+      mcpQueueRef.current = mcpQueueRef.current.then(run, run)
+    })
+    const offOpen = api.onOpenMcp?.(() => setMcpOpen(true))
+    return () => { offCall(); offOpen?.() }
+  }, [exportAll, handleSave, dropClipboardMedia])
 
   /* ---- File-menu keyboard shortcuts ---- */
   // On macOS the native menu's accelerators (Cmd+N / O / S / Shift+S) fire
@@ -2054,11 +2173,30 @@ export default function App() {
       <ToastHost />
       <ConfirmHost />
       <TipHost />
+      {mcpOpen && <McpDialog onClose={() => setMcpOpen(false)} />}
+      {startOpen && (
+        <StartScreen
+          fonts={fontList}
+          onFontsOpen={() => void refreshFonts()}
+          onBlank={(preset) => { void startDocument(preset) }}
+          onTemplate={(deck) => { void startDocument(deck) }}
+          onOpen={() => { void handleOpen() }}
+          onOpenRecent={(p) => { void window.electronAPI?.openRecent(p) }}
+          onClose={() => setStartOpen(false)}
+        />
+      )}
       <header className="app__header">
         {/* Brand mark — icon only, leftmost. */}
-        <div className="app__brand">
-          <img className="app__brand-mark" src={appIconUrl} alt="Tiovivo" />
-        </div>
+        <button
+          type="button"
+          className="app__brand"
+          onClick={() => setStartOpen((v) => !v)}
+          title={startOpen ? 'Back to the canvas' : 'Start — new project, templates, recent'}
+          aria-label="Start screen"
+          aria-pressed={startOpen}
+        >
+          <img className="app__brand-mark" src={appIconUrl} alt="" />
+        </button>
         {/* In-app menus for Windows / Linux — right after the mark (one
             chrome strip, not two). CSS hides them on macOS, where the
             native menu bar at the top of the screen takes over. */}
@@ -2077,6 +2215,7 @@ export default function App() {
           }}
           onSave={() => { void handleSave(false) }}
           onSaveAs={() => { void handleSave(true) }}
+          onConnectClaude={() => setMcpOpen(true)}
           // The menu hands focus back before running these, so a focused
           // text field gets its own undo (see runUndoRedo).
           onUndo={() => { if (!exportingRef.current) runUndoRedo('undo') }}
@@ -2449,9 +2588,10 @@ export default function App() {
                       value={t.textColor || '#ffffff'}
                       onChange={(e) => patch({ textColor: e.target.value })}
                     />
-                    <span className="field__value">
+                    <span className="field__value" style={{ flex: 1 }}>
                       {t.textColor || '#ffffff'}
                     </span>
+                    <BrandSwatches value={t.textColor} onPick={(c) => patch({ textColor: c })} />
                   </label>
 
                   <hr />
@@ -2790,6 +2930,7 @@ export default function App() {
                       <span className="field__value" style={{ flex: 1 }}>
                         {fillIsTransparent ? 'none' : (s.fillColor || '#ffffff')}
                       </span>
+                      <BrandSwatches value={s.fillColor} onPick={(c) => patch({ fillColor: c })} />
                       <button
                         type="button"
                         className={`btn btn--sm ${fillIsTransparent ? 'btn--accent' : ''}`}
@@ -2985,6 +3126,29 @@ export default function App() {
                 randomizeAllSlideVibes={randomizeAllSlideVibes}
                 randomizeSlideVibe={randomizeSlideVibe}
               />
+            </div>
+          </details>
+
+          {/* BRAND — the person's own fonts and colours. Always here, so the
+              inspector has something to offer when nothing is selected. */}
+          <details className="collapsible">
+            <summary><h2><Icon.Sliders />Brand</h2></summary>
+            <div className="collapsible__body">
+              <BrandKitEditor fonts={fontList} onFontsOpen={() => void refreshFonts()} />
+              <button
+                type="button"
+                className="btn btn--sm"
+                style={{ alignSelf: 'flex-start', marginTop: 4 }}
+                onClick={() => {
+                  const { brand, drawnWith, markDrawn } = useBrandStore.getState()
+                  const n = applyBrandToDeck(brand, drawnWith)
+                  markDrawn()
+                  toast(n ? 'Brand applied. Undo brings the old look back.' : 'This deck already matches your brand.', { kind: n ? 'success' : 'info' })
+                }}
+                title="Restyle every slide in your brand: its colours, the heading font on each slide's largest text and the body font on the rest. One undo step."
+              >
+                Apply to this deck
+              </button>
             </div>
           </details>
 

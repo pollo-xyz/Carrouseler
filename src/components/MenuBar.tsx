@@ -36,6 +36,7 @@ interface Props {
   onClearRecents: () => void
   onSave: () => void
   onSaveAs: () => void
+  onConnectClaude: () => void
   onUndo: () => void
   onRedo: () => void
   onToggleDevTools: () => void
@@ -317,6 +318,8 @@ export default function MenuBar(props: Props) {
           <MenuSeparator />
           <MenuItem label="Save Project" shortcut="Ctrl+S" onClick={runAndClose(props.onSave)} />
           <MenuItem label="Save Project As…" shortcut="Ctrl+Shift+S" onClick={runAndClose(props.onSaveAs)} />
+          <MenuSeparator />
+          <MenuItem label="Connect Claude…" onClick={runAndClose(props.onConnectClaude)} />
         </div>
       )}
 

@@ -7,6 +7,18 @@ export interface McpStatus {
   error: string | null
 }
 
+export interface AiStatus {
+  source: 'saved' | 'environment' | null
+  canSave: boolean
+}
+
+export interface AiRunResult {
+  ok: boolean
+  result?: unknown
+  error?: string
+  cancelled?: boolean
+}
+
 export interface McpCall {
   id: string
   tool: string
@@ -102,10 +114,23 @@ export interface ElectronAPI {
     cb: (payload: { path: string; buffer: Uint8Array }) => void,
   ) => () => void
 
+  /** In-app assistant. */
+  aiStatus: () => Promise<AiStatus>
+  aiSetKey: (key: string) => Promise<AiStatus>
+  aiClearKey: () => Promise<AiStatus>
+  aiRun: (req: { runId: string; task: string; params?: Record<string, unknown> }) => Promise<AiRunResult>
+  aiCancel: (runId: string) => Promise<void>
+  /** Native picker; returns the chosen image paths. */
+  aiPickImages: () => Promise<string[]>
+  onAiProgress: (cb: (p: { runId: string; line: string }) => void) => () => void
+  copyText: (text: string) => Promise<boolean>
+
   /** Built-in MCP server (File → Connect Claude). */
   mcpGetStatus: () => Promise<McpStatus>
   mcpSetEnabled: (enabled: boolean) => Promise<McpStatus>
   mcpNewToken: () => Promise<McpStatus>
+  /** Put the registration command on the system clipboard. */
+  mcpCopyCommand: (text: string) => Promise<boolean>
   mcpPickOutputDir: () => Promise<McpStatus>
   onMcpCall: (cb: (call: McpCall) => void) => () => void
   sendMcpResult: (msg: { id: string; ok: boolean; result?: unknown; error?: string }) => void

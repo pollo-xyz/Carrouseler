@@ -23,6 +23,8 @@ const ITEM_FIELDS: Record<string, unknown> = {
   rotation: { type: 'number', description: 'Degrees.' },
   name: { type: 'string', description: 'Layer name.' },
   appearsOnAllSlides: { type: 'boolean', description: 'Repeat this item on every slide (logo, handle, page furniture).' },
+  animIn: { enum: ['none', 'fade', 'rise', 'pop'], description: "Entrance animation, played only when the deck is exported as one video (export with as: 'video')." },
+  animDelay: { type: 'number', description: 'Seconds after its slide appears before the entrance starts. Stagger items (0, 0.4, 0.8 …) to reveal them in reading order.' },
 
   text: { type: 'string', description: 'Text content; \\n for line breaks.' },
   fontFamily: { type: 'string', description: 'An installed font family — see list_fonts.' },
@@ -141,6 +143,7 @@ export const TOOLS: McpToolDef[] = [
       properties: {
         after: { ...SLIDE_REF, description: 'Insert after this slide (number or id). Default: at the end.' },
         name: { type: 'string' },
+        seconds: { type: ['number', 'null'], description: 'How long the slide holds in a one-video export. null = automatic.' },
         bgColor: { type: 'string', description: 'CSS hex colour.' },
         vibe: VIBE,
         items: NEW_ITEMS,
@@ -156,6 +159,7 @@ export const TOOLS: McpToolDef[] = [
       properties: {
         slide: SLIDE_REF,
         name: { type: 'string' },
+        seconds: { type: ['number', 'null'], description: 'How long the slide holds in a one-video export. null = automatic.' },
         bgColor: { type: 'string', description: 'Solid colour; also removes any vibe background.' },
         vibe: VIBE,
         exportEnabled: { type: 'boolean' },
@@ -239,12 +243,14 @@ export const TOOLS: McpToolDef[] = [
   {
     name: 'export',
     description:
-      "Export every export-enabled slide into a folder inside Tiovivo's output folder: PNG for still slides, MP4 for slides with video or GIFs. Returns the file paths.",
+      "Export every export-enabled slide into a folder inside Tiovivo's output folder. as: 'slides' (default) = PNG per still slide, MP4 per slide with video or GIFs; 'photos' = a JPEG of every slide (TikTok photo mode); 'video' = all slides in order as one MP4 with entrance animations (Reels, TikTok). Returns the file paths.",
     inputSchema: {
       type: 'object',
       properties: {
         folder: { type: 'string', description: 'Folder name to create (default: the file prefix plus a timestamp).' },
         prefix: { type: 'string', description: "File name prefix, e.g. 'launch' → launch_01.png." },
+        as: { enum: ['slides', 'photos', 'video'] },
+        transition: { enum: ['cut', 'fade', 'push'], description: "Between slides, for as: 'video'. Default fade." },
       },
     },
   },

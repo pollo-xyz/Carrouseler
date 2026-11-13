@@ -14,7 +14,7 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { app, ipcMain, dialog, BrowserWindow } from 'electron'
+import { app, ipcMain, dialog, clipboard, BrowserWindow } from 'electron'
 import { TOOLS, INSTRUCTIONS } from './mcpTools'
 
 const DEFAULT_PORT = 47821
@@ -53,7 +53,7 @@ export interface McpHost {
 }
 
 /** What a tool hands back from the renderer. */
-interface ToolResult {
+export interface ToolResult {
   json?: unknown
   text?: string
   image?: { data: string; mimeType: string }
@@ -93,7 +93,7 @@ function timestamp(): string {
 
 class ToolError extends Error {}
 
-export function initMcp(host: McpHost) {
+export function initMcp(host: McpHost): { runTool: (name: string, args: unknown) => Promise<ToolResult> } {
   let config = loadConfig()
   let server: http.Server | null = null
   let lastError: string | null = null
@@ -127,14 +127,22 @@ export function initMcp(host: McpHost) {
       return Promise.reject(new ToolError('Tiovivo has no open window. Open the app window and try again.'))
     }
     const id = crypto.randomUUID()
+    // A minimised or covered window stops painting: requestAnimationFrame
+    // never fires and an export waits forever. Keep the renderer running at
+    // full speed while an agent is working, then let it idle again.
+    win.webContents.setBackgroundThrottling(false)
+    const settle = () => {
+      if (pending.size === 0 && !win.isDestroyed()) win.webContents.setBackgroundThrottling(true)
+    }
     return new Promise<ToolResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
+        settle()
         reject(new ToolError(`Tiovivo did not answer within ${Math.round(timeoutMs / 1000)}s.`))
       }, timeoutMs)
       pending.set(id, {
-        resolve: (r) => { clearTimeout(timer); resolve(r) },
-        reject: (e) => { clearTimeout(timer); reject(e) },
+        resolve: (r) => { clearTimeout(timer); settle(); resolve(r) },
+        reject: (e) => { clearTimeout(timer); settle(); reject(e) },
       })
       win.webContents.send('mcp:call', { id, tool, args, mutates })
     })
@@ -339,6 +347,13 @@ export function initMcp(host: McpHost) {
     await apply()
     return status()
   })
+  // The renderer can't use navigator.clipboard: main denies every web
+  // permission except local fonts, clipboard-write included.
+  ipcMain.handle('mcp-copy-command', async (_e, text: unknown) => {
+    if (typeof text !== 'string' || text.length > 2000) return false
+    clipboard.writeText(text)
+    return true
+  })
   ipcMain.handle('mcp-new-token', async () => {
     config = { ...config, token: crypto.randomBytes(24).toString('base64url') }
     saveConfig()
@@ -361,4 +376,6 @@ export function initMcp(host: McpHost) {
 
   app.on('will-quit', () => { void stop() })
   void apply()
+  // The in-app assistant drives the document through the same tools.
+  return { runTool }
 }

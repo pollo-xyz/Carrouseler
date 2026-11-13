@@ -4,6 +4,7 @@ import NumberField from './components/NumberField'
 import MenuBar from './components/MenuBar'
 import McpDialog from './components/McpDialog'
 import StartScreen from './components/StartScreen'
+import AssistantPanel from './components/AssistantPanel'
 import { BrandKitEditor, BrandSwatches } from './components/Brand'
 import { applyBrandToDeck, useBrandStore } from './lib/brand'
 import type { TemplateDeck } from './lib/templates'
@@ -18,7 +19,7 @@ import SlideStrip from './components/SlideStrip'
 import { toast, dismissToast, confirmDialog, choiceDialog, useFeedbackStore } from './lib/feedback'
 import { useThemeStore, resolveWorkspaceBg, WORKSPACE_AUTO } from './lib/theme'
 import { removeBackground as runRemoveBackground } from './lib/removeBackground'
-import { useTiovivoStore, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
+import { useTiovivoStore, type EntranceAnim, type PlacedMedia, type ShapeKind, type TextAlign } from './store/useTiovivoStore'
 import { PRESETS, type PresetId } from './lib/presets'
 import { serializeProject, deserializeProject, hydrateItems } from './lib/projectFile'
 import { generateProjectPreview } from './lib/thumbnail'
@@ -166,6 +167,23 @@ function formatElapsed(ms: number): string {
 /** Drives the gradient-filled track on .slider-field range inputs. Mirrors the
  *  helper in EditorStage.tsx; shared here so every panel slider can use the
  *  same look without duplicating the math. */
+/** Re-encode a slide PNG as JPEG (photo-mode export: smaller files, and
+ *  what TikTok / Instagram re-compress to anyway). */
+async function pngToJpeg(png: Blob): Promise<Blob> {
+  const bmp = await createImageBitmap(png)
+  const canvas = document.createElement('canvas')
+  canvas.width = bmp.width
+  canvas.height = bmp.height
+  canvas.getContext('2d')!.drawImage(bmp, 0, 0)
+  bmp.close()
+  const out = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.94))
+  if (!out) throw new Error('JPEG encoding failed')
+  return out
+}
+
+type ExportMode = 'slides' | 'photos' | 'video'
+type ReelTransition = 'cut' | 'fade' | 'push'
+
 function sliderFill(value: number, min: number, max: number): React.CSSProperties {
   const pct = ((value - min) / (max - min)) * 100
   return { ['--fill' as string]: `${Math.min(100, Math.max(0, pct))}%` } as React.CSSProperties
@@ -962,10 +980,14 @@ export default function App() {
   const [mcpOpen, setMcpOpen] = useState(false)
   // The start screen is the front door: shown at launch and after File → New.
   const [startOpen, setStartOpen] = useState(true)
+  const [assistantOpen, setAssistantOpen] = useState(false)
 
   // Header + canvas popovers (Format chip, Export options, View cluster).
   const [formatOpen, setFormatOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  // What Export produces: a file per slide, JPEG stills, or one video.
+  const [exportMode, setExportMode] = useState<ExportMode>('slides')
+  const [reelTransition, setReelTransition] = useState<ReelTransition>('fade')
   const [viewOpen, setViewOpen] = useState(false)
   const gifPickerAnchorRef = useRef<HTMLButtonElement>(null)
   const [viewport, setViewport] = useState({ w: 920, h: 640 })
@@ -1081,6 +1103,7 @@ export default function App() {
   const showHiddenZone = useTiovivoStore((s) => s.showHiddenZone)
   const setShowHiddenZone = useTiovivoStore((s) => s.setShowHiddenZone)
   const showIgSafeArea = useTiovivoStore((s) => s.showIgSafeArea)
+  const safeAreaPlatform = useTiovivoStore((s) => s.safeAreaPlatform)
   const setShowIgSafeArea = useTiovivoStore((s) => s.setShowIgSafeArea)
   const previewMode = useTiovivoStore((s) => s.previewMode)
   const setPreviewMode = useTiovivoStore((s) => s.setPreviewMode)
@@ -1337,8 +1360,11 @@ export default function App() {
   /* ---- Export all slides ---- */
   // `auto` = an unattended export (a connected agent): the folder and prefix
   // are given, so no folder picker and no blocking prompts.
+  // `mode` 'photos' = a JPEG still of every slide (TikTok photo mode,
+  // Instagram): video slides contribute their cover frame.
   const exportAll = useCallback(async (
     auto?: { dir: string; prefix: string },
+    mode: 'slides' | 'photos' = 'slides',
   ): Promise<{ written: string[]; videoErrors: number } | undefined> => {
     const st = useTiovivoStore.getState()
     if (!st.slides.length || !stageRef.current) return
@@ -1460,7 +1486,7 @@ export default function App() {
         const slideNameSeg = includeSlideNameInFilename && slide.name?.trim()
           ? `_${sanitizeFilenameSegment(slide.name.trim())}`
           : ''
-        const hasVideo = slideHasAnimatedExport(st.items, slideId)
+        const hasVideo = mode === 'slides' && slideHasAnimatedExport(st.items, slideId)
 
         if (hasVideo) {
           // Video slide → export as MP4
@@ -1487,9 +1513,12 @@ export default function App() {
           await new Promise<void>((r) =>
             requestAnimationFrame(() => requestAnimationFrame(() => r())),
           )
-          const blob = await stageRef.current!.exportSlidePng(slideId)
+          const png = mode === 'photos'
+            ? await stageRef.current!.exportSlideStill(slideId)
+            : await stageRef.current!.exportSlidePng(slideId)
+          const blob = png && mode === 'photos' ? await pngToJpeg(png) : png
           if (blob) {
-            const filename = `${prefix}${slideNameSeg}_${n}.png`
+            const filename = `${prefix}${slideNameSeg}_${n}.${mode === 'photos' ? 'jpg' : 'png'}`
             pngFiles.push({
               name: filename,
               buffer: new Uint8Array(await blob.arrayBuffer()),
@@ -1524,6 +1553,48 @@ export default function App() {
     }
     return { written, videoErrors }
   }, [exportPrefix, includeSlideNameInFilename])
+
+  /* ---- Export the deck as ONE video (Reel / TikTok) ---- */
+  const exportReel = useCallback(async (
+    transition: ReelTransition,
+    auto?: { dir: string; prefix: string },
+  ): Promise<string | null> => {
+    const api = window.electronAPI
+    if (!stageRef.current) return null
+    if (!api) {
+      toast('Export only works in the desktop app, not the browser.', { kind: 'error' })
+      return null
+    }
+    const prefix = auto?.prefix ?? (sanitizeFilename(exportPrefix.trim()) || 'tiovivo')
+    setExporting(true)
+    exportingRef.current = true
+    setExportProgress('')
+    useTiovivoStore.getState().setSelectedIds([])
+    try {
+      const outputPath = auto
+        ? `${auto.dir}/${prefix}_video.mp4`
+        : await api.saveFile({ defaultName: `${prefix}_video.mp4`, filters: [{ name: 'MP4 video', extensions: ['mp4'] }] })
+      if (!outputPath) return null
+      setExportProgress('Encoding video: 0%')
+      const result = await stageRef.current.exportDeckVideo(
+        outputPath,
+        { transition, fps: 30 },
+        (pct) => setExportProgress(`Encoding video: ${Math.round(pct)}%`),
+        (dataUrl) => setExportPreview(dataUrl),
+      )
+      if (result) toast(`Video exported to:\n${result}`, { kind: 'success' })
+      else toast('Video export failed. Check the dev console (View → Toggle Developer Tools) for details.', { kind: 'error' })
+      return result
+    } catch (err) {
+      console.error('[export] video failed:', err)
+      toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' })
+      return null
+    } finally {
+      exportingRef.current = false
+      setExporting(false)
+      setExportProgress('')
+    }
+  }, [exportPrefix])
 
   /* ---- Export a single slide on demand (per-slide export button) ---- */
   const exportSingleSlide = useCallback(async (slideId: string) => {
@@ -1659,6 +1730,7 @@ export default function App() {
             seamlessSlides: st.seamlessSlides,
             showHiddenZone: st.showHiddenZone,
             showIgSafeArea: st.showIgSafeArea,
+            safeAreaPlatform: st.safeAreaPlatform,
             marginPct: st.marginPct,
             snapGrid: st.snapGrid,
             snapCenter: st.snapCenter,
@@ -1796,8 +1868,8 @@ export default function App() {
   /** Replace the document with a fresh one from the start screen — a blank
    *  format or a template deck. Loaded as a clean document: no undo history
    *  pointing back at the previous project, nothing to save yet. */
-  const startDocument = useCallback(async (source: Exclude<PresetId, 'custom'> | TemplateDeck) => {
-    if (!(await confirmReplaceDocument('starting a new project'))) return
+  const startDocument = useCallback(async (source: Exclude<PresetId, 'custom'> | TemplateDeck): Promise<boolean> => {
+    if (!(await confirmReplaceDocument('starting a new project'))) return false
     const deck: TemplateDeck = typeof source === 'string'
       ? {
           presetId: source,
@@ -1822,6 +1894,7 @@ export default function App() {
     // The canvas was laid out for the previous format — refit once it has
     // re-rendered with the new slides.
     requestAnimationFrame(() => requestAnimationFrame(() => stageRef.current?.fitToScreen()))
+    return true
   }, [confirmReplaceDocument, dropClipboardMedia])
 
   const handleReload = useCallback(async () => {
@@ -1841,7 +1914,13 @@ export default function App() {
       isBusy: () => exportingRef.current,
       projectPath: () => projectPathRef.current,
       saveTo: (path) => handleSave(false, path ?? undefined),
-      exportTo: async (dir, prefix) => (await exportAll({ dir, prefix })) ?? { written: [], videoErrors: 0 },
+      exportTo: async (dir, prefix, as, transition) => {
+        if (as === 'video') {
+          const file = await exportReel(transition, { dir, prefix })
+          return { written: file ? [`${prefix}_video.mp4`] : [], videoErrors: file ? 0 : 1 }
+        }
+        return (await exportAll({ dir, prefix }, as)) ?? { written: [], videoErrors: 0 }
+      },
       newProject: () => {
         useTiovivoStore.getState().resetProject()
         dropClipboardMedia()
@@ -1862,7 +1941,7 @@ export default function App() {
     })
     const offOpen = api.onOpenMcp?.(() => setMcpOpen(true))
     return () => { offCall(); offOpen?.() }
-  }, [exportAll, handleSave, dropClipboardMedia])
+  }, [exportAll, exportReel, handleSave, dropClipboardMedia])
 
   /* ---- File-menu keyboard shortcuts ---- */
   // On macOS the native menu's accelerators (Cmd+N / O / S / Shift+S) fire
@@ -2112,10 +2191,26 @@ export default function App() {
                   <input type="checkbox" checked={showCenterGuides} onChange={(e) => setShowCenterGuides(e.target.checked)} />
                   Center lines
                 </label>
-                <label className="check" title="Dim the area where Instagram's carousel page-dot indicator and on-canvas chrome sit, so you don't put critical text under them.">
+                <label className="check" title="Dim the areas where the app draws its own interface over your post, so nothing important sits under it.">
                   <input type="checkbox" checked={showIgSafeArea} onChange={(e) => setShowIgSafeArea(e.target.checked)} />
-                  IG safe area
+                  Safe area
                 </label>
+                {showIgSafeArea && (
+                  <div className="app__presets" role="group" aria-label="Safe area for" style={{ margin: '2px 0 8px' }}>
+                    {(['instagram', 'tiktok'] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className={`btn ${safeAreaPlatform === p ? 'btn--seg-active' : ''}`}
+                        style={{ flex: 1 }}
+                        onClick={() => useTiovivoStore.getState().setSafeAreaPlatform(p)}
+                        title={p === 'tiktok' ? 'TikTok feed interface — differs from Instagram on 9:16 slides' : 'Instagram feed, Reels and Stories interface'}
+                      >
+                        {p === 'instagram' ? 'Instagram' : 'TikTok'}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <label className="check" title="Show the pasteboard zone around the slides where off-slide media is clipped.">
                   <input type="checkbox" checked={showHiddenZone} onChange={(e) => setShowHiddenZone(e.target.checked)} />
                   Hidden zone
@@ -2174,6 +2269,17 @@ export default function App() {
       <ConfirmHost />
       <TipHost />
       {mcpOpen && <McpDialog onClose={() => setMcpOpen(false)} />}
+      {assistantOpen && (
+        <AssistantPanel
+          onClose={() => setAssistantOpen(false)}
+          startBlank={(preset) => startDocument(preset)}
+          detachFromFile={() => {
+            projectPathRef.current = null
+            setProjectPath(null)
+          }}
+          onFocusSlide={(id) => stageRef.current?.centerSlide(id)}
+        />
+      )}
       {startOpen && (
         <StartScreen
           fonts={fontList}
@@ -2343,6 +2449,15 @@ export default function App() {
           </button>
         </div>
         <div className="app__spacer" />
+        <button
+          type="button"
+          className={`btn${assistantOpen ? ' btn--seg-active' : ''}`}
+          onClick={() => setAssistantOpen((v) => !v)}
+          title="Claude on your deck: create, review, hooks, captions, repurpose"
+          aria-pressed={assistantOpen}
+        >
+          Assistant
+        </button>
         {viewCluster}
         {/* Theme toggle — dark ⇄ light, persisted across sessions. The new
             theme sweeps in as a circle growing from the click point. */}
@@ -2393,9 +2508,48 @@ export default function App() {
               />
               Slide names in filenames
             </label>
-            <p className="hint" style={{ marginTop: 2 }}>
-              Files: <code style={{ fontFamily: 'var(--mono)' }}>
-                {(sanitizeFilename(exportPrefix.trim()) || 'tiovivo')}{includeSlideNameInFilename ? '_SLIDE' : ''}_01.png / .mp4
+            <div className="popover__section">Export as</div>
+            <div className="app__presets" role="group" aria-label="Export as">
+              {([['slides', 'Slides'], ['photos', 'Photos'], ['video', 'One video']] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`btn ${exportMode === m ? 'btn--seg-active' : ''}`}
+                  style={{ flex: 1 }}
+                  onClick={() => setExportMode(m)}
+                  title={m === 'slides'
+                    ? 'A file per slide: PNG, or MP4 for slides with video or GIFs'
+                    : m === 'photos'
+                      ? 'A JPEG of every slide — for TikTok photo mode. Video slides give their cover frame.'
+                      : 'All slides in order as one MP4, with entrance animations — for Reels and TikTok'}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {exportMode === 'video' && (
+              <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <span style={{ flex: 1 }}>Between slides</span>
+                <div className="app__presets" role="group" aria-label="Transition between slides">
+                  {(['cut', 'fade', 'push'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`btn ${reelTransition === t ? 'btn--seg-active' : ''}`}
+                      onClick={() => setReelTransition(t)}
+                    >
+                      {t === 'cut' ? 'Cut' : t === 'fade' ? 'Fade' : 'Push'}
+                    </button>
+                  ))}
+                </div>
+              </label>
+            )}
+            <p className="hint" style={{ marginTop: 6 }}>
+              {exportMode === 'video' ? 'File: ' : 'Files: '}<code style={{ fontFamily: 'var(--mono)' }}>
+                {(sanitizeFilename(exportPrefix.trim()) || 'tiovivo')}
+                {exportMode === 'video'
+                  ? '_video.mp4'
+                  : `${includeSlideNameInFilename ? '_SLIDE' : ''}_01${exportMode === 'photos' ? '.jpg' : '.png / .mp4'}`}
               </code>
             </p>
             <p className="hint">
@@ -2408,16 +2562,19 @@ export default function App() {
               disabled={exporting || exportEnabledCount === 0}
               onClick={() => {
                 setExportOpen(false)
-                void exportAll()
+                if (exportMode === 'video') void exportReel(reelTransition)
+                else void exportAll(undefined, exportMode)
               }}
               style={{ width: '100%', justifyContent: 'center', marginTop: 12 }}
             >
               <Icon.Export />
               {exporting
                 ? 'Exporting…'
-                : exportEnabledCount === slides.length
-                  ? 'Export all slides'
-                  : `Export ${exportEnabledCount} slide${exportEnabledCount === 1 ? '' : 's'}`}
+                : exportMode === 'video'
+                  ? 'Export video'
+                  : exportEnabledCount === slides.length
+                    ? 'Export all slides'
+                    : `Export ${exportEnabledCount} slide${exportEnabledCount === 1 ? '' : 's'}`}
             </button>
           </Popover>
         </div>
@@ -3023,6 +3180,47 @@ export default function App() {
                     Show on all slides
                   </label>
                 )}
+                {singleItem && !singleItem.appearsOnAllSlides && (() => {
+                  const anim: EntranceAnim = singleItem.animIn ?? 'none'
+                  const delay = singleItem.animDelay ?? 0
+                  return (
+                    <>
+                      <label className="field" title="How this item arrives when you export the deck as one video (Export → One video). Stills and per-slide exports ignore it.">
+                        <span>Entrance in video</span>
+                        <div className="app__presets" role="group" aria-label="Entrance animation">
+                          {(['none', 'fade', 'rise', 'pop'] as const).map((a) => (
+                            <button
+                              key={a}
+                              type="button"
+                              className={`btn ${anim === a ? 'btn--seg-active' : ''}`}
+                              style={{ flex: 1 }}
+                              onClick={() => updateItem(singleItem.id, { animIn: a })}
+                            >
+                              {a === 'none' ? 'None' : a === 'fade' ? 'Fade' : a === 'rise' ? 'Rise' : 'Pop'}
+                            </button>
+                          ))}
+                        </div>
+                      </label>
+                      {anim !== 'none' && (
+                        <label className="slider-field" title="Seconds after the slide appears before this item comes in. Double-click to reset.">
+                          <span className="slider-field__label">
+                            Starts after<span className="slider-field__value">{delay.toFixed(1)} s</span>
+                          </span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={6}
+                            step={0.1}
+                            value={delay}
+                            style={sliderFill(delay / 6, 0, 1)}
+                            onChange={(e) => updateItem(singleItem.id, { animDelay: Number(e.target.value) })}
+                            onDoubleClick={() => updateItem(singleItem.id, { animDelay: 0 })}
+                          />
+                        </label>
+                      )}
+                    </>
+                  )
+                })()}
                 {isImage && singleItem && (
                   <RemoveBgButton item={singleItem} onResult={(src, name) => updateItem(singleItem.id, { src, name })} />
                 )}
@@ -3107,6 +3305,26 @@ export default function App() {
                   />
                   Include in export
                 </label>
+                {(() => {
+                  const secs = activeSlide.duration
+                  return (
+                    <label className="slider-field" title="How long this slide stays on screen when the deck is exported as one video. Auto = its video or GIF length, or long enough to read. Double-click for Auto.">
+                      <span className="slider-field__label">
+                        Time in video<span className="slider-field__value">{secs ? `${secs.toFixed(1)} s` : 'Auto'}</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={15}
+                        step={0.5}
+                        value={secs ?? 3}
+                        style={sliderFill(((secs ?? 3) - 1) / 14, 0, 1)}
+                        onChange={(e) => useTiovivoStore.getState().setSlideDuration(activeSlide.id, Number(e.target.value))}
+                        onDoubleClick={() => useTiovivoStore.getState().setSlideDuration(activeSlide.id, null)}
+                      />
+                    </label>
+                  )
+                })()}
               </div>
             </details>
           )}

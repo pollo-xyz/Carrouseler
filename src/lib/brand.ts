@@ -17,6 +17,8 @@ export interface BrandKit {
   text: string
   /** The one loud colour: highlights, cover slides, calls to action. */
   accent: string
+  /** How the brand writes — read by the assistant and connected agents. */
+  voice: string
 }
 
 export const DEFAULT_BRAND: BrandKit = {
@@ -26,6 +28,7 @@ export const DEFAULT_BRAND: BrandKit = {
   background: '#f4f1ec',
   text: '#161614',
   accent: '#3d7bfd',
+  voice: '',
 }
 
 const STORAGE_KEY = 'tiovivo-brand'
@@ -45,6 +48,7 @@ function load(): BrandKit {
       background: hex(raw.background, DEFAULT_BRAND.background),
       text: hex(raw.text, DEFAULT_BRAND.text),
       accent: hex(raw.accent, DEFAULT_BRAND.accent),
+      voice: typeof raw.voice === 'string' ? raw.voice : '',
     }
   } catch {
     return { ...DEFAULT_BRAND } // storage disabled or corrupt

@@ -25,7 +25,12 @@ export interface McpContext {
   projectPath: () => string | null
   /** Save to `path`, or in place when null. False = nothing was written. */
   saveTo: (path: string | null) => Promise<boolean>
-  exportTo: (dir: string, prefix: string) => Promise<{ written: string[]; videoErrors: number }>
+  exportTo: (
+    dir: string,
+    prefix: string,
+    as: 'slides' | 'photos' | 'video',
+    transition: 'cut' | 'fade' | 'push',
+  ) => Promise<{ written: string[]; videoErrors: number }>
   newProject: () => void
   listFonts: () => Promise<string[]>
 }
@@ -35,6 +40,7 @@ type FieldKind = 'n' | 's' | 'b'
 
 const COMMON: Record<string, FieldKind> = {
   x: 'n', y: 'n', width: 'n', height: 'n', rotation: 'n', name: 's', appearsOnAllSlides: 'b',
+  animIn: 's', animDelay: 'n',
 }
 const TEXT: Record<string, FieldKind> = {
   text: 's', fontFamily: 's', fontSize: 'n', bold: 'b', italic: 'b', textColor: 's', textAlign: 's',
@@ -51,6 +57,7 @@ const MEDIA: Record<string, FieldKind> = {
 const ENUMS: Record<string, string[]> = {
   textAlign: ['left', 'center', 'right', 'justify'],
   shapeKind: ['rect', 'ellipse', 'line'],
+  animIn: ['none', 'fade', 'rise', 'pop'],
 }
 /** Keys of a new-item spec that aren't item fields. */
 const SPEC_ONLY = new Set(['type', 'path', 'fit', 'data', 'mime', 'fileName'])
@@ -121,6 +128,7 @@ function describeItem(it: PlacedMedia) {
   }
   if (it.rotation) out.rotation = round(it.rotation)
   if (it.appearsOnAllSlides) out.appearsOnAllSlides = true
+  if (it.animIn && it.animIn !== 'none') Object.assign(out, { animIn: it.animIn, animDelay: it.animDelay ?? 0 })
   if (it.type === 'text') {
     Object.assign(out, {
       text: it.text, fontFamily: it.fontFamily, fontSize: it.fontSize, textColor: it.textColor,
@@ -150,6 +158,7 @@ function describeSlide(slide: Slide) {
     ...(slide.name?.trim() ? { name: slide.name.trim() } : {}),
     background: slide.bgVibe ? { vibe: slide.bgVibe.palette } : slide.bgColor,
     ...(slide.exportEnabled ? {} : { exportEnabled: false }),
+    ...(slide.duration ? { seconds: slide.duration } : {}),
     items: st.items.filter((i) => i.slideId === slide.id).map(describeItem),
   }
 }
@@ -196,6 +205,8 @@ function buildVibe(spec: unknown, current?: BgVibe): BgVibe {
 
 function applySlideBackground(slideId: string, args: Args) {
   const st = store()
+  if (typeof args.seconds === 'number') st.setSlideDuration(slideId, args.seconds)
+  else if (args.seconds === null) st.setSlideDuration(slideId, null)
   if (typeof args.bgColor === 'string') {
     st.setSlideBgColor(slideId, args.bgColor)
     // A vibe outranks the solid colour, so asking for a colour means dropping it.
@@ -497,7 +508,9 @@ export async function runMcpTool(
 
     case 'export': {
       const dir = String(args.dirPath)
-      const { written, videoErrors } = await ctx.exportTo(dir, String(args.prefix ?? 'tiovivo'))
+      const as = args.as === 'photos' || args.as === 'video' ? args.as : 'slides'
+      const transition = args.transition === 'cut' || args.transition === 'push' ? args.transition : 'fade'
+      const { written, videoErrors } = await ctx.exportTo(dir, String(args.prefix ?? 'tiovivo'), as, transition)
       if (written.length === 0) throw new Error('Nothing was exported — no slide is export-enabled, or every slide failed.')
       return {
         json: {

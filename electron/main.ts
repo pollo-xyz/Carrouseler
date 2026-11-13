@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { initMcp } from './mcp'
+import { initAi } from './ai'
 
 const require = createRequire(import.meta.url)
 const __filename = fileURLToPath(import.meta.url)
@@ -895,11 +896,13 @@ if (gotLock) app.whenReady().then(() => {
   createWindow()
   // Built-in MCP server (off until the user enables it in File → Connect
   // Claude). Its writes go through the same chosen-path allow-list.
-  initMcp({
+  const mcp = initMcp({
     getWindow: () => win,
     allowFile: rememberFile,
     allowDir: (p) => { knownDirs.add(normPath(p)) },
   })
+  // In-app assistant: Claude on the same document tools, key kept in main.
+  initAi({ getWindow: () => win, runTool: mcp.runTool })
 })
 
 /* ------------------------------------------------------------------ */

@@ -119,6 +119,24 @@ Tools: `get_project`, `new_project`, `set_format`, `add_slide`, `update_slide`, 
 
 The server is off by default, listens on `127.0.0.1` only, requires the key shown in the dialog, and refuses requests from web pages. Projects and exports made through it land in the folder shown in the dialog (default `Documents/Tiovivo`). Every change goes through the normal undo history.
 
+## ✨ Assistant
+
+**Assistant** in the header is Claude (Opus 5.5) working on the open deck. It needs your own Anthropic API key, which is kept encrypted on this computer and only ever sent to Anthropic.
+
+- **Create** — a carousel from a brief, an article, a script, a transcript or a link
+- **Review** — a critique of the rendered slides (hook, hierarchy, contrast, safe zones, typos) with one-click fixes
+- **Hooks** — ten alternative headlines for slide 1; click one to use it
+- **Captions** — Instagram caption, hashtags and first comment, a TikTok caption, and alt text
+- **Repurpose** — the same deck re-laid out for another format, optionally animated for video
+- **Learn from past posts** (in the Brand panel) — proposes a brand kit from a few of your old posts
+
+## 🎬 Reels and TikTok
+
+- **Export → One video** renders every slide in order as a single MP4, with a cut, fade or push between slides
+- Items can have an entrance (fade, rise, pop) and a start delay; slides can have a set time on screen. These only play in the one-video export.
+- **Export → Photos** writes a JPEG of every slide for TikTok photo mode; video slides give their cover frame
+- **View → Safe area** can show TikTok's interface instead of Instagram's (approximate proportions)
+
 ---
 
 ## 📐 Format presets

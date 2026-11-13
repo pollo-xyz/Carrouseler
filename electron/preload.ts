@@ -186,10 +186,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.off('app:open-project-file', h)
   },
 
+  /** In-app assistant (electron/ai.ts). The key itself never comes back. */
+  aiStatus: () => ipcRenderer.invoke('ai-status'),
+  aiSetKey: (key: string) => ipcRenderer.invoke('ai-set-key', key),
+  aiClearKey: () => ipcRenderer.invoke('ai-clear-key'),
+  aiRun: (req: { runId: string; task: string; params?: Record<string, unknown> }) => ipcRenderer.invoke('ai-run', req),
+  aiCancel: (runId: string) => ipcRenderer.invoke('ai-cancel', runId),
+  aiPickImages: () => ipcRenderer.invoke('ai-pick-images') as Promise<string[]>,
+  onAiProgress: (cb: (p: { runId: string; line: string }) => void) => {
+    const h = (_e: unknown, p: { runId: string; line: string }) => cb(p)
+    ipcRenderer.on('ai:progress', h)
+    return () => ipcRenderer.off('ai:progress', h)
+  },
+  copyText: (text: string) => ipcRenderer.invoke('copy-text', text) as Promise<boolean>,
+
   /** Built-in MCP server (File → Connect Claude). */
   mcpGetStatus: () => ipcRenderer.invoke('mcp-get-status'),
   mcpSetEnabled: (enabled: boolean) => ipcRenderer.invoke('mcp-set-enabled', enabled),
   mcpNewToken: () => ipcRenderer.invoke('mcp-new-token'),
+  mcpCopyCommand: (text: string) => ipcRenderer.invoke('mcp-copy-command', text) as Promise<boolean>,
   mcpPickOutputDir: () => ipcRenderer.invoke('mcp-pick-output-dir'),
   /** A tool call from a connected agent. Answer with sendMcpResult. */
   onMcpCall: (cb: (call: { id: string; tool: string; args: Record<string, unknown>; mutates: boolean }) => void) => {

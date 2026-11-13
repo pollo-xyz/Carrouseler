@@ -22,7 +22,7 @@ export default function McpDialog({ onClose }: { onClose: () => void }) {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(command)
+      if (!(await api?.mcpCopyCommand?.(command))) throw new Error('copy refused')
       toast('Command copied. Run it once in a terminal.', { kind: 'success' })
     } catch {
       toast('Could not copy — select the command and copy it by hand.', { kind: 'error' })

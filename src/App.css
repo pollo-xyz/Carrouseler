@@ -2625,6 +2625,216 @@ kbd {
 .brand-swatches__dot:hover { transform: scale(1.15); }
 .brand-swatches__dot--on { box-shadow: 0 0 0 1px var(--bg), 0 0 0 2.5px var(--hot); }
 
+/* ================================================================
+   ASSISTANT — Claude on the deck. A sheet over the inspector: same
+   width logic, same ruled sections, so it reads as part of the app.
+   ================================================================ */
+.assistant {
+  position: fixed;
+  inset: 56px 0 0 auto;
+  z-index: 27;
+  width: 372px;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  animation: assistant-in var(--dur-open, 240ms) var(--ease) both;
+}
+@keyframes assistant-in {
+  from { opacity: 0; transform: translateX(12px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant { animation-duration: 0.01ms; }
+}
+.assistant__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 12px 18px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.assistant__head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-bright);
+}
+.assistant__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 18px 18px;
+}
+.assistant > .assistant__note { padding: 14px 18px; }
+.assistant__tasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 -6px 10px;
+}
+.assistant__tasks .btn { padding: 0 10px; }
+.assistant__note { margin: 0 0 10px; font-size: 0.78rem; color: var(--text); }
+.assistant__hint { margin: 2px 0 10px; font-size: 0.7rem; color: var(--text-dim); }
+.assistant__error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--danger-dim);
+  color: var(--danger-hi);
+  font-size: 0.75rem;
+}
+.assistant__go { align-self: stretch; justify-content: center; margin-top: 6px; }
+.assistant__run {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+}
+.assistant__log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.assistant__log li { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.assistant__log-now { color: var(--text-bright); }
+.assistant__summary {
+  margin: 14px 0 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-strong);
+  font-size: 0.78rem;
+  color: var(--text-bright);
+  white-space: pre-line;
+}
+.assistant__results { display: flex; flex-direction: column; align-items: flex-start; }
+.assistant__findings,
+.assistant__hooks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  width: 100%;
+}
+.finding {
+  position: relative;
+  padding: 10px 0 12px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+.finding::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 15px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.finding--high::before { background: var(--danger); }
+.finding--medium::before { background: var(--hot); }
+.finding b { display: block; color: var(--text-bright); font-weight: 600; margin: 2px 0; }
+.finding p { margin: 0 0 6px; color: var(--text); }
+.finding .btn { margin-left: -14px; }
+.finding--done { opacity: 0.55; }
+.finding__where {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--meta);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.finding__where:hover { color: var(--text-bright); }
+.finding__done { font-size: 0.7rem; color: var(--success); }
+.hook {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 10px;
+  margin: 0 -10px;
+  width: calc(100% + 20px);
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  white-space: pre-line;
+  transition: background var(--dur-fast) var(--ease);
+}
+.hook:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.hook b { font-size: 0.85rem; font-weight: 600; color: var(--text-bright); line-height: 1.25; }
+.hook span { font-size: 0.7rem; color: var(--text-dim); }
+.hook--on { background: var(--hot-veil); }
+.caption {
+  width: 100%;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--border);
+}
+.caption header { display: flex; align-items: center; justify-content: space-between; }
+.caption h3 {
+  margin: 0;
+  font-family: var(--meta);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.caption p {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-bright);
+  white-space: pre-wrap;
+  user-select: text;
+}
+.assistant__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 18px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.brand-learn { margin-top: 6px; }
+.brand-learn > .btn { margin-left: -14px; }
+.brand-learn__found {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font-size: 0.75rem;
+  color: var(--text);
+}
+.brand-learn__found p { margin: 6px 0 0; }
+.brand-learn__found b { color: var(--text-bright); }
+.brand-learn__notes { color: var(--text-dim); }
+.brand-learn__swatches { display: flex; gap: 6px; }
+.brand-learn__swatches span {
+  width: 28px;
+  height: 20px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--border-bright);
+}
+.brand-learn__actions { display: flex; gap: 6px; margin-top: 10px; }
+
 /* Connect Claude (built-in MCP server) — rides the confirm card. */
 .confirm.mcp { width: 480px; }
 .mcp__note { margin: 0 0 14px; }

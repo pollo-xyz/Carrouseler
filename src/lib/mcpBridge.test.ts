@@ -103,6 +103,28 @@ describe('mcp bridge', () => {
     await expect(call('save_project', {}, makeCtx(), false)).rejects.toThrow(/name/)
   })
 
+  it('sets entrance animations and slide timing for the one-video export', async () => {
+    await call('add_items', { items: [{ type: 'text', text: 'A', animIn: 'rise', animDelay: 0.4 }] })
+    expect(store().items[0]).toMatchObject({ animIn: 'rise', animDelay: 0.4 })
+    await expect(call('add_items', { items: [{ type: 'text', animIn: 'spin' }] })).rejects.toThrow(/animIn/)
+    await call('update_slide', { slide: 1, seconds: 4 })
+    expect(store().slides[0]!.duration).toBe(4)
+    const project = (await call('get_project', {}, makeCtx(), false)).json as { slides: { seconds?: number; items: { animIn?: string }[] }[] }
+    expect(project.slides[0]!.seconds).toBe(4)
+    expect(project.slides[0]!.items[0]!.animIn).toBe('rise')
+    await call('update_slide', { slide: 1, seconds: null })
+    expect(store().slides[0]!.duration).toBeUndefined()
+  })
+
+  it('passes the export mode through, defaulting to a file per slide', async () => {
+    const seen: string[] = []
+    const ctx = makeCtx({ exportTo: async (_d, _p, as, transition) => { seen.push(`${as}/${transition}`); return { written: ['x'], videoErrors: 0 } } })
+    await call('export', { dirPath: 'd', prefix: 'p' }, ctx, false)
+    await call('export', { dirPath: 'd', prefix: 'p', as: 'video', transition: 'push' }, ctx, false)
+    await call('export', { dirPath: 'd', prefix: 'p', as: 'photos' }, ctx, false)
+    expect(seen).toEqual(['slides/fade', 'video/push', 'photos/fade'])
+  })
+
   it('reorder_layers demands every id on the slide exactly once', async () => {
     await call('add_items', { items: [{ type: 'text', text: 'A' }, { type: 'shape' }] })
     const [a, b] = store().items.map((i) => i.id)

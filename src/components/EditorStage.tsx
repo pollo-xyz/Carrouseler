@@ -2343,6 +2343,17 @@ export interface EditorStageHandle {
      *  export without sending every frame back to the renderer. */
     onPreviewFrame?: (dataUrl: string) => void,
   ) => Promise<string | null>
+  /** A still of one slide: like exportSlidePng, but a video shows its
+   *  cover frame rather than wherever playback happens to be. */
+  exportSlideStill: (slideId: string) => Promise<Blob | null>
+  /** Every export-enabled slide in order as ONE video, with entrance
+   *  animations and a transition between slides. */
+  exportDeckVideo: (
+    outputPath: string,
+    opts: { fps?: number; transition: 'cut' | 'fade' | 'push' },
+    onProgress?: (pct: number) => void,
+    onPreviewFrame?: (dataUrl: string) => void,
+  ) => Promise<string | null>
   fitToScreen: () => void
   /** Centre one slide in the viewport, zoomed to fit it — the slide
    *  deck's double-click action. */
@@ -2410,6 +2421,7 @@ const EditorStage = forwardRef<
   const seamlessSlides = useTiovivoStore((s) => s.seamlessSlides)
   const showHiddenZone = useTiovivoStore((s) => s.showHiddenZone)
   const showIgSafeArea = useTiovivoStore((s) => s.showIgSafeArea)
+  const safeAreaPlatform = useTiovivoStore((s) => s.safeAreaPlatform)
   const previewMode = useTiovivoStore((s) => s.previewMode)
   const snapGrid = useTiovivoStore((s) => s.snapGrid)
   const snapCenter = useTiovivoStore((s) => s.snapCenter)
@@ -3772,13 +3784,239 @@ const EditorStage = forwardRef<
     [artboardPositions, W, H, hideChromeForCapture],
   )
 
+  /* ---- still export (photo mode) ----
+   * A slide with video would otherwise be caught mid-playback: show each
+   * video's cover (the picked image, or its cover time) for the capture. */
+  const exportSlideStill = useCallback(
+    async (slideId: string) => {
+      const stage = stageRef.current
+      if (!stage) return null
+      const vids = useTiovivoStore.getState().items.filter((i) => i.slideId === slideId && i.type === 'video')
+      const swaps: { node: Konva.Image; original: CanvasImageSource }[] = []
+      const paused: HTMLVideoElement[] = []
+      try {
+        for (const item of vids) {
+          const el = videoElements.get(item.id)
+          const coverImg = item.coverImageSrc ? coverImageElements.get(item.id) : undefined
+          const node = stage.findOne(`#media-${item.id}`) as Konva.Image | undefined
+          if (coverImg && node) {
+            swaps.push({ node, original: node.image() as CanvasImageSource })
+            node.image(coverImg)
+          } else if (el) {
+            el.pause()
+            trimLoopSuspended.add(el)
+            paused.push(el)
+            const target = Math.max(0, Math.min(item.coverTime || 0, (el.duration || 0) - 0.001))
+            if (Math.abs(el.currentTime - target) > 1e-3) {
+              await new Promise<void>((resolve) => {
+                const timer = setTimeout(resolve, 4000)
+                el.addEventListener('seeked', () => { clearTimeout(timer); resolve() }, { once: true })
+                el.currentTime = target
+              })
+            }
+          }
+        }
+        if (vids.length) await new Promise<void>((r) => requestAnimationFrame(() => r()))
+        return await exportSlidePng(slideId)
+      } finally {
+        for (const { node, original } of swaps) {
+          node.image(original as unknown as Parameters<Konva.Image['image']>[0])
+        }
+        for (const el of paused) {
+          trimLoopSuspended.delete(el)
+          el.play().catch(() => {})
+        }
+      }
+    },
+    [exportSlidePng],
+  )
+
+  /* ---- one-video export (Reel / TikTok) ----
+   * Walks the export-enabled slides in order. Each output frame is the
+   * current slide's artboard with every entrance animation posed for that
+   * instant, so text-only decks render exactly and as fast as the encoder
+   * takes frames. Decks with video or GIFs are paced in real time instead,
+   * because those play on their own clock. */
+  const exportDeckVideo = useCallback(
+    async (
+      outputPath: string,
+      opts: { fps?: number; transition: 'cut' | 'fade' | 'push' },
+      onProgress?: (pct: number) => void,
+      onPreviewFrame?: (dataUrl: string) => void,
+    ): Promise<string | null> => {
+      const api = window.electronAPI
+      const stage = stageRef.current
+      if (!api || !stage) return null
+      const st = useTiovivoStore.getState()
+      const fps = opts.fps ?? 30
+      const ENTRANCE = 0.5      // seconds one entrance takes
+      const TRANSITION = opts.transition === 'cut' ? 0 : 0.45
+
+      const plans = st.slides
+        .map((slide, i) => ({ slide, ap: artboardPositions[i]! }))
+        .filter(({ slide }) => slide.exportEnabled !== false)
+        .map(({ slide, ap }) => {
+          const own = st.items.filter((i) => i.slideId === slide.id)
+          const videos = own
+            .filter((i) => i.type === 'video')
+            .map((item) => ({ item, el: videoElements.get(item.id) }))
+            .filter((v): v is { item: PlacedMedia; el: HTMLVideoElement } => !!v.el)
+          const gifs = st.items.filter((i) =>
+            i.type === 'gif' && (i.slideId === slide.id || i.appearsOnAllSlides))
+          const animated = own.filter((i) => i.animIn && i.animIn !== 'none' && !i.appearsOnAllSlides)
+          let auto = 3
+          for (const { item, el } of videos) {
+            const end = item.trimEnd && item.trimEnd > 0 ? Math.min(item.trimEnd, el.duration) : el.duration
+            const len = end - (item.trimStart || 0)
+            if (isFinite(len) && len > auto) auto = len
+          }
+          for (const g of gifs) auto = Math.max(auto, g.gifDuration ?? 5)
+          // Leave time to read what arrived last.
+          for (const a of animated) auto = Math.max(auto, (a.animDelay ?? 0) + ENTRANCE + 1.5)
+          return { slide, ap, videos, animated, live: videos.length > 0 || gifs.length > 0, seconds: slide.duration ?? auto }
+        })
+      if (plans.length === 0) return null
+      const totalFrames = plans.reduce((n, p) => n + Math.max(1, Math.ceil(p.seconds * fps)), 0)
+      const realtime = plans.some((p) => p.live)
+
+      /** Pose a slide's animated items for `tau` seconds in; returns the undo. */
+      const pose = (plan: (typeof plans)[number], tau: number): (() => void) => {
+        const undo: (() => void)[] = []
+        for (const item of plan.animated) {
+          const p = Math.min(1, Math.max(0, (tau - (item.animDelay ?? 0)) / ENTRANCE))
+          if (p >= 1) continue
+          const e = 1 - Math.pow(1 - p, 3) // ease-out
+          const nodes = [stage.findOne(`#textbg-${item.id}`), stage.findOne(`#media-${item.id}`)]
+            .filter((n): n is Konva.Node => !!n)
+          for (const node of nodes) {
+            const before = { opacity: node.opacity(), x: node.x(), y: node.y(), sx: node.scaleX(), sy: node.scaleY() }
+            undo.push(() => {
+              node.opacity(before.opacity); node.position({ x: before.x, y: before.y }); node.scale({ x: before.sx, y: before.sy })
+            })
+            node.opacity(before.opacity * e)
+            if (item.animIn === 'rise') {
+              node.y(before.y + (1 - e) * H * 0.035)
+            } else if (item.animIn === 'pop') {
+              // Scale about the item's visual centre, whatever its rotation.
+              const k = 0.88 + 0.12 * e
+              const cx = item.x + item.width / 2
+              const cy = item.y + item.height / 2
+              node.scale({ x: before.sx * k, y: before.sy * k })
+              node.position({ x: before.x + (1 - k) * (cx - before.x), y: before.y + (1 - k) * (cy - before.y) })
+            }
+          }
+        }
+        return () => { for (const u of undo) u() }
+      }
+
+      const sessionId = crypto.randomUUID()
+      const ps = stage.scaleX(), pp = stage.position()
+      let restoreChrome: (() => void) | null = null
+      try {
+        await api.startVideoEncode({
+          sessionId, width: W, height: H, fps, duration: totalFrames / fps, outputPath,
+        })
+        stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
+        restoreChrome = hideChromeForCapture()
+
+        const mix = document.createElement('canvas')
+        mix.width = W; mix.height = H
+        const mixCtx = mix.getContext('2d', { willReadFrequently: true })!
+        let previous: HTMLCanvasElement | null = null   // last frame of the slide before
+        let pendingWrite: Promise<void> = Promise.resolve()
+        let sent = 0
+        let lastPreviewAt = -Infinity
+        const startMs = performance.now()
+
+        for (const plan of plans) {
+          const frames = Math.max(1, Math.ceil(plan.seconds * fps))
+          // Videos start from their trim-in as the slide comes on screen.
+          for (const { item, el } of plan.videos) {
+            el.muted = true
+            el.currentTime = item.trimStart || 0
+            el.play().catch(() => {})
+          }
+          let shot: HTMLCanvasElement | null = null
+          for (let fi = 0; fi < frames; fi++) {
+            const tau = fi / fps
+            if (realtime) {
+              const wait = startMs + (sent / fps) * 1000 - performance.now()
+              if (wait > 0) await new Promise<void>((r) => setTimeout(r, wait))
+            } else if (fi % 6 === 0) {
+              // Let the progress UI paint.
+              await new Promise<void>((r) => setTimeout(r, 0))
+            }
+            const unpose = pose(plan, tau)
+            try {
+              stage.draw()
+              shot = stage.toCanvas({ x: plan.ap.x, y: plan.ap.y, width: W, height: H, pixelRatio: 1 })
+            } finally {
+              unpose()
+            }
+            mixCtx.globalAlpha = 1
+            if (previous && tau < TRANSITION) {
+              const t = tau / TRANSITION
+              const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2 // ease-in-out
+              if (opts.transition === 'push') {
+                mixCtx.drawImage(previous, -e * W, 0)
+                mixCtx.drawImage(shot, (1 - e) * W, 0)
+              } else {
+                mixCtx.drawImage(previous, 0, 0)
+                mixCtx.globalAlpha = e
+                mixCtx.drawImage(shot, 0, 0)
+                mixCtx.globalAlpha = 1
+              }
+            } else {
+              mixCtx.drawImage(shot, 0, 0)
+            }
+            const frameData = new Uint8Array(mixCtx.getImageData(0, 0, W, H).data.buffer)
+            // One frame in flight at a time; a silent encoder is an error,
+            // not something to wait on forever.
+            let timer: ReturnType<typeof setTimeout> | undefined
+            try {
+              await Promise.race([
+                pendingWrite,
+                new Promise<void>((_r, reject) => {
+                  timer = setTimeout(() => reject(new Error('The video encoder stopped responding.')), 30000)
+                }),
+              ])
+            } finally {
+              if (timer) clearTimeout(timer)
+            }
+            pendingWrite = api.videoFrame({ sessionId, frameData })
+            sent++
+            onProgress?.((sent / totalFrames) * 100)
+            const now = performance.now()
+            if (onPreviewFrame && now - lastPreviewAt > 500) {
+              lastPreviewAt = now
+              try { onPreviewFrame(mix.toDataURL('image/jpeg', 0.9)) } catch { /* preview only */ }
+            }
+          }
+          previous = shot
+        }
+        await pendingWrite
+        return await api.endVideoEncode({ sessionId })
+      } catch (err) {
+        console.error('[export] one-video export failed:', err)
+        void api.abortVideoEncode?.({ sessionId }).catch(() => {})
+        return null
+      } finally {
+        restoreChrome?.()
+        stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
+      }
+    },
+    [artboardPositions, W, H, hideChromeForCapture],
+  )
+
   useImperativeHandle(ref, () => ({
     exportSlidePng,
+    exportSlideStill,
     exportSlideVideo,
+    exportDeckVideo,
     fitToScreen,
     centerSlide,
     applyCrop: () => { cropApplyRef.current?.() },
-  }), [exportSlidePng, exportSlideVideo, fitToScreen, centerSlide])
+  }), [exportSlidePng, exportSlideStill, exportSlideVideo, exportDeckVideo, fitToScreen, centerSlide])
 
   /* ---- box selection commit ----
    * Shared by the Stage's mouseup and a window fallback: a release off the
@@ -5136,7 +5374,70 @@ const EditorStage = forwardRef<
                 const isStory = aspect < 0.6
                 return (
                   <Group key={`ig-${slide.id}`} x={ap.x} y={ap.y}>
-                    {isStory ? (
+                    {isStory && safeAreaPlatform === 'tiktok' ? (
+                      <>
+                        {/* TikTok For You feed. Proportions are approximate —
+                            they shift a little by phone and app version — so
+                            treat the edges as "stay well clear", not a ruler. */}
+                        {/* Top: Following / For You tabs, search */}
+                        <Rect
+                          x={0}
+                          y={0}
+                          width={W}
+                          height={H * 0.09}
+                          fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+                          fillLinearGradientEndPoint={{ x: 0, y: H * 0.09 }}
+                          fillLinearGradientColorStops={[0, 'rgba(10,11,15,0.46)', 1, 'rgba(10,11,15,0)']}
+                        />
+                        <Rect
+                          x={W * 0.27}
+                          y={H * 0.04}
+                          width={W * 0.46}
+                          height={H * 0.026}
+                          cornerRadius={H * 0.013}
+                          fill="rgba(241,242,245,0.14)"
+                          stroke="rgba(241,242,245,0.45)"
+                          strokeWidth={1}
+                          strokeScaleEnabled={false}
+                        />
+                        {/* Right rail: avatar, like, comment, save, share, sound */}
+                        <Rect
+                          x={W * 0.855}
+                          y={H * 0.4}
+                          width={W * 0.125}
+                          height={H * 0.4}
+                          cornerRadius={W * 0.06}
+                          fill="rgba(10,11,15,0.32)"
+                          stroke="rgba(241,242,245,0.32)"
+                          strokeWidth={1}
+                          strokeScaleEnabled={false}
+                        />
+                        {/* Bottom: handle, caption, sound — the tallest zone */}
+                        <Rect
+                          x={0}
+                          y={H * 0.79}
+                          width={W}
+                          height={H * 0.21}
+                          fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+                          fillLinearGradientEndPoint={{ x: 0, y: H * 0.21 }}
+                          fillLinearGradientColorStops={[0, 'rgba(10,11,15,0)', 0.35, 'rgba(10,11,15,0.4)', 1, 'rgba(10,11,15,0.5)']}
+                        />
+                        {[0.83, 0.865, 0.9].map((fy, row) => (
+                          <Rect
+                            key={fy}
+                            x={W * 0.04}
+                            y={H * fy}
+                            width={W * (row === 0 ? 0.34 : row === 1 ? 0.72 : 0.5)}
+                            height={H * 0.02}
+                            cornerRadius={H * 0.01}
+                            fill="rgba(241,242,245,0.12)"
+                            stroke="rgba(241,242,245,0.4)"
+                            strokeWidth={1}
+                            strokeScaleEnabled={false}
+                          />
+                        ))}
+                      </>
+                    ) : isStory ? (
                       <>
                         {/* Top header (profile pic, name, timestamp, close X) */}
                         <Rect

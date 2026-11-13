@@ -12,6 +12,12 @@ export type ShapeKind = 'rect' | 'ellipse' | 'line'
 
 export type TextAlign = 'left' | 'center' | 'right' | 'justify'
 
+/** How an item arrives when the deck is exported as one video. */
+export type EntranceAnim = 'none' | 'fade' | 'rise' | 'pop'
+
+/** Whose interface the safe-area overlay draws. */
+export type SafeAreaPlatform = 'instagram' | 'tiktok'
+
 export interface TextStyleDefaults {
   fontFamily: string
   fontSize: number
@@ -103,6 +109,12 @@ export interface PlacedMedia {
   strokeWidth?: number   // px in slide-space
   cornerRadius?: number  // px in slide-space (rect only)
 
+  /** Entrance animation, played only in the one-video export. Missing or
+   *  'none' = the item is simply there. */
+  animIn?: EntranceAnim
+  /** Seconds into its slide before the entrance starts. */
+  animDelay?: number
+
   /** "Master" flag — when true the item is rendered on every slide, not
    *  just the one named by slideId. Edits propagate everywhere (there's
    *  still only one underlying record). The item's slideId tracks its
@@ -123,6 +135,9 @@ export interface Slide {
    *  bgColor is retained as a fallback so toggling back to solid mode keeps
    *  the user's previous color. */
   bgVibe?: BgVibe
+  /** Seconds this slide holds in the one-video export. Missing = automatic
+   *  (its video / GIF length, or long enough to read). */
+  duration?: number
   /** Optional user-supplied name. Empty/missing → UI falls back to
    *  "Slide {index+1}". Position-based numbering still drives export
    *  filenames so reordering doesn't rename files on disk. */
@@ -177,6 +192,8 @@ interface TiovivoState {
   /** Dim overlay marking where Instagram paints its chrome (page-dot indicator
    *  at the bottom-center) so designers don't put critical text there. */
   showIgSafeArea: boolean
+  /** Which app's interface that overlay draws. */
+  safeAreaPlatform: SafeAreaPlatform
   /** Preview mode — when on, hide all editor chrome that wouldn't appear
    *  in the export (grid, center guides, IG safe area, seamless-slide
    *  dotted dividers, upscale-warning badges). Transient view state; not
@@ -245,6 +262,7 @@ interface TiovivoState {
   setSlideRows: (n: number) => void
   setShowHiddenZone: (v: boolean) => void
   setShowIgSafeArea: (v: boolean) => void
+  setSafeAreaPlatform: (p: SafeAreaPlatform) => void
   setPreviewMode: (v: boolean) => void
   setShowGrid: (v: boolean) => void
   setGridSize: (n: number) => void
@@ -258,6 +276,8 @@ interface TiovivoState {
   setSlideBgColor: (slideId: string, color: string) => void
   /** Set the user-supplied name for a slide. Empty / whitespace clears it. */
   setSlideName: (slideId: string, name: string) => void
+  /** Seconds the slide holds in the one-video export; null = automatic. */
+  setSlideDuration: (slideId: string, seconds: number | null) => void
   setAllSlidesBgColor: (color: string) => void
   setWorkspaceBgColor: (color: string) => void
   /** Replace one slide's vibe (or clear it with null). */
@@ -314,6 +334,7 @@ export interface GuideSettings {
   seamlessSlides: boolean
   showHiddenZone: boolean
   showIgSafeArea: boolean
+  safeAreaPlatform?: SafeAreaPlatform
   marginPct: number
   snapGrid: boolean
   snapCenter: boolean
@@ -455,6 +476,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   })(),
   showHiddenZone: true,
   showIgSafeArea: false,
+  safeAreaPlatform: 'instagram',
   previewMode: false,
   snapGrid: false,
   snapCenter: true,
@@ -968,6 +990,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   },
   setShowHiddenZone: (v) => set({ showHiddenZone: v, ...dirtied() }),
   setShowIgSafeArea: (v) => set({ showIgSafeArea: v, ...dirtied() }),
+  setSafeAreaPlatform: (p) => set({ safeAreaPlatform: p, ...dirtied() }),
   // Preview mode is a transient view toggle — does NOT mark the document
   // dirty since it doesn't change anything that's saved.
   setPreviewMode: (v) => set({ previewMode: v }),
@@ -998,6 +1021,21 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
         const { name: _drop, ...rest } = s
         void _drop
         return rest as Slide
+      }),
+    })
+  },
+
+  setSlideDuration: (slideId, seconds) => {
+    pushHistory('slideDuration:' + slideId)
+    set({
+      slides: get().slides.map((s) => {
+        if (s.id !== slideId) return s
+        if (seconds === null) {
+          const { duration: _d, ...rest } = s
+          void _d
+          return rest as Slide
+        }
+        return { ...s, duration: Math.max(0.5, Math.min(60, seconds)) }
       }),
     })
   },
@@ -1326,6 +1364,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       seamlessSlides: g.seamlessSlides ?? cur.seamlessSlides,
       showHiddenZone: g.showHiddenZone ?? cur.showHiddenZone,
       showIgSafeArea: g.showIgSafeArea ?? cur.showIgSafeArea,
+      safeAreaPlatform: g.safeAreaPlatform ?? cur.safeAreaPlatform,
       marginPct: g.marginPct ?? cur.marginPct,
       snapGrid: g.snapGrid ?? cur.snapGrid,
       snapCenter: g.snapCenter ?? cur.snapCenter,

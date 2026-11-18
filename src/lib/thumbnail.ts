@@ -2,6 +2,8 @@ import Konva from 'konva'
 import type { PlacedMedia, Slide } from '../store/useTiovivoStore'
 import type { Size } from './presets'
 import { renderBgVibe } from './bgVibe'
+import { plainText } from './effects'
+import { cursorPath } from './effectsCanvas'
 
 /** Give up on a video's seek after this long — Save awaits the project
  *  preview, so a video that never fires 'seeked' must not hang it. */
@@ -43,6 +45,18 @@ function shapeNode(item: PlacedMedia, ratio: number): Konva.Shape {
   const stroke = item.strokeColor || undefined
   const strokeWidth = (item.strokeWidth ?? 0) * ratio
   const base = { x: item.x * ratio, y: item.y * ratio, rotation: item.rotation }
+  if (kind === 'cursor') {
+    return new Konva.Shape({
+      ...base,
+      width: w,
+      height: h,
+      fill,
+      stroke,
+      strokeWidth,
+      lineJoin: 'round',
+      sceneFunc: (ctx, shape) => { cursorPath(ctx, shape.width(), shape.height()); ctx.fillStrokeShape(shape) },
+    })
+  }
   if (kind === 'ellipse') {
     return new Konva.Ellipse({
       ...base,
@@ -169,7 +183,7 @@ export async function generateThumbnail(
           if (item.fillMode) {
             const measure = (size: number) => {
               const n = new Konva.Text({
-                text: item.text || '',
+                text: plainText(item),
                 fontFamily: item.fontFamily || 'Inter',
                 fontSize: size,
                 fontStyle,
@@ -200,7 +214,7 @@ export async function generateThumbnail(
               width: item.width * ratio,
               height: item.fillMode ? item.height * ratio : undefined,
               rotation: item.rotation,
-              text: item.text || '',
+              text: plainText(item),
               fontFamily: item.fontFamily || 'Inter',
               fontSize: Math.max(1, baseFontSize * ratio),
               fontStyle,

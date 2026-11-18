@@ -133,9 +133,23 @@ The server is off by default, listens on `127.0.0.1` only, requires the key show
 ## 🎬 Reels and TikTok
 
 - **Export → One video** renders every slide in order as a single MP4, with a cut, fade or push between slides
-- Items can have an entrance (fade, rise, pop) and a start delay; slides can have a set time on screen. These only play in the one-video export.
+- Items can have an entrance (fade, rise, pop) and a start delay; slides can have a set time on screen. Entrances play in the one-video export and in the looping video of a slide that has effects.
 - **Export → Photos** writes a JPEG of every slide for TikTok photo mode; video slides give their cover frame
 - **View → Safe area** can show TikTok's interface instead of Instagram's (approximate proportions)
+
+## 💫 Effects
+
+Layers can move and glow on their own, so a slide animates without a baked video and every word stays editable. Select a layer and open **Effects** in the selection panel; **▶** in the header plays every slide's effects in the editor.
+
+- **Glow** — a halo in the layer's colour, steady or breathing
+- **Pulse**, **Drift** — a brief swell; a slow float
+- **Shimmer** — a band of light that sweeps across the layer's own shape (text, shapes, images)
+- **Show briefly** — a callout that fades in, holds and fades out
+- **Accent words** — give a text layer an accent colour, then click words (or wrap them in `*asterisks*`) to draw them in it
+- **Highlight in turn**, **Reveal line by line** — light the accent words one after another; bring paragraphs up from dim in order
+- **Pointer** — a shape that glides in from an offset and clicks
+
+Each effect has speed, strength and start delay; offset the delays to run layers in sequence. A slide with moving effects exports as a looping MP4 (six seconds unless something needs longer, or the slide's set time); photo exports show it at rest. Agents set the same things through the `effects` and `accentColor` item fields.
 
 ---
 

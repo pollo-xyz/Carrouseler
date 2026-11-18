@@ -5,6 +5,7 @@
 import { useTiovivoStore } from '../store/useTiovivoStore'
 import type { PlacedMedia, ShapeKind, Slide } from '../store/useTiovivoStore'
 import { PRESETS } from './presets'
+import { mergeEffects, parseEffects } from './effects'
 import type { PresetId } from './presets'
 import { NAMED_PALETTES, defaultBgVibe, randomSeed } from './bgVibe'
 import type { BgVibe } from './bgVibe'
@@ -44,7 +45,7 @@ const COMMON: Record<string, FieldKind> = {
 }
 const TEXT: Record<string, FieldKind> = {
   text: 's', fontFamily: 's', fontSize: 'n', bold: 'b', italic: 'b', textColor: 's', textAlign: 's',
-  lineHeight: 'n', letterSpacing: 'n', fillMode: 'b',
+  lineHeight: 'n', letterSpacing: 'n', fillMode: 'b', accentColor: 's',
   shadowEnabled: 'b', shadowColor: 's', shadowBlur: 'n', shadowOffsetX: 'n', shadowOffsetY: 'n', shadowOpacity: 'n',
   textBgColor: 's', textBgPadding: 'n', textBgCornerRadius: 'n', textBgOpacity: 'n',
 }
@@ -56,7 +57,7 @@ const MEDIA: Record<string, FieldKind> = {
 }
 const ENUMS: Record<string, string[]> = {
   textAlign: ['left', 'center', 'right', 'justify'],
-  shapeKind: ['rect', 'ellipse', 'line'],
+  shapeKind: ['rect', 'ellipse', 'line', 'cursor'],
   animIn: ['none', 'fade', 'rise', 'pop'],
 }
 /** Keys of a new-item spec that aren't item fields. */
@@ -71,14 +72,22 @@ function fieldsFor(type: PlacedMedia['type']): Record<string, FieldKind> {
 /** Validate an agent-supplied field bag into a store patch. Unknown or
  *  mistyped fields are errors, not silently dropped — the model can only
  *  correct what it's told about. */
-function toPatch(spec: Args, type: PlacedMedia['type'], skip: Set<string>): Partial<PlacedMedia> {
+function toPatch(spec: Args, type: PlacedMedia['type'], skip: Set<string>, existing?: PlacedMedia): Partial<PlacedMedia> {
   const allowed = fieldsFor(type)
   const patch: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(spec)) {
     if (skip.has(key) || value === undefined) continue
+    if (key === 'effects') {
+      // Kinds given replace those kinds (null removes one); the rest stay.
+      const shapeKind = type === 'shape'
+        ? ((typeof spec.shapeKind === 'string' ? spec.shapeKind : existing?.shapeKind) ?? 'rect')
+        : undefined
+      patch.effects = mergeEffects(existing?.effects, parseEffects(value, { type, shapeKind }))
+      continue
+    }
     const kind = allowed[key]
     if (!kind) {
-      throw new Error(`"${key}" is not a field of ${type} items. Fields: ${Object.keys(allowed).join(', ')}.`)
+      throw new Error(`"${key}" is not a field of ${type} items. Fields: ${Object.keys(allowed).join(', ')}, effects.`)
     }
     const ok =
       kind === 'n' ? typeof value === 'number' && Number.isFinite(value)
@@ -129,6 +138,7 @@ function describeItem(it: PlacedMedia) {
   if (it.rotation) out.rotation = round(it.rotation)
   if (it.appearsOnAllSlides) out.appearsOnAllSlides = true
   if (it.animIn && it.animIn !== 'none') Object.assign(out, { animIn: it.animIn, animDelay: it.animDelay ?? 0 })
+  if (it.effects && Object.keys(it.effects).length) out.effects = it.effects
   if (it.type === 'text') {
     Object.assign(out, {
       text: it.text, fontFamily: it.fontFamily, fontSize: it.fontSize, textColor: it.textColor,
@@ -139,6 +149,7 @@ function describeItem(it: PlacedMedia) {
     if (it.letterSpacing) out.letterSpacing = it.letterSpacing
     if (it.fillMode) out.fillMode = true
     if (it.textBgColor) out.textBgColor = it.textBgColor
+    if (it.accentColor) out.accentColor = it.accentColor
   } else if (it.type === 'shape') {
     Object.assign(out, { shapeKind: it.shapeKind, fillColor: it.fillColor })
     if (it.strokeWidth) Object.assign(out, { strokeColor: it.strokeColor, strokeWidth: it.strokeWidth })
@@ -456,7 +467,7 @@ export async function runMcpTool(
       const patches = (args.updates as Args[]).map((u) => {
         const item = st.items.find((i) => i.id === u?.id)
         if (!item) throw new Error(`No item with id "${String(u?.id)}". Call get_project for current ids.`)
-        const patch = toPatch(u, item.type, skip)
+        const patch = toPatch(u, item.type, skip, item)
         if (u.slide !== undefined) patch.slideId = resolveSlide(u.slide).id
         return { id: item.id, patch }
       })

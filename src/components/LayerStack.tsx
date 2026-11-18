@@ -1,3 +1,4 @@
+import { plainText } from '../lib/effects'
 import { useMemo } from 'react'
 import {
   DndContext,
@@ -59,7 +60,7 @@ function LayerRow({
           // Shapes have no bitmap (src is '') — an <img> would show a
           // broken-image glyph.
           <span className="layer-stack__text-icon" aria-hidden>
-            {item.shapeKind === 'ellipse' ? '◯' : item.shapeKind === 'line' ? '─' : '▭'}
+            {item.shapeKind === 'ellipse' ? '◯' : item.shapeKind === 'line' ? '─' : item.shapeKind === 'cursor' ? '➤' : '▭'}
           </span>
         ) : (
           <img
@@ -71,9 +72,9 @@ function LayerRow({
       </div>
       <span
         className="layer-stack__name"
-        title={item.type === 'text' ? (item.text || item.name) : item.name}
+        title={item.type === 'text' ? (plainText(item) || item.name) : item.name}
       >
-        {item.type === 'text' ? (item.text || 'Text') : item.name}
+        {item.type === 'text' ? (plainText(item) || 'Text') : item.name}
       </span>
     </div>
   )

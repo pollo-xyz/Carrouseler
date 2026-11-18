@@ -7,15 +7,20 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Arc, Circle, Ellipse, Group, Layer, Line, Rect, Stage, Transformer } from 'react-konva'
+import { Arc, Circle, Ellipse, Group, Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva'
 import Konva from 'konva'
 import { Image as KonvaImage, Text as KonvaText } from 'react-konva'
 import { useTiovivoStore, type PlacedMedia, type Slide } from '../store/useTiovivoStore'
 import { useThemeStore, resolveWorkspaceBg, type ThemeName } from '../lib/theme'
 import { snapPosition, snapResize, type GuideLine } from '../lib/snapping'
-import { createGifAnimator, type GifAnimator } from '../lib/gifAnimator'
+import { createGifAnimator, setGifTimeScale, type GifAnimator } from '../lib/gifAnimator'
+import { createExportPace, mountVideosForCapture, seekVideo, type ExportPace } from '../lib/exportPace'
 import { coverImageElements, videoElements } from '../lib/videoRegistry'
 import { bgVibeHash, renderBgVibe, type BgVibe } from '../lib/bgVibe'
+import { glowShadow, hasEntrance, hasMotion, loopSeconds, plainText } from '../lib/effects'
+import {
+  clearEffectCaches, cursorPath, drawFx, drawRichText, needsFxOverlay, poseSlideAt, richSpecOf,
+} from '../lib/effectsCanvas'
 import LayerStack from './LayerStack'
 import { Neaticon } from './Neaticon'
 
@@ -124,6 +129,11 @@ type MediaTickFn = () => Konva.Layer | null | undefined
 const mediaTickSubs = new Set<MediaTickFn>()
 let mediaTickRaf: number | null = null
 let mediaTicks = 0
+/* >0 while a capture owns the stage. Subscribers still run (filtered videos
+   re-cache their current frame for the capture to read), but the on-screen
+   repaint is skipped: the export veil covers it, and repainting the whole
+   content layer every frame took time the capture needs. */
+let mediaTickDrawHold = 0
 function mediaTickLoop() {
   mediaTicks++
   const layers = new Set<Konva.Layer>()
@@ -131,7 +141,7 @@ function mediaTickLoop() {
     const layer = fn()
     if (layer) layers.add(layer)
   })
-  layers.forEach((l) => l.draw())
+  if (mediaTickDrawHold === 0) layers.forEach((l) => l.draw())
   mediaTickRaf = mediaTickSubs.size > 0 ? requestAnimationFrame(mediaTickLoop) : null
 }
 function subscribeMediaTick(fn: MediaTickFn): () => void {
@@ -406,6 +416,23 @@ function useCorrectionFilters(item: PlacedMedia) {
   return { filters, hasFilters, blurAmount }
 }
 
+/** Shadow props that draw an item's resting glow (lib/effects). Spread after
+ *  any drop-shadow props: a glow takes the shadow over. */
+function glowProps(item: PlacedMedia) {
+  const g = glowShadow(item)
+  if (!g) return {}
+  return { shadowColor: g.color, shadowBlur: g.blur, shadowOpacity: g.opacity, shadowOffsetX: 0, shadowOffsetY: 0 }
+}
+
+/** The node an item's light band and click ring are drawn on, right above
+ *  the item. It draws nothing until a pose gives it something. */
+function FxOverlay({ item }: { item: PlacedMedia }) {
+  const id = item.id
+  const sceneFunc = useCallback((ctx: Konva.Context) => drawFx(ctx, id), [id])
+  if (!needsFxOverlay(item)) return null
+  return <Shape id={`fx-${id}`} listening={false} perfectDrawEnabled={false} sceneFunc={sceneFunc} />
+}
+
 /* ------------------------------------------------------------------ */
 /*  MediaItemView                                                     */
 /* ------------------------------------------------------------------ */
@@ -531,6 +558,7 @@ function MediaItemView({
   const flipped = !!item.flipX && !isCropping
   const flippedY = !!item.flipY && !isCropping
   return (
+    <>
     <KonvaImage
       ref={shapeRef}
       id={`media-${item.id}`}
@@ -550,6 +578,7 @@ function MediaItemView({
       brightness={item.brightness}
       contrast={item.contrast}
       blurRadius={blurAmount}
+      {...glowProps(item)}
       onClick={(e) => {
         e.cancelBubble = true
         if (isCropping) return
@@ -589,6 +618,8 @@ function MediaItemView({
         })
       }}
     />
+    {!isCropping && <FxOverlay item={item} />}
+    </>
   )
 }
 
@@ -796,7 +827,7 @@ function fitBalancedWrap(opts: {
 }
 
 type TextLayoutInput = Pick<PlacedMedia,
-  'fillMode' | 'text' | 'fontFamily' | 'fontSize' | 'bold' | 'italic' |
+  'fillMode' | 'text' | 'accentColor' | 'fontFamily' | 'fontSize' | 'bold' | 'italic' |
   'width' | 'height' | 'lineHeight' | 'letterSpacing'>
 
 /**
@@ -807,7 +838,8 @@ type TextLayoutInput = Pick<PlacedMedia,
  * the inline editor so all three agree on the size.
  */
 function textLayout(t: TextLayoutInput): { fontSize: number; text: string; balanced: boolean } {
-  const text = t.text || ''
+  // Accent markers are styling, not characters: never measured or drawn.
+  const text = plainText(t)
   if (!t.fillMode) return { fontSize: t.fontSize || 64, text, balanced: false }
   const opts = {
     text,
@@ -873,13 +905,20 @@ function TextItemView({
   // breaks (we don't want to override their intent), when there's only one
   // word, or when the algorithm declines (degenerate input). Konva draws the
   // balanced result's pre-broken text verbatim (wrap="none").
-  const { text: rawText, fontFamily, fontSize, bold, italic, width, height } = item
+  const { text: rawText, accentColor, fontFamily, fontSize, bold, italic, width, height } = item
   const layout = useMemo(
     () => textLayout({
-      fillMode, text: rawText, fontFamily, fontSize, bold, italic, width, height,
+      fillMode, text: rawText, accentColor, fontFamily, fontSize, bold, italic, width, height,
       lineHeight, letterSpacing,
     }),
-    [fillMode, rawText, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing],
+    [fillMode, rawText, accentColor, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing],
+  )
+  // Accent words and text effects are drawn by our own scene function; plain
+  // text stays on Konva's.
+  const rich = richSpecOf(item)
+  const richScene = useMemo(
+    () => (rich ? (ctx: Konva.Context, shape: Konva.Shape) => drawRichText(ctx, shape as Konva.Text, rich, item.id) : undefined),
+    [rich, item.id],
   )
   const renderedFontSize = layout.fontSize
   const renderedText = layout.text
@@ -897,7 +936,7 @@ function TextItemView({
     if (measured > 0 && Math.abs(measured - item.height) > 1) {
       syncItemMeasurements(item.id, { height: measured })
     }
-  }, [fillMode, item.id, item.text, item.fontFamily, item.fontSize, item.bold,
+  }, [fillMode, item.id, item.text, item.accentColor, item.fontFamily, item.fontSize, item.bold,
       item.italic, item.textAlign, item.lineHeight, item.letterSpacing,
       item.width, item.height, syncItemMeasurements])
 
@@ -965,7 +1004,9 @@ function TextItemView({
       lineHeight={lineHeight}
       letterSpacing={letterSpacing}
       {...shadowProps}
+      {...glowProps(item)}
       {...strokeProps}
+      sceneFunc={richScene}
       // When we've pre-broken the text via balanced wrap, ask Konva to honour
       // those breaks verbatim rather than re-wrapping greedily on top of them.
       wrap={layout.balanced ? 'none' : 'word'}
@@ -1030,8 +1071,15 @@ function TextItemView({
         }
       }}
     />
+    {!isEditing && <FxOverlay item={item} />}
     </>
   )
+}
+
+/** Scene function of a pointer shape: the arrow, sized to the node's box. */
+function cursorScene(ctx: Konva.Context, shape: Konva.Shape) {
+  cursorPath(ctx, shape.width(), shape.height())
+  ctx.fillStrokeShape(shape)
 }
 
 /* ------------------------------------------------------------------ */
@@ -1065,6 +1113,7 @@ function ShapeItemView({
     rotation: item.rotation,
     draggable: true,
     perfectDrawEnabled: false,
+    ...glowProps(item),
     onClick: (e: Konva.KonvaEventObject<MouseEvent>) => {
       e.cancelBubble = true
       const ev = e.evt as MouseEvent | undefined
@@ -1103,6 +1152,25 @@ function ShapeItemView({
     },
   }
 
+  if (kind === 'cursor') {
+    return (
+      <>
+        <Shape
+          {...common}
+          x={item.x}
+          y={item.y}
+          width={item.width}
+          height={item.height}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          lineJoin="round"
+          sceneFunc={cursorScene}
+        />
+        <FxOverlay item={item} />
+      </>
+    )
+  }
   if (kind === 'ellipse') {
     // Konva.Ellipse is centred on (x, y), but our item coordinates describe
     // the top-left corner of the bounding box like every other item type.
@@ -1110,6 +1178,7 @@ function ShapeItemView({
     // top-left directly (and writes it back the same way), then push the
     // visual centre into place via a negative offset.
     return (
+      <>
       <Ellipse
         {...common}
         x={item.x}
@@ -1123,6 +1192,8 @@ function ShapeItemView({
         strokeWidth={strokeWidth}
         strokeScaleEnabled={false}
       />
+      <FxOverlay item={item} />
+      </>
     )
   }
   if (kind === 'line') {
@@ -1131,6 +1202,7 @@ function ShapeItemView({
     // centring into `points` so drag handlers don't need to subtract h/2.
     const yMid = item.height / 2
     return (
+      <>
       <Line
         {...common}
         x={item.x}
@@ -1141,10 +1213,13 @@ function ShapeItemView({
         lineCap="round"
         strokeScaleEnabled={false}
       />
+      <FxOverlay item={item} />
+      </>
     )
   }
   // Rectangle (default)
   return (
+    <>
     <Rect
       {...common}
       x={item.x}
@@ -1157,6 +1232,8 @@ function ShapeItemView({
       strokeScaleEnabled={false}
       cornerRadius={item.cornerRadius ?? 0}
     />
+    <FxOverlay item={item} />
+    </>
   )
 }
 
@@ -1194,10 +1271,16 @@ function MasterGhost({ item, slideId, chromeColor }: { item: PlacedMedia; slideI
   }, [media, applyFilters, item.brightness, item.contrast, item.saturation, item.blur,
       item.width, item.height, item.cropX, item.cropY, item.cropW, item.cropH])
   // Text ghosts draw the same fitted size / balanced breaks as the home copy.
-  const { fillMode, text, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing } = item
+  const { fillMode, text, accentColor, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing } = item
   const layout = useMemo(
-    () => textLayout({ fillMode, text, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing }),
-    [fillMode, text, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing],
+    () => textLayout({ fillMode, text, accentColor, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing }),
+    [fillMode, text, accentColor, fontFamily, fontSize, bold, italic, width, height, lineHeight, letterSpacing],
+  )
+  // Copies show effects at rest: accents lit, glow on, nothing moving.
+  const rich = richSpecOf(item)
+  const richScene = useMemo(
+    () => (rich ? (ctx: Konva.Context, shape: Konva.Shape) => drawRichText(ctx, shape as Konva.Text, rich, ghostId) : undefined),
+    [rich, ghostId],
   )
   const common = {
     id: ghostId,
@@ -1262,7 +1345,9 @@ function MasterGhost({ item, slideId, chromeColor }: { item: PlacedMedia; slideI
           lineHeight={item.lineHeight ?? 1.15}
           letterSpacing={item.letterSpacing ?? 0}
           {...shadowProps}
+          {...glowProps(item)}
           {...strokeProps}
+          sceneFunc={richScene}
           wrap={layout.balanced ? 'none' : 'word'}
         />
       </>
@@ -1273,6 +1358,24 @@ function MasterGhost({ item, slideId, chromeColor }: { item: PlacedMedia; slideI
     const stroke = item.strokeColor || undefined
     const strokeWidth = item.strokeWidth ?? 0
     const kind = item.shapeKind ?? 'rect'
+    if (kind === 'cursor') {
+      return (
+        <Shape
+          {...common}
+          {...glowProps(item)}
+          x={item.x}
+          y={item.y}
+          width={item.width}
+          height={item.height}
+          rotation={item.rotation}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          lineJoin="round"
+          sceneFunc={cursorScene}
+        />
+      )
+    }
     if (kind === 'ellipse') {
       return (
         <Ellipse
@@ -2368,6 +2471,10 @@ const EditorStage = forwardRef<
   const stageRef = useRef<Konva.Stage>(null)
   const bgLayerRef = useRef<Konva.Layer>(null)
   const guidesLayerRef = useRef<Konva.Layer>(null)
+  const contentLayerRef = useRef<Konva.Layer>(null)
+  /** >0 while an export or pixel sample has the stage; the effects preview
+   *  stands down so it never poses a frame the capture is posing itself. */
+  const captureDepthRef = useRef(0)
   const snapGuidesLayerRef = useRef<Konva.Layer>(null)
   const veilLayerRef = useRef<Konva.Layer>(null)
   const overlayLayerRef = useRef<Konva.Layer>(null)
@@ -2423,6 +2530,7 @@ const EditorStage = forwardRef<
   const showIgSafeArea = useTiovivoStore((s) => s.showIgSafeArea)
   const safeAreaPlatform = useTiovivoStore((s) => s.safeAreaPlatform)
   const previewMode = useTiovivoStore((s) => s.previewMode)
+  const playing = useTiovivoStore((s) => s.playing)
   const snapGrid = useTiovivoStore((s) => s.snapGrid)
   const snapCenter = useTiovivoStore((s) => s.snapCenter)
   const snapItems = useTiovivoStore((s) => s.snapItems)
@@ -3177,8 +3285,61 @@ const EditorStage = forwardRef<
       hide(r.current)
     }
     stageRef.current?.find(`.${EDITOR_CHROME}`).forEach(hide)
-    return () => hidden.forEach((n) => n.show())
+    captureDepthRef.current++
+    mediaTickDrawHold++
+    let restored = false
+    return () => {
+      if (restored) return
+      restored = true
+      captureDepthRef.current--
+      mediaTickDrawHold--
+      hidden.forEach((n) => n.show())
+    }
   }, [])
+
+  /* ---- effects preview ----
+   * While playing, every slide with motion is posed for the current instant
+   * of its own loop and the content layer redrawn. Each frame first undoes
+   * the last one, so the nodes are only ever one pose away from what React
+   * rendered, and a drag or resize simply pauses the motion. */
+  useEffect(() => {
+    if (!playing) return
+    const t0 = performance.now()
+    let undo: (() => void) | null = null
+    let raf = 0
+    const tick = () => {
+      raf = requestAnimationFrame(tick)
+      const stage = stageRef.current
+      const layer = contentLayerRef.current
+      if (!stage || !layer) return
+      undo?.()
+      undo = null
+      if (captureDepthRef.current > 0) return
+      if (!Konva.DD.isDragging && !trRef.current?.isTransforming()) {
+        const st = useTiovivoStore.getState()
+        const t = (performance.now() - t0) / 1000
+        const undos: (() => void)[] = []
+        for (const slide of st.slides) {
+          const own = st.items.filter((i) => i.slideId === slide.id)
+          if (!own.some((i) => hasMotion(i) || hasEntrance(i))) continue
+          const loop = slide.duration ?? loopSeconds(own)
+          undos.push(poseSlideAt(stage, own, loop > 0 ? t % loop : t, st.dimensions.height))
+        }
+        undo = () => { for (const u of undos) u() }
+      }
+      layer.draw()
+    }
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      undo?.()
+      contentLayerRef.current?.draw()
+    }
+  }, [playing])
+
+  // A replaced or emptied document leaves nothing for cached masks to match.
+  const itemCount = items.length
+  useEffect(() => { if (itemCount === 0) clearEffectCaches() }, [itemCount])
 
   /* ---- pixel inspector ---- */
   const LOUPE_SRC = 11 // pixels sampled from artboard
@@ -3404,7 +3565,10 @@ const EditorStage = forwardRef<
       const slideGifItems = st.items.filter((i) =>
         i.type === 'gif' && (i.slideId === slideId || (i.appearsOnAllSlides && i.slideId !== slideId)),
       )
-      if (!slideVideoItems.length && !slideGifItems.length) return null
+      // A slide whose only movement is its effects exports as a loop too.
+      const ownItems = st.items.filter((i) => i.slideId === slideId)
+      const motion = ownItems.some(hasMotion)
+      if (!slideVideoItems.length && !slideGifItems.length && !motion) return null
 
       // Get the video elements and determine max duration (respecting trim)
       type VEntry = {
@@ -3432,7 +3596,13 @@ const EditorStage = forwardRef<
         const dur = gi.gifDuration ?? 5
         if (dur > maxDuration) maxDuration = dur
       }
+      // Without a video to set the length, effects loop for the slide's set
+      // time, or for long enough to hold whole cycles.
+      if (videoEls.length === 0 && motion) {
+        maxDuration = st.slides[idx]!.duration ?? Math.max(maxDuration, loopSeconds(ownItems))
+      }
       if (maxDuration <= 0 || !isFinite(maxDuration)) return null
+      const paced = slideGifItems.length > 0
 
       // GIF-only path. Browsers animate GIFs autonomously inside their
       // HTMLImageElement, so there's nothing to seek — we just let wall-
@@ -3453,20 +3623,33 @@ const EditorStage = forwardRef<
           const ps = stage.scaleX(), pp = stage.position()
           stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
           const restoreChrome = hideChromeForCapture()
+          // GIFs run on their own clock, slowed until each capture keeps up
+          // (lib/exportPace); effects alone are posed exactly, as fast as
+          // frames encode.
+          const pace = paced ? createExportPace(fps, { onRate: setGifTimeScale }) : null
           try {
-            const startMs = performance.now()
             let pendingWrite: Promise<void> = Promise.resolve()
             let lastPreviewAt = -Infinity
             for (let i = 0; i < totalFrames; i++) {
-              const targetMs = (i / fps) * 1000
-              const waitMs = startMs + targetMs - performance.now()
-              if (waitMs > 0) await new Promise<void>((r) => setTimeout(r, waitMs))
-              stage.draw()
-              const canvas = stage.toCanvas({ x: ap.x, y: ap.y, width: W, height: H, pixelRatio: 1 })
+              if (pace) {
+                await pace.waitUntil((i / fps) * 1000)
+              } else if (i % 6 === 0) {
+                await new Promise<void>((r) => setTimeout(r, 0))
+              }
+              const t0 = performance.now()
+              const unpose = poseSlideAt(stage, ownItems, i / fps, H)
+              let canvas: HTMLCanvasElement
+              try {
+                // toCanvas renders every layer afresh: no stage.draw() needed.
+                canvas = stage.toCanvas({ x: ap.x, y: ap.y, width: W, height: H, pixelRatio: 1 })
+              } finally {
+                unpose()
+              }
               const ctx = canvas.getContext('2d')!
               const frameData = new Uint8Array(ctx.getImageData(0, 0, W, H).data.buffer)
               await pendingWrite
               pendingWrite = window.electronAPI.videoFrame({ sessionId, frameData })
+              pace?.record(performance.now() - t0)
               onProgress?.(((i + 1) / totalFrames) * 100)
               // Throttle preview to ~2 fps.
               const now = performance.now()
@@ -3479,6 +3662,7 @@ const EditorStage = forwardRef<
             const result = await window.electronAPI.endVideoEncode({ sessionId })
             return result
           } finally {
+            pace?.dispose()
             restoreChrome()
             stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
           }
@@ -3506,6 +3690,7 @@ const EditorStage = forwardRef<
         el.loop = false
         trimLoopSuspended.add(el)
       }
+      const unmountVideos = mountVideosForCapture(videoEls.map((v) => v.el))
 
       const sessionId = crypto.randomUUID()
       // frame 0 = cover frame; frames 1..N = full video from start
@@ -3515,6 +3700,7 @@ const EditorStage = forwardRef<
       // layers, cover-image swaps) on EVERY exit path — a failed export used
       // to leave the editor at 100% with its guides gone.
       let restoreStage: (() => void) | null = null
+      let pace: ExportPace | null = null
       const coverSwaps: { node: Konva.Image; original: CanvasImageSource }[] = []
       const restoreCovers = () => {
         for (const { node, original } of coverSwaps.splice(0)) {
@@ -3549,29 +3735,30 @@ const EditorStage = forwardRef<
         }
 
         // ---- Playback-driven capture ----
-        // Old approach seeked every video every frame (~80-150 ms per seek
-        // on healthy h264). New approach plays the videos at native rate
-        // and samples frames in real time. Cuts per-frame overhead down to
-        // just draw + readPixels + IPC (~30-50 ms), typically 2-3× faster
-        // overall.
-        //
-        // Assumption: source video fps ≥ target output fps. For 30 fps
-        // sources at 30 fps target this is exact. For 60 fps source the
-        // sampler skips half the callbacks. For source fps < target (e.g.
-        // 24 fps), the output will be slightly shorter than the source —
-        // acceptable for the carousel use case; could fall back to the
-        // seek loop later if needed.
+        // Seeking every video every frame costs ~80-150 ms per seek on
+        // healthy h264. Instead the videos play and are sampled as the
+        // master crosses each frame boundary. A capture (pose + render +
+        // readPixels + IPC) usually takes longer than a frame lasts, so
+        // playback is slowed to a rate the capture keeps up with
+        // (lib/exportPace): every output frame shows its own video frame.
 
         let pendingWrite: Promise<void> = Promise.resolve()
         let framesSent = 0
 
-        const captureFrame = (): { frameData: Uint8Array; canvas: HTMLCanvasElement } => {
-          stage.draw()
-          const canvas = stage.toCanvas({
-            x: ap.x, y: ap.y,
-            width: W, height: H,
-            pixelRatio: 1,
-          })
+        const captureFrame = (tau?: number): { frameData: Uint8Array; canvas: HTMLCanvasElement } => {
+          // Effects follow the master video's clock; the cover frame is at rest.
+          const unpose = tau === undefined ? null : poseSlideAt(stage, ownItems, tau, H)
+          let canvas: HTMLCanvasElement
+          try {
+            // toCanvas renders every layer afresh: no stage.draw() needed.
+            canvas = stage.toCanvas({
+              x: ap.x, y: ap.y,
+              width: W, height: H,
+              pixelRatio: 1,
+            })
+          } finally {
+            unpose?.()
+          }
           const ctx = canvas.getContext('2d')!
           const imageData = ctx.getImageData(0, 0, W, H)
           return { frameData: new Uint8Array(imageData.data.buffer), canvas }
@@ -3672,7 +3859,12 @@ const EditorStage = forwardRef<
         }))
         await new Promise<void>((r) => requestAnimationFrame(() => r()))
         {
+          const t0 = performance.now()
           const captured = captureFrame()
+          // The cover's capture cost sets the starting playback rate; twice
+          // it, since each playback frame also waits on the previous one's
+          // hand-off to ffmpeg.
+          pace = createExportPace(fps, { initialCostMs: (performance.now() - t0) * 2, onRate: setGifTimeScale })
           await sendFrame(captured.frameData)
           // Emit the cover frame as the first preview so the user
           // immediately sees content rather than the frozen pre-export
@@ -3699,8 +3891,9 @@ const EditorStage = forwardRef<
         // preview; only the master (which ends the capture) stays suspended.
         for (const { el } of videoEls) if (el !== master.el) trimLoopSuspended.delete(el)
 
+        const clock = pace as ExportPace
         for (const { el } of videoEls) {
-          el.playbackRate = 1
+          clock.addVideo(el)
           el.muted = true
           try {
             const p = el.play()
@@ -3711,11 +3904,10 @@ const EditorStage = forwardRef<
         }
 
         // Main playback loop. We sample at evenly-spaced video-time
-        // intervals (1 / fps), backpressure-gated on the IPC pipeline:
-        // if a send is still in flight when the next interval comes due,
-        // skip the capture and let the master move on. The output is
-        // slightly fewer frames than expected in that pathological case,
-        // but the wall-clock pacing stays correct.
+        // intervals (1 / fps), one capture in flight at a time. The pace
+        // keeps the master slow enough that each slot gets its own capture;
+        // a slot that is missed anyway repeats the late frame (so the
+        // video keeps its length) and slows the pace at once.
         const frameInterval = 1 / fps
         await new Promise<void>((resolve, reject) => {
           let stopping = false
@@ -3735,18 +3927,42 @@ const EditorStage = forwardRef<
           const tick = () => {
             if (stopping) return
             const videoTime = master.el.currentTime
-            if (videoTime >= master.trimEnd - 1e-3 || framesSent >= totalFrames) {
-              stop()
+            const atEnd = videoTime >= master.trimEnd - 1e-3
+            if (atEnd || framesSent >= totalFrames) {
+              // Let the last capture's sends land first.
+              if (inFlight) { requestAnimationFrame(tick); return }
+              // The final slot can fall after the last tick before the end:
+              // it gets the end frame, so the clip keeps its full length.
+              const left = Math.min(2, totalFrames - framesSent)
+              if (atEnd && left > 0) {
+                inFlight = true
+                const captured = captureFrame(Math.max(0, videoTime - master.trimStart))
+                ;(async () => { for (let s = 0; s < left; s++) await sendFrame(captured.frameData) })()
+                  .then(() => stop())
+                  .catch((err) => stop(err))
+              } else {
+                stop()
+              }
               return
             }
             // Master crossed the next emission slot? Capture, send, advance.
             // The inFlight gate prevents queue buildup if IPC is slow.
             if (!inFlight && videoTime >= nextEmitVideoTime) {
-              nextEmitVideoTime += frameInterval
+              const slots = Math.min(
+                1 + Math.floor((videoTime - nextEmitVideoTime) / frameInterval),
+                Math.max(1, totalFrames - framesSent),
+              )
+              clock.missed(slots)
+              nextEmitVideoTime += slots * frameInterval
               inFlight = true
-              const captured = captureFrame()
-              sendFrame(captured.frameData)
-                .then(() => { inFlight = false })
+              const t0 = performance.now()
+              const captured = captureFrame(Math.max(0, videoTime - master.trimStart))
+              ;(async () => { for (let s = 0; s < slots; s++) await sendFrame(captured.frameData) })()
+                .then(() => {
+                  inFlight = false
+                  // Repeats are the exception; time a capture by its own cost.
+                  if (slots === 1) clock.record(performance.now() - t0)
+                })
                 .catch((err) => stop(err))
               maybeEmitPreview(captured.canvas)
             }
@@ -3771,14 +3987,15 @@ const EditorStage = forwardRef<
       } finally {
         restoreCovers()
         // Narrowed to never by TS's control-flow analysis of the callback
-        // assignment — re-read through a cast.
+        // assignments — re-read through casts.
         ;(restoreStage as (() => void) | null)?.()
-        // Restore video playback
+        ;(pace as ExportPace | null)?.dispose()
+        // Restore video playback (the unmount resumes it).
         for (const { el } of videoEls) {
           trimLoopSuspended.delete(el)
           el.loop = true
-          el.play().catch(() => {})
         }
+        unmountVideos()
       }
     },
     [artboardPositions, W, H, hideChromeForCapture],
@@ -3863,7 +4080,7 @@ const EditorStage = forwardRef<
             .filter((v): v is { item: PlacedMedia; el: HTMLVideoElement } => !!v.el)
           const gifs = st.items.filter((i) =>
             i.type === 'gif' && (i.slideId === slide.id || i.appearsOnAllSlides))
-          const animated = own.filter((i) => i.animIn && i.animIn !== 'none' && !i.appearsOnAllSlides)
+          const animated = own.filter(hasEntrance)
           let auto = 3
           for (const { item, el } of videos) {
             const end = item.trimEnd && item.trimEnd > 0 ? Math.min(item.trimEnd, el.duration) : el.duration
@@ -3873,51 +4090,46 @@ const EditorStage = forwardRef<
           for (const g of gifs) auto = Math.max(auto, g.gifDuration ?? 5)
           // Leave time to read what arrived last.
           for (const a of animated) auto = Math.max(auto, (a.animDelay ?? 0) + ENTRANCE + 1.5)
-          return { slide, ap, videos, animated, live: videos.length > 0 || gifs.length > 0, seconds: slide.duration ?? auto }
+          // …and for effects to play through.
+          auto = Math.max(auto, loopSeconds(own))
+          return { slide, ap, own, videos, live: videos.length > 0 || gifs.length > 0, seconds: slide.duration ?? auto }
         })
       if (plans.length === 0) return null
       const totalFrames = plans.reduce((n, p) => n + Math.max(1, Math.ceil(p.seconds * fps)), 0)
       const realtime = plans.some((p) => p.live)
 
-      /** Pose a slide's animated items for `tau` seconds in; returns the undo. */
-      const pose = (plan: (typeof plans)[number], tau: number): (() => void) => {
-        const undo: (() => void)[] = []
-        for (const item of plan.animated) {
-          const p = Math.min(1, Math.max(0, (tau - (item.animDelay ?? 0)) / ENTRANCE))
-          if (p >= 1) continue
-          const e = 1 - Math.pow(1 - p, 3) // ease-out
-          const nodes = [stage.findOne(`#textbg-${item.id}`), stage.findOne(`#media-${item.id}`)]
-            .filter((n): n is Konva.Node => !!n)
-          for (const node of nodes) {
-            const before = { opacity: node.opacity(), x: node.x(), y: node.y(), sx: node.scaleX(), sy: node.scaleY() }
-            undo.push(() => {
-              node.opacity(before.opacity); node.position({ x: before.x, y: before.y }); node.scale({ x: before.sx, y: before.sy })
-            })
-            node.opacity(before.opacity * e)
-            if (item.animIn === 'rise') {
-              node.y(before.y + (1 - e) * H * 0.035)
-            } else if (item.animIn === 'pop') {
-              // Scale about the item's visual centre, whatever its rotation.
-              const k = 0.88 + 0.12 * e
-              const cx = item.x + item.width / 2
-              const cy = item.y + item.height / 2
-              node.scale({ x: before.sx * k, y: before.sy * k })
-              node.position({ x: before.x + (1 - k) * (cx - before.x), y: before.y + (1 - k) * (cy - before.y) })
-            }
-          }
-        }
-        return () => { for (const u of undo) u() }
-      }
+      /** Pose a slide for `tau` seconds in — entrances and effects alike; returns the undo. */
+      const pose = (plan: (typeof plans)[number], tau: number): (() => void) =>
+        poseSlideAt(stage, plan.own, tau, H)
 
       const sessionId = crypto.randomUUID()
       const ps = stage.scaleX(), pp = stage.position()
       let restoreChrome: (() => void) | null = null
+      let pace: ExportPace | null = null
+      const deckVideos = plans.flatMap((p) => p.videos.map((v) => v.el))
+      const unmountVideos = mountVideosForCapture(deckVideos)
       try {
         await api.startVideoEncode({
           sessionId, width: W, height: H, fps, duration: totalFrames / fps, outputPath,
         })
         stage.scale({ x: 1, y: 1 }); stage.position({ x: 0, y: 0 })
         restoreChrome = hideChromeForCapture()
+        if (realtime) {
+          // Video and GIFs play on their own clock, slowed until each
+          // capture keeps up (lib/exportPace). One trial capture sets the
+          // starting rate — twice its cost, as each frame also waits on the
+          // previous one's hand-off to ffmpeg.
+          const first = plans[0]!
+          const t0 = performance.now()
+          const unpose = pose(first, 0)
+          try {
+            stage.toCanvas({ x: first.ap.x, y: first.ap.y, width: W, height: H, pixelRatio: 1 })
+              .getContext('2d')!.getImageData(0, 0, 1, 1)
+          } finally {
+            unpose()
+          }
+          pace = createExportPace(fps, { initialCostMs: (performance.now() - t0) * 2, onRate: setGifTimeScale })
+        }
 
         const mix = document.createElement('canvas')
         mix.width = W; mix.height = H
@@ -3926,29 +4138,34 @@ const EditorStage = forwardRef<
         let pendingWrite: Promise<void> = Promise.resolve()
         let sent = 0
         let lastPreviewAt = -Infinity
-        const startMs = performance.now()
 
         for (const plan of plans) {
           const frames = Math.max(1, Math.ceil(plan.seconds * fps))
-          // Videos start from their trim-in as the slide comes on screen.
-          for (const { item, el } of plan.videos) {
-            el.muted = true
-            el.currentTime = item.trimStart || 0
-            el.play().catch(() => {})
+          // Videos start from their trim-in as the slide comes on screen —
+          // once the seek has landed, or the first frames show wherever the
+          // preview had got to.
+          if (plan.videos.length) {
+            for (const { el } of plan.videos) { el.muted = true; el.pause() }
+            await Promise.all(plan.videos.map(({ item, el }) => seekVideo(el, item.trimStart || 0)))
+            for (const { el } of plan.videos) {
+              pace?.addVideo(el)
+              el.play().catch(() => {})
+            }
+            pace?.resync((sent / fps) * 1000)
           }
           let shot: HTMLCanvasElement | null = null
           for (let fi = 0; fi < frames; fi++) {
             const tau = fi / fps
-            if (realtime) {
-              const wait = startMs + (sent / fps) * 1000 - performance.now()
-              if (wait > 0) await new Promise<void>((r) => setTimeout(r, wait))
+            if (pace) {
+              await pace.waitUntil((sent / fps) * 1000)
             } else if (fi % 6 === 0) {
               // Let the progress UI paint.
               await new Promise<void>((r) => setTimeout(r, 0))
             }
+            const t0 = performance.now()
             const unpose = pose(plan, tau)
             try {
-              stage.draw()
+              // toCanvas renders every layer afresh: no stage.draw() needed.
               shot = stage.toCanvas({ x: plan.ap.x, y: plan.ap.y, width: W, height: H, pixelRatio: 1 })
             } finally {
               unpose()
@@ -3985,6 +4202,7 @@ const EditorStage = forwardRef<
             }
             pendingWrite = api.videoFrame({ sessionId, frameData })
             sent++
+            pace?.record(performance.now() - t0)
             onProgress?.((sent / totalFrames) * 100)
             const now = performance.now()
             if (onPreviewFrame && now - lastPreviewAt > 500) {
@@ -3993,6 +4211,8 @@ const EditorStage = forwardRef<
             }
           }
           previous = shot
+          // Off screen now: stop decoding it while the next slides capture.
+          for (const { el } of plan.videos) el.pause()
         }
         await pendingWrite
         return await api.endVideoEncode({ sessionId })
@@ -4001,6 +4221,9 @@ const EditorStage = forwardRef<
         void api.abortVideoEncode?.({ sessionId }).catch(() => {})
         return null
       } finally {
+        ;(pace as ExportPace | null)?.dispose()
+        // Puts them back in the editor, playing.
+        unmountVideos()
         restoreChrome?.()
         stage.scale({ x: ps, y: ps }); stage.position(pp); stage.draw()
       }
@@ -5208,7 +5431,7 @@ const EditorStage = forwardRef<
           </Layer>
 
           {/* Content layer */}
-          <Layer>
+          <Layer ref={contentLayerRef}>
             {slides.map((slide, i) => {
               const ap = artboardPositions[i]!
               const slideItems = items.filter((it) => it.slideId === slide.id)

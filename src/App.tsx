@@ -26,6 +26,8 @@ import { generateProjectPreview } from './lib/thumbnail'
 import { FALLBACK_FONTS, listSystemFonts } from './lib/fonts'
 import { detectVideoFps, fpsRoughlyEqual, roundToCommonFps } from './lib/detectVideoFps'
 import { videoElements } from './lib/videoRegistry'
+import { hasMotion } from './lib/effects'
+import EffectsPanel from './components/EffectsPanel'
 import { NAMED_PALETTES, defaultBgVibe, randomSeed, type BgVibe } from './lib/bgVibe'
 import { sampleMediaPalette } from './lib/sampleMediaPalette'
 // 256×256 sibling of the main app icon, exported specifically for the
@@ -231,6 +233,8 @@ function patchAllSlideVibes(patch: Partial<Omit<BgVibe, 'seed'>>) {
 function slideHasAnimatedExport(items: PlacedMedia[], slideId: string): boolean {
   return items.some((it) => {
     if (it.slideId === slideId && (it.type === 'video' || it.type === 'gif')) return true
+    // Effects that move make the slide a loop rather than a still.
+    if (it.slideId === slideId && hasMotion(it)) return true
     // GIF masters render as animated ghosts on every other slide, so those
     // slides need MP4 export too. Video masters currently render as static
     // placeholders on non-home slides, so don't promote them here.
@@ -1107,6 +1111,8 @@ export default function App() {
   const setShowIgSafeArea = useTiovivoStore((s) => s.setShowIgSafeArea)
   const previewMode = useTiovivoStore((s) => s.previewMode)
   const setPreviewMode = useTiovivoStore((s) => s.setPreviewMode)
+  const playing = useTiovivoStore((s) => s.playing)
+  const deckMoves = useTiovivoStore((s) => s.items.some((i) => hasMotion(i)))
   const setShowGrid = useTiovivoStore((s) => s.setShowGrid)
   const setGridSize = useTiovivoStore((s) => s.setGridSize)
   const setShowCenterGuides = useTiovivoStore((s) => s.setShowCenterGuides)
@@ -2080,6 +2086,19 @@ export default function App() {
      header beside the theme toggle. */
   const viewCluster = (
     <div className="popover-host app__view-cluster">
+      {(deckMoves || playing) && (
+        <button
+          type="button"
+          className={`hdr-icon ${playing ? 'hdr-icon--on' : ''}`}
+          onClick={() => useTiovivoStore.getState().setPlaying(!playing)}
+          title={playing ? 'Stop the effects' : 'Play the effects on every slide'}
+          aria-pressed={playing}
+          aria-label={playing ? 'Stop effects' : 'Play effects'}
+          data-testid="play-effects"
+        >
+          <span aria-hidden style={{ fontSize: 13, lineHeight: 1 }}>{playing ? '■' : '▶'}</span>
+        </button>
+      )}
       <button
         type="button"
         className={`hdr-icon ${previewMode ? 'hdr-icon--on' : ''}`}
@@ -3060,16 +3079,16 @@ export default function App() {
                 <summary><h2><Icon.Shape />Shape</h2></summary>
                 <div className="collapsible__body">
                   <div className="field" style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-                    {(['rect', 'ellipse', 'line'] as const).map((k) => (
+                    {(['rect', 'ellipse', 'line', 'cursor'] as const).map((k) => (
                       <button
                         key={k}
                         type="button"
                         className={`btn btn--sm ${kind === k ? 'btn--accent' : ''}`}
                         onClick={() => patch({ shapeKind: k })}
-                        title={k === 'rect' ? 'Rectangle' : k === 'ellipse' ? 'Ellipse / circle' : 'Line / divider'}
+                        title={k === 'rect' ? 'Rectangle' : k === 'ellipse' ? 'Ellipse / circle' : k === 'cursor' ? 'Pointer — can glide in and click (Effects)' : 'Line / divider'}
                         style={{ flex: 1, padding: '6px 4px' }}
                       >
-                        {k === 'rect' ? '▭' : k === 'ellipse' ? '◯' : '─'}
+                        {k === 'rect' ? '▭' : k === 'ellipse' ? '◯' : k === 'cursor' ? '➤' : '─'}
                       </button>
                     ))}
                   </div>
@@ -3185,7 +3204,7 @@ export default function App() {
                   const delay = singleItem.animDelay ?? 0
                   return (
                     <>
-                      <label className="field" title="How this item arrives when you export the deck as one video (Export → One video). Stills and per-slide exports ignore it.">
+                      <label className="field" title="How this item arrives. It plays in the one-video export, in the effects preview, and in the looping video of a slide that has effects. Stills ignore it.">
                         <span>Entrance in video</span>
                         <div className="app__presets" role="group" aria-label="Entrance animation">
                           {(['none', 'fade', 'rise', 'pop'] as const).map((a) => (
@@ -3221,6 +3240,7 @@ export default function App() {
                     </>
                   )
                 })()}
+                {singleItem && <EffectsPanel item={singleItem} />}
                 {isImage && singleItem && (
                   <RemoveBgButton item={singleItem} onResult={(src, name) => updateItem(singleItem.id, { src, name })} />
                 )}

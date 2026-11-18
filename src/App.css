@@ -3227,3 +3227,52 @@ kbd {
   outline: 1px dashed rgba(255, 120, 180, 0.5);
   outline-offset: 1px;
 }
+
+/* ── Effects panel ── */
+.fx {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.fx__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.fx__head h2 { margin: 0; }
+.fx__accent { margin: 4px 0 8px; }
+.fx__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 4px;
+}
+.fx-chip {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.fx-chip:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.fx-chip--on {
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-weight: 600;
+}
+.fx__hint {
+  margin: 4px 0 6px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.fx__row { border-top: 1px solid var(--border); }
+.fx__row:first-of-type { border-top: 0; }
+.fx__body { padding: 0 0 8px 2px; }

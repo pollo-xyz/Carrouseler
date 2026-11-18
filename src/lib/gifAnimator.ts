@@ -37,6 +37,13 @@ interface ImageDecoderLike {
   }
 }
 
+/* Speed every GIF plays at. Video export slows it together with the videos
+   (lib/exportPace) so a capture slower than real time still sees each frame. */
+let timeScale = 1
+export function setGifTimeScale(scale: number): void {
+  timeScale = scale > 0 ? scale : 1
+}
+
 export function hasImageDecoder(): boolean {
   return typeof (globalThis as unknown as { ImageDecoder?: unknown }).ImageDecoder !== 'undefined'
 }
@@ -118,7 +125,7 @@ export async function createGifAnimator(blobUrl: string): Promise<GifAnimator | 
         console.warn('[gif] drawImage failed:', err)
       }
       frameIdx = (frameIdx + 1) % frames.length
-      timer = setTimeout(tick, frame.durationMs)
+      timer = setTimeout(tick, frame.durationMs / timeScale)
     }
     tick()
 

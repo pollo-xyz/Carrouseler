@@ -5,10 +5,11 @@ import { PRESETS, clampSize } from '../lib/presets'
 import { generateThumbnail } from '../lib/thumbnail'
 import type { BgVibe } from '../lib/bgVibe'
 import { randomSeed } from '../lib/bgVibe'
+import type { ItemEffects } from '../lib/effects'
 
 export type MediaType = 'image' | 'video' | 'gif' | 'text' | 'shape'
 
-export type ShapeKind = 'rect' | 'ellipse' | 'line'
+export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'cursor'
 
 export type TextAlign = 'left' | 'center' | 'right' | 'justify'
 
@@ -109,6 +110,13 @@ export interface PlacedMedia {
   strokeWidth?: number   // px in slide-space
   cornerRadius?: number  // px in slide-space (rect only)
 
+  /** Motion and light the item carries itself (see lib/effects). They play
+   *  in the editor's preview and in every video export; a slide with any
+   *  moving effect exports as a looping MP4 rather than a PNG. */
+  effects?: ItemEffects
+  /** Text only: once set, words wrapped in *asterisks* draw in this colour. */
+  accentColor?: string
+
   /** Entrance animation, played only in the one-video export. Missing or
    *  'none' = the item is simply there. */
   animIn?: EntranceAnim
@@ -199,6 +207,8 @@ interface TiovivoState {
    *  dotted dividers, upscale-warning badges). Transient view state; not
    *  persisted to .vpost. */
   previewMode: boolean
+  /** The effects clock is running in the editor. View state only. */
+  playing: boolean
   snapGrid: boolean
   snapCenter: boolean
   snapItems: boolean
@@ -264,6 +274,7 @@ interface TiovivoState {
   setShowIgSafeArea: (v: boolean) => void
   setSafeAreaPlatform: (p: SafeAreaPlatform) => void
   setPreviewMode: (v: boolean) => void
+  setPlaying: (v: boolean) => void
   setShowGrid: (v: boolean) => void
   setGridSize: (n: number) => void
   setGridOpacity: (n: number) => void
@@ -478,6 +489,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   showIgSafeArea: false,
   safeAreaPlatform: 'instagram',
   previewMode: false,
+  playing: false,
   snapGrid: false,
   snapCenter: true,
   snapItems: true,
@@ -775,15 +787,15 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
     // Roughly 35% of the smaller slide dimension feels right — big enough to
     // grab a transformer handle, small enough not to dominate the slide.
     const base = Math.min(dimensions.width, dimensions.height) * 0.35
-    const w = Math.round(kind === 'line' ? base * 1.4 : base)
-    const h = Math.round(kind === 'line' ? Math.max(6, base * 0.04) : base)
+    const w = Math.round(kind === 'cursor' ? 64 : kind === 'line' ? base * 1.4 : base)
+    const h = Math.round(kind === 'cursor' ? 64 : kind === 'line' ? Math.max(6, base * 0.04) : base)
 
     const item: PlacedMedia = {
       id: newId(),
       slideId: activeSlideId,
       type: 'shape',
       src: '',
-      name: kind === 'rect' ? 'Rectangle' : kind === 'ellipse' ? 'Ellipse' : 'Line',
+      name: kind === 'rect' ? 'Rectangle' : kind === 'ellipse' ? 'Ellipse' : kind === 'cursor' ? 'Pointer' : 'Line',
       x: Math.round((dimensions.width - w) / 2),
       y: Math.round((dimensions.height - h) / 2),
       width: w,
@@ -805,9 +817,9 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
       trimStart: 0,
       trimEnd: 0,
       shapeKind: kind,
-      fillColor: kind === 'line' ? 'transparent' : defaultFill,
-      strokeColor: defaultFill,
-      strokeWidth: kind === 'line' ? Math.max(2, Math.round(h)) : 0,
+      fillColor: kind === 'line' ? 'transparent' : kind === 'cursor' ? '#111111' : defaultFill,
+      strokeColor: kind === 'cursor' ? '#ffffff' : defaultFill,
+      strokeWidth: kind === 'line' ? Math.max(2, Math.round(h)) : kind === 'cursor' ? 3 : 0,
       cornerRadius: kind === 'rect' ? 12 : 0,
       ...overrides,
     }
@@ -994,6 +1006,7 @@ export const useTiovivoStore = create<TiovivoState>((set, get) => ({
   // Preview mode is a transient view toggle — does NOT mark the document
   // dirty since it doesn't change anything that's saved.
   setPreviewMode: (v) => set({ previewMode: v }),
+  setPlaying: (v) => set({ playing: v }),
   setSnapMargins: (v) => set({ snapMargins: v, ...dirtied() }),
 
   setSlideBgColor: (slideId, color) => {

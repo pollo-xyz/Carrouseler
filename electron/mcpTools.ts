@@ -23,10 +23,12 @@ const ITEM_FIELDS: Record<string, unknown> = {
   rotation: { type: 'number', description: 'Degrees.' },
   name: { type: 'string', description: 'Layer name.' },
   appearsOnAllSlides: { type: 'boolean', description: 'Repeat this item on every slide (logo, handle, page furniture).' },
-  animIn: { enum: ['none', 'fade', 'rise', 'pop'], description: "Entrance animation, played only when the deck is exported as one video (export with as: 'video')." },
+  animIn: { enum: ['none', 'fade', 'rise', 'pop'], description: "Entrance animation. Plays in the one-video export (as: 'video') and in the looping video of a slide that has moving effects." },
+  effects: { type: 'object', description: "Motion and light the layer carries itself, so a slide moves without a baked video. An object keyed by effect; each value is its settings, true for defaults, or null to remove it. On update_items the kinds you give replace those kinds and the rest stay. Kinds: glow (steady halo; breathe: true makes it swell and fade), pulse (a brief swell), drift (slow float; angle 90 = up/down, 0 = sideways), shimmer (a band of light sweeping across the layer's own shape), flash (hidden except for a short spell: fades in, holds about 1.6s, fades out — for callout rings that come and go), highlight (text: lights the accent words one after another), reveal (text: each paragraph comes up from dim in order), travel (pointer shapes: glides in from dx, dy and clicks). Settings, all optional: speed (multiplier, default 1), strength (0–1), delay (seconds into the slide; offset layers to run them in sequence), every (seconds between repeats for pulse, shimmer, flash, travel; 0 = once per loop), color (glow, shimmer), angle (drift), breathe (glow), dx / dy (travel start offset in px). Example: { \"glow\": { \"strength\": 0.6, \"breathe\": true }, \"shimmer\": { \"every\": 3 } }. Anything but a steady glow makes the slide export as a looping MP4 instead of a PNG; stills show the layer at rest." },
   animDelay: { type: 'number', description: 'Seconds after its slide appears before the entrance starts. Stagger items (0, 0.4, 0.8 …) to reveal them in reading order.' },
 
-  text: { type: 'string', description: 'Text content; \\n for line breaks.' },
+  text: { type: 'string', description: 'Text content; \\n for line breaks. With accentColor set, words wrapped in *asterisks* are drawn in that colour.' },
+  accentColor: { type: 'string', description: 'CSS hex colour for words marked *like this* in the text. Use it for one emphasised word or phrase instead of a second text box.' },
   fontFamily: { type: 'string', description: 'An installed font family — see list_fonts.' },
   fontSize: { type: 'number', description: 'px in slide space.' },
   bold: { type: 'boolean' },
@@ -47,7 +49,7 @@ const ITEM_FIELDS: Record<string, unknown> = {
   textBgCornerRadius: { type: 'number' },
   textBgOpacity: { type: 'number', description: '0–1.' },
 
-  shapeKind: { enum: ['rect', 'ellipse', 'line'] },
+  shapeKind: { enum: ['rect', 'ellipse', 'line', 'cursor'], description: "'cursor' is a mouse pointer whose tip is at x, y (about 64×64); give it the travel effect to glide in and click." },
   fillColor: { type: 'string', description: "CSS hex colour or 'transparent'." },
   strokeColor: { type: 'string' },
   strokeWidth: { type: 'number' },
@@ -287,4 +289,6 @@ Working method: get_project → set the format → build slide by slide with add
 
 Coordinates are slide pixels from the top-left. Feed posts are 1080×1350 (4:5) or 1080×1440 (3:4); Reels, TikTok and Stories are 1080×1920 (9:16). Keep text at least 80px from the edges. On 9:16 leave the top ~250px and bottom ~420px free of anything important, since the apps draw their own interface there. Carousel slides are swiped left to right, so slide 1 is the hook.
 
-Text boxes take x, y and width; the height is measured by the app (read it back with get_project). Use fillMode to make a headline fill a box exactly. Images come from local file paths.`
+Text boxes take x, y and width; the height is measured by the app (read it back with get_project). Use fillMode to make a headline fill a box exactly. Images come from local file paths.
+
+For movement, give layers \`effects\` rather than reaching for video: keep words as live text and shapes as shapes so the person can still edit them. Use effects sparingly — one or two moving things per slide — and stagger related layers with \`delay\`.`
